@@ -162,7 +162,13 @@ class DeskClockLivedTest {
                     visible = true,
                     activeSession = row(inBreak = true, breakRemaining = 452),
                     activeTask = FocusTaskEntity(title = "Physics"),
-                    dialMinutes = 25,
+                    // Composed at the train merge (K8): dialMinutes
+                    // was deleted from the face's contract by the
+                    // train's Wave-3 (Glaette G-6) — the print had
+                    // already stopped reading it on main (the idle
+                    // lie's dead input). Every assertion below stands
+                    // as written: the break face derives from the
+                    // session row, never from that wire.
                     burnInStep = 0,
                     onDismiss = { dismissed = true }
                 )

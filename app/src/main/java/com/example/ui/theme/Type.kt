@@ -154,6 +154,20 @@ val BodyTextStyle = TextStyle(
     lineHeight = 22.sp
 )
 
+/** The reception sheet's second voice (Fein §B/§C, FINISH-type-print):
+ *  the door's job-adjacent lines — chit line, STALE gloss, prepare
+ *  escort — in BodyTextStyle's values, worn in onSurfaceVariant at
+ *  the call sites. Wave-2 fix (Pforte): ReceptionSheet used this
+ *  name at four sites with no definition and no import anywhere in
+ *  the tree — a compile-blocker caught by the Wave-2 finisher
+ *  cluster, not by Wave-1's "print CLOSED" record. */
+val DoorJobTextStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 15.sp,
+    lineHeight = 22.sp
+)
+
 /** T1 in Atkinson - the ACTIVE task title. */
 val TaskActiveTitleTextStyle = TextStyle(
     fontFamily = AtkinsonHyperlegibleFamily,

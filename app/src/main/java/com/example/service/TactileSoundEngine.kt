@@ -29,7 +29,13 @@ import kotlin.math.sin
  *
  * 2. Procedural Float-PCM Sound Engine (§7):
  *    - Zero audio files in res/raw or assets/.
- *    - Zero ambient sound mixer loops.
+ *    - Zero ambient sound mixer loops — with ONE ruled exception
+ *      (#253 line 1): the session soundscape lane below. It is
+ *      not a mixer and holds no files: a single generated loop
+ *      ([SoundscapeSynth]) on its own track, under the user's
+ *      persisted fact ([SoundscapeSetting], default OFF), living
+ *      only for a session's length. Every other voice in this
+ *      engine remains a transient under the 160 ms law.
  *    - Single dedicated background writer thread driving a float-PCM AudioTrack
  *      (AudioFormat.ENCODING_PCM_FLOAT) with:
  *      • 4 harmonic partials weighted { 0.6f, 0.28f, 0.37f, 2.2f }
@@ -92,6 +98,12 @@ class TactileSoundEngine(private val context: Context) {
         const val HAPTIC_COMPLETION_10MS = 10L
 
         private const val SAMPLE_RATE = 44100
+
+        // The soundscape lane (#253 line 1): one writer block is
+        // ~93 ms of the loop; the master gain keeps the wash
+        // under every transient voice in the engine.
+        internal const val SOUNDSCAPE_BLOCK_SAMPLES = 4096
+        internal const val SOUNDSCAPE_MASTER_GAIN = 0.55f
         // Exact 4-partial harmonic weights from DEVELOPER-GUIDE.pdf §7
         val PARTIAL_WEIGHTS = floatArrayOf(0.6f, 0.28f, 0.37f, 2.2f)
         // Exact dual exponential decay factors per sample step from DEVELOPER-GUIDE.pdf §7
@@ -110,6 +122,20 @@ class TactileSoundEngine(private val context: Context) {
 
         /** The Throw's full length: 1000 ms at 44 100 Hz. */
         const val SEAL_SAMPLES = 44_100
+
+        /** Audit R6 #341 F26: the pre-render cache's bound. */
+        const val DETENT_CACHE_MAX = 64
+
+        /**
+         * Audit R6 #341 F63: the missed-prime seal fallback renders
+         * only this many samples synchronously on the seal path —
+         * the Throw's first 200 ms, carrying its attack landmarks —
+         * instead of all 44,100. The full render stays the prime's
+         * job (render thread); a missed prime is degraded and on
+         * time, never a full second of synthesis squatting on the
+         * seal's own timing.
+         */
+        const val SEAL_FALLBACK_SYNC_SAMPLES = 8_820
 
         /** xorshift32 seed (Marsaglia shifts 13/17/5), frozen.
          *  Golden vector, pinned by test: the first four raw
@@ -222,6 +248,36 @@ class TactileSoundEngine(private val context: Context) {
          * (221, 0.5), wet send −12 dB. Samples 39 690–44 100 fade
          * linearly to zero.
          */
+        /**
+         * Audit R6 #341 F63: render only the first [out.size]
+         * samples of the Throw into [out] — the same pure function
+         * as [renderSealBuffer], bounded. The envelope state at
+         * sample n is identical to the full render's, so the
+         * prefix is bit-identical to the full voice's opening
+         * (the bolt/tail dressing past the prefix is the prime's
+         * concern, not the fallback's).
+         */
+        internal fun renderSealPrefix(out: FloatArray) {
+            require(out.size in 1..SEAL_SAMPLES)
+            val weights = PARTIAL_WEIGHTS
+            val weightNorm = weights.sum()
+            var envBody = 1.0f
+            var envTail = 1.0f
+            val twoPiOverSr = (2.0 * PI / SAMPLE_RATE).toFloat()
+            val f0 = 360f
+            for (n in out.indices) {
+                val phase = n * twoPiOverSr * f0
+                val p1 = sin(phase.toDouble()).toFloat() * weights[0]
+                val p2 = sin((phase * 2.0f * 1.5f).toDouble()).toFloat() * weights[1]
+                val p3 = sin((phase * 3.0f).toDouble()).toFloat() * weights[2]
+                val p4 = sin((phase * 4.7f).toDouble()).toFloat() * weights[3]
+                val sample = (((p1 + p2 + p3) * envBody + p4 * envTail) / weightNorm) * 0.62f
+                out[n] = sample.coerceIn(-0.95f, 0.95f)
+                envBody *= BODY_DECAY_STEP
+                envTail *= TAIL_DECAY_STEP
+            }
+        }
+
         internal fun renderSealBuffer(out: FloatArray) {
             require(out.size == SEAL_SAMPLES)
             val weights = PARTIAL_WEIGHTS
@@ -415,7 +471,14 @@ class TactileSoundEngine(private val context: Context) {
             if (synthThread == null) {
                 synthThread = Thread({ runFloatPcmSynthLoop() }, "MonolithFloatPcmSynth").apply {
                     isDaemon = true
-                    priority = Thread.MAX_PRIORITY
+                    // Audit R6 #341 F26: this thread used to run at
+                    // Thread.MAX_PRIORITY — on a two-core Go phone
+                    // the signature gesture starved its own UI
+                    // thread. It now runs at NORM thread priority
+                    // and asks the OS for AUDIO thread priority
+                    // inside the loop (Process.THREAD_PRIORITY_AUDIO),
+                    // the priority Android reserves for exactly this.
+                    priority = Thread.NORM_PRIORITY
                     start()
                 }
             }
@@ -492,7 +555,10 @@ class TactileSoundEngine(private val context: Context) {
                 var failed = false
                 while (off < SEAL_SAMPLES) {
                     val n = try {
-                        track.write(sealBuffer, off, SEAL_SAMPLES - off, AudioTrack.WRITE_BLOCKING)
+                        writeFloatSamples(
+                            track, sealTrackIsFloat, sealBuffer, off,
+                            SEAL_SAMPLES - off, sealShortScratch
+                        )
                     } catch (_: Exception) {
                         -1
                     }
@@ -514,15 +580,19 @@ class TactileSoundEngine(private val context: Context) {
         }
     }
 
-    private fun ensureSealTrack(): AudioTrack? {
-        sealTrack?.let { return it }
-        // Issue #77: double-checked under sealTrackLock — the render
-        // thread and playSealThrow's fallback both arrive here; only
-        // one may build the track.
-        return synchronized(sealTrackLock) {
-            sealTrack?.let { return@synchronized it }
-            try {
-            val track = AudioTrack.Builder()
+    // Audit R6 #341 F25: the engine's tracks are built FLOAT
+    // first, with a 16-BIT fallback lane. On low-end HALs without
+    // a float path the float build either throws or returns an
+    // uninitialised track — before this, every cue on such a phone
+    // was silently dead for the life of the process. The fallback
+    // lane converts the same rendered floats to shorts at write
+    // time; the render itself (the voice) never changes.
+    @Volatile
+    private var sealTrackIsFloat = true
+
+    private fun buildTrackWithFallback(floatBufferBytes: Int): Pair<AudioTrack, Boolean>? {
+        fun build(encoding: Int, bufferBytes: Int): AudioTrack? = try {
+            AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
@@ -531,18 +601,183 @@ class TactileSoundEngine(private val context: Context) {
                 )
                 .setAudioFormat(
                     AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                        .setEncoding(encoding)
                         .setSampleRate(SAMPLE_RATE)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build()
                 )
-                // The render plus 5% headroom (185 220 B): a track
-                // buffer smaller than the render is the one way
-                // this lane could silently become a queue again.
-                .setBufferSizeInBytes(SEAL_SAMPLES * 4 * 105 / 100)
+                .setBufferSizeInBytes(bufferBytes)
                 .setTransferMode(AudioTrack.MODE_STREAM)
                 .build()
-                sealTrack = track
+                .takeIf { it.state == AudioTrack.STATE_INITIALIZED }
+        } catch (_: Exception) {
+            null
+        }
+        build(AudioFormat.ENCODING_PCM_FLOAT, floatBufferBytes)?.let { return it to true }
+        build(AudioFormat.ENCODING_PCM_16BIT, floatBufferBytes / 2)?.let { return it to false }
+        return null
+    }
+
+    /** Write [len] rendered float samples starting at [off],
+     *  converting into [scratch] when the lane is 16-bit (F25). */
+    private fun writeFloatSamples(
+        track: AudioTrack,
+        isFloat: Boolean,
+        buffer: FloatArray,
+        off: Int,
+        len: Int,
+        scratch: ShortArray
+    ): Int {
+        if (isFloat) {
+            return track.write(buffer, off, len, AudioTrack.WRITE_BLOCKING)
+        }
+        val n = minOf(len, scratch.size)
+        for (i in 0 until n) {
+            val v = (buffer[off + i] * 32767f).toInt().coerceIn(-32768, 32767)
+            scratch[i] = v.toShort()
+        }
+        return track.write(scratch, 0, n, AudioTrack.WRITE_BLOCKING)
+    }
+
+    /** F25: the seal lane's conversion scratch (reused per write). */
+    private val sealShortScratch = ShortArray(SEAL_SAMPLES)
+
+    /** F26: pre-rendered voice cache — a detent at the same
+     *  (frequency, length, gain, chord) is rendered ONCE and then
+     *  copied, never re-synthesised per detent on the synth thread.
+     *  Bounded: past [DETENT_CACHE_MAX] entries the cache clears
+     *  rather than growing with every frequency the wheel visits. */
+    private val detentCache = java.util.concurrent.ConcurrentHashMap<Long, FloatArray>()
+
+    private fun detentCacheKey(f0: Float, count: Int, gain: Float, chordRatio: Float): Long {
+        var key = f0.toBits().toLong() shl 32
+        key = key or (count.toLong() and 0xFFFF)
+        key = key or (gain.toBits().toLong() and 0xFF shl 16)
+        key = key or (chordRatio.toBits().toLong() and 0xFF shl 24)
+        return key
+    }
+
+    private fun ensureSealTrack(): AudioTrack? {
+        sealTrack?.let { return it }
+        // Issue #77: double-checked under sealTrackLock — the render
+        // thread and playSealThrow's fallback both arrive here; only
+        // one may build the track.
+        return synchronized(sealTrackLock) {
+            sealTrack?.let { return@synchronized it }
+            // F25: float first, 16-bit fallback (buildTrackWithFallback).
+            // The render plus 5% headroom (185 220 B float-sized): a
+            // track buffer smaller than the render is the one way
+            // this lane could silently become a queue again.
+            val built = buildTrackWithFallback(SEAL_SAMPLES * 4 * 105 / 100)
+            if (built == null) {
+                null
+            } else {
+                sealTrackIsFloat = built.second
+                sealTrack = built.first
+                built.first
+            }
+        }
+    }
+
+    // =====================================================================
+    // THE SOUNDSCAPE LANE (#253 line 1): the session's one
+    // continuous voice. Its own retained loop buffer, its own
+    // AudioTrack, its own writer thread — the seal lane's shape,
+    // at ambient weight. The lane obeys the house laws:
+    //  - THE FACT GATES IT: [startSoundscape] reads
+    //    [SoundscapeSetting] at every call; OFF means silence.
+    //  - THE PERMISSION LAW GATES IT: it sounds only while
+    //    [audioPermitted] holds (sound fact + ringer), re-checked
+    //    every writer block, so a mid-session ringer flip or a
+    //    sound-fact push fades it out by the same ramp.
+    //  - THE FADE RULES GOVERN ITS EDGES: gain ramps over
+    //    [SoundscapeSynth.FADE_SAMPLES] in and out; it never
+    //    starts or stops with a click.
+    //  - THE NIGHT GATE SCALES IT: [nightGainScale] (ordinary
+    //    voice) applies per block, like every transient.
+    // =====================================================================
+
+    @Volatile
+    private var soundscapeBuffer: FloatArray? = null
+
+    @Volatile
+    private var soundscapeTrack: AudioTrack? = null
+    private val soundscapeTrackLock = Any()
+
+    @Volatile
+    private var soundscapeThread: Thread? = null
+
+    /** The user's standing wish, set by start/stop. The writer
+     *  loop owns the gain; this flag is only the direction. */
+    @Volatile
+    private var soundscapeDesired: Boolean = false
+
+    private var soundscapeFocusRequest: AudioFocusRequest? = null
+
+    @Volatile
+    private var soundscapeFocusHeld: Boolean = false
+
+    /** Start the session soundscape. No-ops unless the persisted
+     *  fact is ON and audio is permitted; the ViewModel calls
+     *  this on the session's rising edge and the fact — not the
+     *  caller — is the authority. Idempotent. */
+    fun startSoundscape() {
+        if (!running) return
+        if (!SoundscapeSetting.isEnabled(context)) return
+        if (!audioPermitted(unattended = false)) return
+        if (soundscapeBuffer == null) {
+            soundscapeBuffer = SoundscapeSynth.renderLoop()
+        }
+        soundscapeDesired = true
+        ensureSoundscapeThread()
+    }
+
+    /** Stop the session soundscape: the writer fades it out by
+     *  the fade rule, then parks the track and abandons the
+     *  lane's focus. Idempotent. */
+    fun stopSoundscape() {
+        soundscapeDesired = false
+    }
+
+    /** Test seam: is the lane's wish currently ON? */
+    internal fun soundscapeDesiredForTest(): Boolean = soundscapeDesired
+
+    private fun ensureSoundscapeThread() {
+        if (soundscapeThread != null) return
+        synchronized(threadStartLock) {
+            if (!running || soundscapeThread != null) return
+            soundscapeThread = Thread(
+                { runSoundscapeLoop() }, "MonolithSoundscape"
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        }
+    }
+
+    private fun ensureSoundscapeTrack(): AudioTrack? {
+        soundscapeTrack?.let { return it }
+        return synchronized(soundscapeTrackLock) {
+            soundscapeTrack?.let { return@synchronized it }
+            try {
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .build()
+                    )
+                    .setAudioFormat(
+                        AudioFormat.Builder()
+                            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                            .setSampleRate(SoundscapeSynth.SAMPLE_RATE)
+                            .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                            .build()
+                    )
+                    .setBufferSizeInBytes(SOUNDSCAPE_BLOCK_SAMPLES * 4 * 4)
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .build()
+                soundscapeTrack = track
                 track
             } catch (_: Exception) {
                 null
@@ -550,8 +785,163 @@ class TactileSoundEngine(private val context: Context) {
         }
     }
 
+    private fun requestSoundscapeFocus(): Boolean {
+        if (soundscapeFocusHeld) return true
+        return try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
+            val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val req = soundscapeFocusRequest ?: AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN
+                ).setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                ).setOnAudioFocusChangeListener { change ->
+                    if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                        change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                    ) {
+                        soundscapeFocusHeld = false
+                        soundscapeDesired = false
+                    }
+                }.build()
+                    .also { soundscapeFocusRequest = it }
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    { change ->
+                        if (change == AudioManager.AUDIOFOCUS_LOSS ||
+                            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
+                        ) {
+                            soundscapeFocusHeld = false
+                            soundscapeDesired = false
+                        }
+                    },
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                )
+            }
+            soundscapeFocusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            soundscapeFocusHeld
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun abandonSoundscapeFocus() {
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                soundscapeFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus { }
+            }
+        } catch (_: Exception) {}
+        soundscapeFocusHeld = false
+    }
+
+    private fun runSoundscapeLoop() {
+        val block = FloatArray(SOUNDSCAPE_BLOCK_SAMPLES)
+        var pos = 0
+        var fadeElapsed = 0
+        var trackLive = false
+        while (running) {
+            try {
+                // The permission law, re-read every pass: a
+                // ringer flip or a live sound-fact push retracts
+                // the wish and the ramp carries it out.
+                if (soundscapeDesired &&
+                    !(soundEnabled && !ringerSilencesAudio())
+                ) {
+                    soundscapeDesired = false
+                }
+                if (!soundscapeDesired && fadeElapsed <= 0) {
+                    if (trackLive) {
+                        try {
+                            soundscapeTrack?.pause()
+                            soundscapeTrack?.flush()
+                        } catch (_: Exception) {}
+                        trackLive = false
+                        abandonSoundscapeFocus()
+                    }
+                    Thread.sleep(200)
+                    continue
+                }
+                val buffer = soundscapeBuffer ?: run {
+                    Thread.sleep(200)
+                    continue
+                }
+                val track = ensureSoundscapeTrack() ?: run {
+                    Thread.sleep(200)
+                    continue
+                }
+                if (!trackLive) {
+                    if (!requestSoundscapeFocus()) {
+                        Thread.sleep(500)
+                        continue
+                    }
+                    try {
+                        track.play()
+                    } catch (_: Exception) {
+                        Thread.sleep(200)
+                        continue
+                    }
+                    trackLive = true
+                }
+                // Advance the fade toward the wish, then write
+                // one block under the resulting gain.
+                fadeElapsed = if (soundscapeDesired) {
+                    (fadeElapsed + SOUNDSCAPE_BLOCK_SAMPLES)
+                        .coerceAtMost(SoundscapeSynth.FADE_SAMPLES)
+                } else {
+                    (fadeElapsed - SOUNDSCAPE_BLOCK_SAMPLES)
+                        .coerceAtLeast(0)
+                }
+                val gain = SoundscapeSynth.fadeGain(fadeElapsed) *
+                    nightGainScale(sealVoice = false) * SOUNDSCAPE_MASTER_GAIN
+                if (gain <= 0f && !soundscapeDesired) continue
+                for (i in block.indices) {
+                    block[i] = buffer[pos] * gain
+                    pos++
+                    if (pos >= buffer.size) pos = 0
+                }
+                var off = 0
+                while (off < block.size) {
+                    val n = try {
+                        track.write(block, off, block.size - off, AudioTrack.WRITE_BLOCKING)
+                    } catch (_: Exception) {
+                        -1
+                    }
+                    if (n <= 0) break
+                    off += n
+                }
+            } catch (_: InterruptedException) {
+                if (!running) return
+            } catch (_: Exception) {
+                // Headless fallback: the lane idles and retries;
+                // a soundscape must never take the engine down.
+                try {
+                    Thread.sleep(200)
+                } catch (_: InterruptedException) {
+                    if (!running) return
+                }
+            }
+        }
+    }
+
     private fun runFloatPcmSynthLoop() {
+        // Audit R6 #341 F26: AUDIO thread priority at the OS level
+        // (the priority Android reserves for audio rendering) —
+        // never the MAX_PRIORITY this loop used to seize.
+        try {
+            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+        } catch (_: Exception) {}
         var track: AudioTrack? = null
+        var trackIsFloat = true
+        val shortScratch = ShortArray(1024)
         try {
             val maxSamples = (SAMPLE_RATE * 0.16f).toInt() // Up to 160ms transient buffer
             val minBufBytes = AudioTrack.getMinBufferSize(
@@ -583,29 +973,13 @@ class TactileSoundEngine(private val context: Context) {
                 // that will actually sound (never at thread start).
                 if (!requestTransientAudioFocus()) continue
                 if (track == null) {
-                    track = try {
-                        AudioTrack.Builder()
-                            .setAudioAttributes(
-                                AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                    .build()
-                            )
-                            .setAudioFormat(
-                                AudioFormat.Builder()
-                                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                                    .setSampleRate(SAMPLE_RATE)
-                                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                                    .build()
-                            )
-                            .setBufferSizeInBytes(minBufBytes)
-                            .setTransferMode(AudioTrack.MODE_STREAM)
-                            .build()
-                            .also { it.play(); legacyTrack = it }
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (track == null) continue
+                    // Audit R6 #341 F25: float first, 16-bit
+                    // fallback — a HAL without a float path gets a
+                    // living engine, not a silently dead one.
+                    val built = buildTrackWithFallback(minBufBytes)
+                    if (built == null) continue
+                    trackIsFloat = built.second
+                    track = built.first.also { it.play(); legacyTrack = it }
                 }
                 val liveTrack = track ?: continue
 
@@ -615,7 +989,16 @@ class TactileSoundEngine(private val context: Context) {
                 val f0 = cmd.fundamentalHz.coerceIn(90f, 2400f)
                 val twoPiOverSr = (2.0 * PI / SAMPLE_RATE).toFloat()
 
-                for (n in 0 until count) {
+                // Audit R6 #341 F26: a voice already rendered for
+                // this (frequency, length, gain, chord) is COPIED
+                // from the pre-render cache — the per-sample sin()
+                // synthesis below runs once per distinct voice,
+                // not once per wheel detent.
+                val cacheKey = detentCacheKey(f0, count, cmd.gain, cmd.chordRatio)
+                val cached = detentCache[cacheKey]
+                if (cached != null && cached.size >= count) {
+                    System.arraycopy(cached, 0, floatBuffer, 0, count)
+                } else for (n in 0 until count) {
                     val phase = n * twoPiOverSr * f0
                     // 4 partials with exact weights { 0.6f, 0.28f, 0.37f, 2.2f }
                     val p1 = sin(phase.toDouble()).toFloat() * weights[0]
@@ -629,6 +1012,12 @@ class TactileSoundEngine(private val context: Context) {
 
                     envBody *= BODY_DECAY_STEP
                     envTail *= TAIL_DECAY_STEP
+                }
+
+                // F26: a fresh render joins the cache (bounded).
+                if (cached == null) {
+                    if (detentCache.size > DETENT_CACHE_MAX) detentCache.clear()
+                    detentCache[cacheKey] = floatBuffer.copyOf(count)
                 }
 
                 // Chunked writes under the lane epoch (Riegel
@@ -649,9 +1038,10 @@ class TactileSoundEngine(private val context: Context) {
                 while (off < count) {
                     if (laneEpoch.get() != epochAtStart) break
                     val n = try {
-                        liveTrack.write(
-                            floatBuffer, off, minOf(1024, count - off),
-                            AudioTrack.WRITE_BLOCKING
+                        // F25: the write honours the lane's encoding.
+                        writeFloatSamples(
+                            liveTrack, trackIsFloat, floatBuffer, off,
+                            minOf(1024, count - off), shortScratch
                         )
                     } catch (_: Exception) {
                         -1
@@ -974,6 +1364,123 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
+    /**
+     * The Held Door's arrival voice (FIX-7c): the seal's recipe at
+     * door pitch — 300Hz, 44ms, gain 0.60, chordRatio 1.5 — with
+     * the latch's haptics kept. Replaces the 16ms switch tick
+     * (playMechanicalLatch's transient) that used to announce the
+     * door while the goodbye carried the visit's heaviest sound.
+     */
+    fun playDoorArrival() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 11, 26, 9),
+            amplitudes = intArrayOf(0, 215, 0, 150),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 44,
+            gain = 0.60f,
+            chordRatio = 1.5f
+        )
+    }
+
+    /**
+     * The offer arms (FIX-7 / Ton's score §5.3, Tor round 9): the
+     * arrival's recipe at exactly half gain — 300Hz, 44ms, gain
+     * 0.30, chordRatio 1.5 — with a softened detent haptic
+     * ([0,150,60]: felt in a held hand, a tap on furniture, never
+     * a second latch). Fired ONCE at the VM state transition where
+     * the peek offer arms — the wall's expiry and FIX-5c's
+     * held→offer resolutions alike. Silence stands everywhere
+     * else on the wall: no per-second voice, no held-zero voice.
+     * Night law: gain ≤ 0.60, no 255-amplitude haptic — honoured.
+     */
+    fun playDoorArm() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 7, 5),
+            amplitudes = intArrayOf(0, 150, 60),
+            fallbackMs = HAPTIC_ROTARY_TICK_1MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 44,
+            gain = 0.30f,
+            chordRatio = 1.5f
+        )
+    }
+
+    /**
+     * RETURN's press (FIX-7d, Ton §5.4): 300Hz, 28ms, gain 0.48,
+     * chordRatio 0.9 — the engine's RELEASE interval — with the
+     * releasing latch's waveform verbatim. This REPLACES
+     * playHarmonicSeal(true) on the airlock return path: the
+     * seal's voice (0.62 / 48ms, the visit's heaviest sound) is
+     * never spent on a goodbye again.
+     */
+    fun playDoorReturn() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 9, 22, 10),
+            amplitudes = intArrayOf(0, 165, 0, 195),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 28,
+            gain = 0.48f,
+            chordRatio = 0.9f
+        )
+    }
+
+    /**
+     * The peek taken (FIX-7, Ton §5.5): 300Hz, 32ms, gain 0.50,
+     * chordRatio 1.5 — the BINDING interval, because taking the
+     * peek is the visit's second binding (a lease granted, a
+     * cooldown armed) — with the engaging latch's waveform
+     * verbatim, shared with arrival: the same hand-motion, a lock
+     * turning. Replaces the generic playMechanicalLatch(true) at
+     * the grant, which sounded like every switch in the app. A
+     * REFUSED grant stays silent — this fires only past the
+     * grant's re-derivation.
+     */
+    fun playDoorPeek() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 11, 26, 9),
+            amplitudes = intArrayOf(0, 215, 0, 150),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 300f,
+            durationMs = 32,
+            gain = 0.50f,
+            chordRatio = 1.5f
+        )
+    }
+
+    /**
+     * The exit to Disarm (FIX-7, Ton §5.6): 240Hz — the score's
+     * one pitch step down (300 × 0.8) — 40ms, gain 0.42 (the
+     * quietest press-beat: gravity is duration and seat, not
+     * volume), chordRatio 0.9, with the releasing latch's
+     * waveform verbatim. Fired on the CONFIRMED Disarm handoff
+     * from the door only, and it is that handoff's ONLY voice:
+     * the door route never also spends requestDisarmChallenge's
+     * latch. KEEP FOCUSING's peel-back stays silent.
+     */
+    fun playDoorExit() {
+        triggerWaveform(
+            timingsMs = longArrayOf(0, 9, 22, 10),
+            amplitudes = intArrayOf(0, 165, 0, 195),
+            fallbackMs = HAPTIC_SWITCH_FLIP_4MS
+        )
+        enqueueTransient(
+            fundamentalHz = 240f,
+            durationMs = 40,
+            gain = 0.42f,
+            chordRatio = 0.9f
+        )
+    }
+
     /** Break-end summons (Audit R3b #146): the voice that calls the
      *  user BACK from a Safe Break. The single latch was functionally
      *  silence in a pocket — this is three full strikes with a low
@@ -1141,17 +1648,24 @@ class TactileSoundEngine(private val context: Context) {
                 // array garble the bit-identical Throw (the golden
                 // hash exists precisely to forbid two voices). The
                 // fallback renders into its own buffer now.
-                val fallbackBuffer = FloatArray(SEAL_SAMPLES)
-                renderSealBuffer(fallbackBuffer)
+                // Audit R6 #341 F63: and it renders only the
+                // bounded PREFIX synchronously (8,820 samples, the
+                // Throw's first 200 ms) — the full 44,100-sample
+                // synchronous render on the seal path is gone; the
+                // seal's timing is no longer taxed a full second
+                // of synthesis for a missed prime.
+                val fallbackBuffer = FloatArray(SEAL_FALLBACK_SYNC_SAMPLES)
+                renderSealPrefix(fallbackBuffer)
                 try {
                     track.pause()
                     track.flush()
                     track.play()
                     var off = 0
-                    while (off < SEAL_SAMPLES) {
-                        val n = track.write(
-                            fallbackBuffer, off, minOf(4096, SEAL_SAMPLES - off),
-                            AudioTrack.WRITE_BLOCKING
+                    while (off < SEAL_FALLBACK_SYNC_SAMPLES) {
+                        val n = writeFloatSamples(
+                            track, sealTrackIsFloat, fallbackBuffer, off,
+                            minOf(4096, SEAL_FALLBACK_SYNC_SAMPLES - off),
+                            sealShortScratch
                         )
                         if (n <= 0) break
                         off += n
@@ -1216,6 +1730,19 @@ class TactileSoundEngine(private val context: Context) {
      */
     fun stopAllAudio() {
         running = false
+        // #253 line 1: the soundscape lane dies with the engine —
+        // wish retracted, focus abandoned, track released under
+        // its lock, thread interrupted out of its poll.
+        soundscapeDesired = false
+        abandonSoundscapeFocus()
+        synchronized(soundscapeTrackLock) {
+            try {
+                soundscapeTrack?.stop()
+                soundscapeTrack?.release()
+            } catch (_: Exception) {}
+            soundscapeTrack = null
+        }
+        soundscapeThread?.interrupt()
         commandQueue.clear()
         sealPrimeSignal.clear()
         sealBarrierSeq = -1L
