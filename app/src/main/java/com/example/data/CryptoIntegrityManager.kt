@@ -136,7 +136,12 @@ object CryptoIntegrityManager {
                 HMAC_KEY_ALIAS,
                 KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY
             )
-            if (strongBox) spec.setIsStrongBoxBacked(true)
+            // StrongBox exists only from API 28 (Build.VERSION_CODES.P); below it there is
+            // no StrongBox silicon to ask for, so the request is skipped and the key mints
+            // with TEE custody — the design's "StrongBox first where the silicon offers it".
+            if (strongBox && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                spec.setIsStrongBoxBacked(true)
+            }
             keyGen.init(spec.build())
             keyGen.generateKey()
         } catch (_: Exception) {
