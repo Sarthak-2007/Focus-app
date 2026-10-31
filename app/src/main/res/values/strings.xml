@@ -164,4 +164,12 @@
     <string name="reception_stale_gloss">THE LAST PROOF AGED OUT — CHECK RE-PROVES IT</string>
     <string name="reception_fix_key">FIX — %1$s</string>
     <string name="reception_check_key">CHECK — %1$s</string>
+    <string name="overlay_tap_anywhere_exit">TAP ANYWHERE TO EXIT</string>
+    <string name="overlay_why_opened">WHY DID YOU OPEN IT?</string>
+    <string name="overlay_remove_monolith">TO REMOVE MONOLITH: END THE BLOCK FIRST — THE EMERGENCY BREAK ON THE DECK IS THE LAWFUL DOOR.</string>
+    <string name="overlay_end_session_instead">END THE SESSION INSTEAD</string>
+    <string name="overlay_locked_tier">LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD</string>
+    <string name="overlay_stopwatch_wait">Or wait: this is a stopwatch session with a 20-minute floor. %1$d more minutes and stopping is free — no break spent.</string>
+    <string name="overlay_hold_to_fill">Hold to fill %1$d seconds. Every 15 seconds banks. If your hand slips, what isn\'t banked drains away. The banked part stays.</string>
+    <string name="overlay_valve_spent">VALVE SPENT — THIS WEEK\'S BREAK IS USED</string>
 </resources>
