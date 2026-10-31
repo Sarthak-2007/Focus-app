@@ -1911,8 +1911,6 @@ private fun DeckArmedUtilities(
             )
         }
     }
-
-}
 }
 
 @Composable
