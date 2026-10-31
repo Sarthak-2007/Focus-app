@@ -790,11 +790,16 @@ fun AlwaysOnDeskClockOverlay(
             // an explicit line height the height derives from —
             // see BANNER_LINE_HEIGHT at the slot.
             if (running) {
-                var bannerLine = deskClockBreakLine(
+                // The break line, kept by name (composition, K8):
+                // when the banner IS the break line, the banner
+                // carries the break line's tag — both parents'
+                // DeskClockLivedTest reads the announcement by it.
+                val breakLine = deskClockBreakLine(
                     isInSafeBreak = activeSession?.isInSafeBreak == true,
                     safeBreakSecondsRemaining = activeSession?.safeBreakSecondsRemaining ?: 0,
                     nowWallMillis = faceNowMillis
                 )
+                var bannerLine = breakLine
                 // Finisher cure (Kante K-4): on the SLEEP span the
                 // banner IS "SLEEP" (DESIGN §1.7 — the routine
                 // row's own name; no task/intention derivation
@@ -851,6 +856,11 @@ fun AlwaysOnDeskClockOverlay(
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
+                            modifier = if (breakLine != null && bannerLine == breakLine) {
+                                Modifier.testTag("desk_clock_break_line")
+                            } else {
+                                Modifier
+                            },
                             // Schliff F-4: the text carries the
                             // measure the slot derives from.
                             lineHeight = BANNER_LINE_HEIGHT,

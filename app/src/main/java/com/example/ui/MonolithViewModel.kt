@@ -5057,6 +5057,14 @@ class MonolithViewModel(
             },
             nameSubLine = subLine,
             interceptNonce = nonce,
+            // Issue #55 finding 5 (both parents' mint idiom,
+            // restored at the composition, K8): every arrival
+            // state carries a fresh, strictly increasing instance
+            // id — the overlay keys its per-intercept wall on it
+            // and the abandon log dedups by it. The inlined C-11
+            // construction had dropped the stamp (id defaulted
+            // to 0 on every arrival).
+            interceptInstanceId = ++airlockInstanceSeq,
             // C-11: the arrival instant rides in state; the row
             // itself is booked just below, at this same trigger.
             interceptArrivedAtWallMillis = nowWall,

@@ -1222,6 +1222,65 @@ fun DrawerScreen(
                         }
                     }
                 }
+                // The drawers doors (main, C10 — restored at
+                // the composition, K8): the composed landing had
+                // kept the train shelf but lost every entry row,
+                // stranding the CABINET / RECEIPTS / INDEX views
+                // the sections above implement. ALL MONTHS keeps
+                // main's case split (populated landings only).
+                if (!globallyEmpty) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { viewName = DrawerView.INDEX.name }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 6.dp)
+                            .testTag("drawer_all_months"),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.drawer_all_months),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                        androidx.compose.material3.Icon(
+                            imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                            contentDescription = null,
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+                }
+                // The cabinet's door: ONE furniture row under
+                // ALL MONTHS (chrome C10).
+                item {
+                    DrawerNavRow(
+                        label = "CABINET",
+                        onClick = { viewName = DrawerView.CABINET.name },
+                        modifier = Modifier.testTag("drawer_curios_row")
+                    )
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+                // The receipts index's door: ONE furniture row
+                // under CABINET (issue #157) — this destination
+                // is named "Receipts"; the receipts are here.
+                item {
+                    DrawerNavRow(
+                        label = "RECEIPTS",
+                        onClick = { viewName = DrawerView.RECEIPTS.name },
+                        modifier = Modifier.testTag("drawer_receipts_row")
+                    )
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
             }
         }
     }
@@ -1375,7 +1434,13 @@ private fun StoredRow(
                 color = scheme.onSurfaceVariant
             )
             Text(
-                text = spentLabel(task.actualSecondsSpent),
+                // Issue #110, finding 2 (main's form, restored at
+                // the composition, K8): TOTAL — the lifetime
+                // accrual riding under the finish day's shelf,
+                // not time that day contained. Both parents'
+                // VaultHistoryTruthTest pins this print; the
+                // train's bare-label row contradicted its own.
+                text = "TOTAL ${spentLabel(task.actualSecondsSpent)}",
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant

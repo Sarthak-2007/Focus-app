@@ -262,7 +262,8 @@ class SliceEMigrationChainTest {
                 MonolithDatabase.MIGRATION_13_14,
                 MonolithDatabase.MIGRATION_14_15,
                 MonolithDatabase.MIGRATION_15_16,
-                MonolithDatabase.MIGRATION_16_17
+                MonolithDatabase.MIGRATION_16_17,
+                MonolithDatabase.MIGRATION_17_18
             )
             .build()
         runBlocking {
