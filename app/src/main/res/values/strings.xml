@@ -6,6 +6,7 @@
     <string name="device_admin_description">Shows a warning when Monolith\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Monolith; it does not prevent either.</string>
     <string name="device_admin_add_explanation">Turning this on only lets Monolith show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
     <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts and Reels feeds, and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Monolith to configure what is blocked.</string>
+    <string name="widget_description">Seal status at a glance: sealed, open, or the next seal.</string>
     <string name="notification_channel_name">Monolith Active Shield</string>
     <string name="notification_channel_desc">Shows the active focus session\'s countdown and shield status.</string>
     <!-- Issue #115: one name per destination — the rail's words.
@@ -13,6 +14,9 @@
          tab_web_studio (no such destination; sites live on Shield)
          are deleted with the names they carried. -->
     <string name="tab_deck">Deck</string>
+    <string name="shortcut_open_short">Open Monolith</string>
+    <string name="shortcut_open_long">Open Monolith</string>
+    <string name="tile_label">Monolith</string>
     <string name="tab_tasks">Tasks</string>
     <string name="tab_shield">Shield</string>
     <string name="tab_vault">Ledger</string>
@@ -45,6 +49,7 @@
     <string name="park_last_proved">LAST PROVED</string>
     <string name="park_fix_item">FIX — %1$s</string>
     <string name="park_sound_effects">SOUND EFFECTS</string>
+    <string name="park_session_soundscape">SESSION SOUNDSCAPE</string>
     <string name="park_shorts_reels">SHORTS + REELS</string>
     <string name="park_theme">THEME</string>
     <string name="receipt_ended">ENDED %1$s · %2$s</string>
@@ -53,15 +58,15 @@
     <string name="deflection_line">%1$s · %2$s</string>
     <string name="receipt_shield_gap">THE SHIELD WAS OFF FOR PART OF THAT SESSION</string>
     <string name="receipt_shield_still_blocked">SHIELD — STILL BLOCKED (SERVICE DIDN\'T STOP)</string>
-    <string name="drawer_stored">STORED</string>
+    <string name="drawer_stored">LEDGER</string>
     <string name="drawer_estimate">ESTIMATE %1$d MIN</string>
     <string name="drawer_spent">SPENT %1$s</string>
     <string name="drawer_cabinet">CABINET</string>
     <string name="drawer_forged">FORGED</string>
     <string name="drawer_forge_note">A FINISHED SPAN FORGES ONE — THE FORGE CHOOSES WHICH.</string>
     <string name="drawer_search_hint">TYPE TO FIND A TASK</string>
-    <string name="drawer_nothing_under">NOTHING STORED UNDER “%1$s”</string>
-    <string name="drawer_nothing_yet">NOTHING STORED YET</string>
+    <string name="drawer_nothing_under">NOTHING IN THE LEDGER UNDER “%1$s”</string>
+    <string name="drawer_nothing_yet">NOTHING IN THE LEDGER YET</string>
     <string name="drawer_all_months">ALL MONTHS</string>
     <string name="drawer_earlier">EARLIER</string>
     <string name="sequencer_add_hint">Add single-line focus task…</string>
@@ -70,13 +75,17 @@
     <string name="sequencer_reopen">REOPEN</string>
     <string name="sequencer_nothing_queued">NOTHING QUEUED</string>
     <string name="sequencer_done_tear">DONE — TEAR</string>
+    <string name="sequencer_dismiss">DISMISS</string>
+    <string name="sequencer_write_step">Write a step...</string>
+    <string name="sequencer_add_step">ADD STEP</string>
+    <string name="sequencer_close">CLOSE</string>
     <string name="shield_schedule_reset">SCHEDULE RESET TO YOUR DAY — TAP ANY ROW TO CHANGE IT</string>
     <string name="shield_filter_apps">Filter apps…</string>
     <string name="shield_no_app">NO APP BY THAT NAME ON THIS PHONE</string>
     <string name="shield_add_site_hint">Add a site — e.g. news.ycombinator.com</string>
     <string name="shield_routine_end">→ %1$s</string>
     <string name="routine_meta">%1$s · %2$s</string>
-    <string name="shield_your_rules">YOUR RULES</string>
+    <string name="shield_your_rules">RULES IN FORCE</string>
     <string name="deck_flow">FLOW</string>
     <string name="deck_percent">%1$d%%</string>
     <string name="deck_now">NOW</string>
@@ -96,4 +105,9 @@
     <string name="sentence_not_sealed_session">NOT SEALED — THE SESSION DIDN\'T ANSWER.</string>
     <string name="sentence_not_sealed_named">NOT SEALED — %1$s DIDN\'T ANSWER.</string>
     <string name="sentence_annul_failed">ANNUL FAILED — THE ROW MAY STILL STAND. NOTHING WAS PROVED.</string>
+    <string name="pill_end_break">END BREAK</string>
+    <string name="pill_end_peek">END PEEK</string>
+    <string name="pill_label_break">BREAK</string>
+    <string name="pill_label_session_elapsed">SESSION · ELAPSED</string>
+    <string name="pill_label_session_block">SESSION · BLOCK %1$d/%2$d</string>
 </resources>

@@ -81,7 +81,7 @@ class ReceiptClaimRepositoryTest {
      * RELATIVE to wherever it stands when the story starts.
      */
     @Test
-    fun claimAndPublishStory() = runBlocking {
+    fun claimAndPublishStory(): Unit = runBlocking {
         val repo = repository()
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
@@ -185,7 +185,7 @@ class ReceiptClaimRepositoryTest {
     }
 
     @Test
-    fun truthCar2_rowStampAndAssembly() = runBlocking {
+    fun truthCar2_rowStampAndAssembly(): Unit = runBlocking {
         val repo = repository()
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
@@ -441,7 +441,7 @@ class ReceiptClaimRepositoryTest {
      * has always assumed.
      */
     @Test
-    fun faultedClaim_stampsFaultWithTheClaim() = runBlocking {
+    fun faultedClaim_stampsFaultWithTheClaim(): Unit = runBlocking {
         val repo = repository()
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()

@@ -15,12 +15,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -284,7 +285,7 @@ fun BlockitActionChip(
  */
 @Composable
 fun MonolithPullDownHeader(
-    guardLine: GuardLinePrint?,
+    guardLine: GuardLinePrint,
     isSealed: Boolean,
     onGuardLineTap: () -> Unit
 ) {
@@ -311,28 +312,39 @@ fun MonolithPullDownHeader(
                 modifier = Modifier.padding(start = 20.dp)
             )
             Spacer(modifier = Modifier.weight(1f))
-            if (guardLine != null) {
-                Text(
-                    text = guardLine.text,
-                    fontFamily = AnonymousProFamily,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
-                    letterSpacing = 0.5.sp,
-                    color = scheme.onBackground,
-                    modifier = Modifier
-                        .padding(end = 20.dp)
-                        // Always tappable (design-revamp salvage, D-01):
-                        // the host's onGuardLineTap decides at tap time —
-                        // unsealed it opens PARK (openPark re-reads the
-                        // navigation lock at the tap, HB-2), sealed it
-                        // opens the launcher. Stripping the clickable
-                        // while sealed (the old form) made the sealed
-                        // door dead code: the handler could never fire.
-                        .sizeIn(minHeight = 48.dp)
-                        .monolithClickable { onGuardLineTap() }
-                        .testTag("header_guard_line")
-                )
-            }
+            // The line always prints (issue #9, F-G4): unmeasured
+            // is GUARD — NOT CHECKED, never a blank band. The merged
+            // guardLine is non-null by construction (the VM's
+            // guardLinePrint flow never hands null — M-A3 §14
+            // decider read), so no null gate stands here.
+            Text(
+                text = guardLine.text,
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp,
+                letterSpacing = 0.5.sp,
+                color = scheme.onBackground,
+                modifier = Modifier
+                    .padding(end = 20.dp)
+                    // Always tappable (main, design-revamp salvage
+                    // D-01): the host's onGuardLineTap decides at
+                    // tap time — unsealed it opens PARK (openPark
+                    // re-reads the navigation lock at the tap,
+                    // HB-2), sealed it opens the launcher.
+                    // Stripping the clickable while sealed (train's
+                    // form) made the sealed door dead code.
+                    .sizeIn(minHeight = 48.dp)
+                    .monolithClickable { onGuardLineTap() }
+                    // Issue #97 (recomposed): the Guard line's
+                    // tap target carries its spoken label — the
+                    // way back into setup is named for a11y, not
+                    // just printed for sight.
+                    .semantics {
+                        contentDescription =
+                            "Park — setup, permissions and settings"
+                    }
+                    .testTag("header_guard_line")
+            )
         }
         Box(
             modifier = Modifier
@@ -484,74 +496,15 @@ private fun StripCell(
 }
 
 /**
- * The 53dp proof band (Kato's corrected sheet): three cells on a
- * recess body, square corners (radius 0 — the band is architecture,
- * not a card), 1px vertical hairlines one tone above recess, and the
- * seam stamp riding the hairline at the band's foot. Density flips
- * land in one frame — no easing, no pulse, ever: the strip is print.
+ * RETIRED (issue #4): the 53dp proof band (ProofStripBand + its
+ * StripCell) is gone — the Deck's pinned stack now seats the
+ * SealBar (components/SealBar.kt) at the same 53dp address, and
+ * the BIND / PROOF seam marks render nowhere. The pure helpers
+ * above (seamMarksFor, endsAtText, imprintTenantText,
+ * refusalSentenceFor, jamSentenceFor) stay: the sentence slot
+ * and the imprint below still read them, and the seam table
+ * remains pinned by its unit tests as the wire's grade record.
  */
-@Composable
-fun ProofStripBand(
-    blockWord: String,
-    blockDensity: StripDensity,
-    appsWord: String,
-    appsDensity: StripDensity,
-    timeText: String,
-    timeDensity: StripDensity,
-    stampLeft: String?,
-    stampRight: String?,
-    modifier: Modifier = Modifier
-) {
-    val tones = stripToneColors()
-    Column(
-        modifier
-            .fillMaxWidth()
-            .height(53.dp)
-            .background(tones.recess)
-    ) {
-        Row(Modifier.fillMaxWidth().weight(1f)) {
-            StripCell("BLOCK", blockWord, blockDensity, mono = false, tones = tones, modifier = Modifier.weight(1.05f).fillMaxHeight())
-            Box(Modifier.width(1.dp).fillMaxHeight().background(tones.divider))
-            StripCell("APPS", appsWord, appsDensity, mono = true, tones = tones, modifier = Modifier.weight(0.9f).fillMaxHeight())
-            Box(Modifier.width(1.dp).fillMaxHeight().background(tones.divider))
-            StripCell("TIME", timeText, timeDensity, mono = true, tones = tones, modifier = Modifier.weight(1.3f).fillMaxHeight())
-        }
-        // The seam: the stamp rides the hairline. Left mark inset
-        // 10dp; the right grade ends 10dp from the right edge; on
-        // collision the left degrades first (single line, clipped).
-        Box(Modifier.fillMaxWidth().height(12.dp)) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .height(1.dp)
-                    .background(tones.divider)
-            )
-            if (stampLeft != null && stampRight != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(start = 10.dp, end = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = stampLeft,
-                        style = PillBadgeTextStyle,
-                        color = tones.secondaryInk,
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false)
-                    )
-                    Text(
-                        text = stampRight,
-                        style = PillBadgeTextStyle,
-                        color = tones.secondaryInk,
-                        maxLines = 1
-                    )
-                }
-            }
-        }
-    }
-}
 
 /**
  * The sentence slot (Suki): 22dp, reserved always, directly under the

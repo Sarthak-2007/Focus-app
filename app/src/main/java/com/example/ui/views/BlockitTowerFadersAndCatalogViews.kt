@@ -3,6 +3,12 @@ package com.example.ui.views
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.view.MotionEvent
+import com.example.data.DailyFocusStat
+import com.example.ui.theme.MonolithCurves
+import java.util.Locale
+import kotlin.math.max
+import kotlin.math.min
 import com.example.data.FocusTaskEntity
 
 /**

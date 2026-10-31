@@ -23,12 +23,16 @@ val epochMinutesVersionCode: Int = (System.currentTimeMillis() / 60_000L).toInt(
 
 android {
   namespace = "com.example"
-  compileSdk { version = release(36) { minorApiLevel = 1 } }
+  // compileSdk/targetSdk 37 (was 36.1/36): compose-bom 2026.09.00
+  // (Compose 1.12.1) declares minCompileSdk=37 in its AAR metadata —
+  // this raise landed ahead of the BOM bump (PR #213) so the bump
+  // compiles. REFIT-DEPS-RAISE, Oct 31 2026; determination on #245.
+  compileSdk { version = release(37) }
 
   defaultConfig {
     applicationId = "com.aistudio.monolith.kxtpzr"
     minSdk = 24
-    targetSdk = 36
+    targetSdk = 37
     versionCode = epochMinutesVersionCode
     versionName = "1.1"
 
@@ -88,6 +92,38 @@ android {
   }
 }
 
+// Finisher (Klappe): JDK 21 strong encapsulation blocks Robolectric's
+// AndroidInterceptors reflection (IllegalAccessException at sandbox
+// start, every Robolectric test dead). Open the JDK modules Robolectric
+// documents for JDK 21 test workers.
+tasks.withType<Test>().configureEach {
+  jvmArgs(
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio.charset=ALL-UNNAMED",
+    "--add-opens=java.base/java.security=ALL-UNNAMED",
+    "--add-opens=java.base/java.text=ALL-UNNAMED",
+    "--add-opens=java.base/java.time=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.zip=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.ssl=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.util=ALL-UNNAMED",
+    "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+    // BUILDER-TRAIN-4 triage (PR #231, run 41105848855): add-opens does
+    // not substitute for add-exports - Robolectric's sandbox needs
+    // jdk.internal.access EXPORTED (SharedSecrets, at
+    // ApplicationSharedMemory.create). Without it every Robolectric
+    // suite dies in setup: 211 toolchain failures at head 7a0ba487.
+    "--add-exports=java.base/jdk.internal.access=ALL-UNNAMED"
+  )
+}
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 // Some unused dependencies are commented out below instead of being removed.
@@ -113,6 +149,10 @@ dependencies {
   // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
+  // Audit R6 #341 F17: the redundant session-boundary wake path
+  // (SessionBoundaryWorker) — persisted jobs that survive the
+  // process deaths the alarm chain does not.
+  implementation(libs.androidx.work.runtime.ktx)
   // implementation(libs.coil.compose)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
@@ -149,4 +189,10 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
   // "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// MOTOR #31 F3 (train inheritance): Room schema export location —
+// pairs with exportSchema = true on MonolithDatabase (DB v13).
+ksp {
+  arg("room.schemaLocation", "$projectDir/schemas")
 }

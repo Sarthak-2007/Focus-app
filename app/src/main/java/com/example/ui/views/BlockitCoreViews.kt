@@ -1703,7 +1703,9 @@ internal object SlideGestureMath {
     /** Schmitt dead-band: the latch releases at GATE − 0.020. */
     const val GATE_RELEASE = 0.66f
 
-    /** The catch (Vega): displayed crossing under contact commits. */
+    /** The catch (Vega): the release threshold — a drag RELEASED
+     *  at or past it commits; crossing it under contact commits
+     *  nothing (issue #125 F2, Sarthak's ruling). */
     const val CATCH = 0.84f
 
     /** The OFF-stop (Joss): hard clamp under a positively dead wire. */
@@ -1730,16 +1732,33 @@ internal object SlideGestureMath {
     /** The travel limit a warrant state imposes on displayed travel. */
     fun travelLimit(state: WarrantState): Float = when (state) {
         WarrantState.LIVE -> 1f
-        // No positive evidence of death: travel to the catch is free;
-        // the catch itself cannot commit (Rosa §3.1).
-        WarrantState.UNPROVEN -> CATCH
+        // Issue #515 F2: no positive evidence of death is not a
+        // stop. An unproven wire travels free, exactly like a
+        // live one — the catch commits the attempt and the
+        // proving cascade judges it (its witnesses measure the
+        // enforcement facts themselves, before t=0, and annul
+        // honestly). Only a positively dead wire (OFF) clamps
+        // travel. (Rosa §3.1's catch cap governed until #515:
+        // it made the residency stamp — not a user action — the
+        // arm's deciding input.)
+        WarrantState.UNPROVEN -> 1f
         WarrantState.OFF -> OFF_STOP
     }
 
-    /** The commit predicate (D1 + D3's boundary): displayed at or past
-     *  the catch, under contact, on a LIVE latch-frame read. */
-    fun commits(displayed: Float, underContact: Boolean, state: WarrantState): Boolean =
-        underContact && displayed >= CATCH && state == WarrantState.LIVE
+    /** The commit predicate (issue #125 F2, Sarthak's ruling —
+     *  supersedes D1's under-contact crossing): a drag commits
+     *  when it is RELEASED with displayed at or past the catch.
+     *  Position at release is the only judge — never velocity or
+     *  fling (issue #117's law stands); crossing the catch under
+     *  contact seats nothing, and a drag back below it before
+     *  release cancels the order. The warrant term is issue #515
+     *  F2 as adjudicated (Ren (clone), #515 comment 6545245897):
+     *  a release-frame read that is not positively dead commits —
+     *  LIVE directly, UNPROVEN via the seat into the ArmProving
+     *  cascade, the judge; only OFF, the positively dead wire,
+     *  never commits. */
+    fun commitsOnRelease(displayed: Float, state: WarrantState): Boolean =
+        displayed >= CATCH && state != WarrantState.OFF
 
     /** Rhea's brush floor: 90ms inclusive is an order; below is a brush. */
     fun isBrush(pressDurationMs: Long): Boolean = pressDurationMs < BRUSH_FLOOR_MS
@@ -1789,15 +1808,47 @@ internal object SlideGestureMath {
         val s = 1f - t
         return 3f * s * s * p1 + 6f * s * t * (p2 - p1) + 3f * t * t * (1f - p2)
     }
+
+    /**
+     * One semi-implicit Euler substep of a return spring toward
+     * [target] (R5-0723): returns (newX, newVelocity). The return
+     * modes share the STEP, never the spring — each keeps its own
+     * stiffness/damping voice; what they gain is one stability-
+     * bounded integration (≤5ms substeps, the seat's own
+     * discipline) and an honest velocity carried in from the
+     * motion they interrupt, instead of a silent restart at rest.
+     */
+    fun springStep(
+        x: Float,
+        velocity: Float,
+        target: Float,
+        stiffness: Float,
+        damping: Float,
+        h: Float
+    ): Pair<Float, Float> {
+        val accel = stiffness * (target - x) - damping * velocity
+        val newVelocity = velocity + accel * h
+        return (x + newVelocity * h) to newVelocity
+    }
+
+    /** The settle predicate every return spring shares — home and
+     *  (nearly) still. These are the thresholds the abort and
+     *  refusal returns already used inline. */
+    fun springSettled(x: Float, velocity: Float): Boolean =
+        x <= 0.001f && abs(velocity) < 0.05f
 }
 
 /**
  * ============================================================================
  * 4. SLIDE TO START VIEW — Slice D rebuild (D1+D2+D3+D4+D5+D10, Live Wire form)
  * ============================================================================
- * - Commit = displayed crossing 0.84 UNDER CONTACT on a LIVE wire read
- *   (Vega). Damping is a pure position function: free 1:1 to the 0.68
- *   gate, gain 2/3 beyond (finger commit coordinate p = 0.92).
+ * - Commit = a drag RELEASED at displayed ≥ 0.84 on a LIVE wire
+ *   read (issue #125 F2, Sarthak's ruling — supersedes Vega's
+ *   under-contact crossing): under contact the cap stays the
+ *   finger's past the catch and back, and drag-back below the
+ *   catch before release cancels the order. Damping is a pure
+ *   position function: free 1:1 to the 0.68 gate, gain 2/3 beyond
+ *   (finger commit coordinate p = 0.92).
  * - The gate is a Schmitt latch (0.680 up / 0.660 retreat, Luz): pitched
  *   both directions through fireFeel(1L) — 620Hz up, 340Hz retreat —
  *   and the wire is re-read in the same frame, BEFORE the feel.
@@ -1814,8 +1865,10 @@ internal object SlideGestureMath {
  *   hit-tested on the cap (drawn rect inflated 8dp in x, full track
  *   height in y), but a press of ANY duration released without travel
  *   dispatches nothing — a ≥90ms pocket/bag press physically cannot
- *   seal a session. The ONLY commit is the cap dragged under contact
- *   to the catch (position, never pointer-up/velocity/fling). A tap
+ *   seal a session. The ONLY commit is the cap dragged to the
+ *   catch and RELEASED there (position at release, never
+ *   velocity/fling — issue #125 F2's refinement of the commit
+ *   moment). A tap
  *   on a dead wire earns the refusal sequence; on a live wire it is
  *   answered like a brush: 1dp sink, one dull knock, zero travel.
  *   A press <90ms is a brush: 1dp sink, one dull knock, zero travel.
@@ -1882,6 +1935,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         gateArmed = false
         latchKnockFired = false
         retreatTouched = false
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         // Slice E: an annulment hands the slide back — the seal
         // gate and the exit shading die with the attempt.
         sealedGate = false
@@ -1921,12 +1975,23 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
 
     private var latchKnockFired: Boolean = false
 
+    // R5-0740: the pointer this attempt belongs to. A drag reads
+    // ONLY this pointer's coordinates (found by id, never assumed
+    // at index 0), and its lift — ACTION_POINTER_UP while other
+    // fingers remain — is the release. INVALID whenever no touch
+    // owns the cap. Before this, the gesture read event.x (index
+    // 0) blindly: a palm or second finger silently re-bound every
+    // coordinate mid-drag against the stale grab offset, and the
+    // release could be judged on a finger that never grabbed.
+    private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
+
     // Issue #126 F3: the seated cap's refusal-knock throttle.
     private var lastSeatedKnockMs: Long = 0L
 
     // The commutator floor (Vega, review V-1): the displayed value
-    // at which this SEAT run began — the catch crossing for a drag,
-    // 0.92 for the mesh. Inside the seat, displayed may never fall
+    // at which this SEAT run began — the release position for a
+    // drag (issue #125 F2), 0.92 for the mesh. Inside the seat,
+    // displayed may never fall
     // below it: the commit crossing ends finger ownership, and a
     // stalled frame must not walk a committed slide home (D3's
     // failure budget ends at refusal-from-the-catch, never at a
@@ -2027,6 +2092,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // die silently inside startRefusal's already-fired guard).
         attemptWarrant = readWarrant()
         refusalFired = false
+        dragVelocitySigned = 0f
         onPressStart?.invoke(attemptWarrant)
         if (attemptWarrant == WarrantState.OFF) {
             startRefusal(knockFirst = true)
@@ -2169,6 +2235,8 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                     movedBeyondSlop = false
                     prevDragDisplayed = displayed
                     prevDragTimeMs = event.eventTime
+                    activePointerId = event.getPointerId(0)
+                    dragVelocitySigned = 0f
                     downOnCap = true
                     grabOffsetPx = event.x - (capLeft + capWPx() * 0.5f)
                     mode = Mode.DRAG
@@ -2180,6 +2248,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 if (pendingResume) {
                     pendingResume = false
                     resumeReturnHome()
@@ -2212,6 +2281,25 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     private fun fingerFraction(touchX: Float): Float {
         val center = touchX - grabOffsetPx
         return ((center - insetPx() - capWPx() * 0.5f) / travelPx()).coerceIn(0f, 1f)
+    }
+
+    /** R5-0740: the tracked pointer's index in [event], or -1 when
+     *  it is absent — already lifted, and its POINTER_UP is the
+     *  event that ends the gesture, never a silent re-bind to
+     *  whichever finger now sits at index 0. Attempts that carry
+     *  no claim (the accessibility mesh, a mid-flight restore)
+     *  read index 0: by construction it is the only pointer. */
+    private fun trackedPointerIndex(event: MotionEvent): Int =
+        if (activePointerId == MotionEvent.INVALID_POINTER_ID) 0
+        else event.findPointerIndex(activePointerId)
+
+    /** One MOVE sample on the drag path, from the tracked pointer. */
+    private fun dispatchMove(touchX: Float, eventTimeMs: Long) {
+        when (mode) {
+            Mode.DRAG -> dragMove(touchX, eventTimeMs)
+            Mode.REFUSAL_RETREAT -> retreatMove(touchX, eventTimeMs)
+            else -> Unit
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -2349,6 +2437,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                     }
                     return true
                 }
+                // A fresh DOWN during the spring-back takes the cap
+                // over: the spring-back is an animator riding on REST
+                // (issue #59 F5), so the takeover cancels it silently
+                // — its end callback never fires — and admission
+                // below stays REST-only.
+                cancelSpringBackSilently()
                 // A DOWN inside a running machine or a live drag is not
                 // a new attempt (a second pointer never hijacks a drag;
                 // a refused touch admits no new attempt until its UP).
@@ -2363,11 +2457,41 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (mode == Mode.DRAG) dragMove(event)
-                else if (mode == Mode.REFUSAL_RETREAT) retreatMove(event)
+                // R5-0740: follow the tracked pointer only, and
+                // consume EVERY sample the system batched into this
+                // event, oldest first — a fast flick's path lives
+                // in the history, and judging the gesture from the
+                // latest point alone throws that path away.
+                val idx = trackedPointerIndex(event)
+                if (idx >= 0) {
+                    for (h in 0 until event.historySize) {
+                        dispatchMove(
+                            event.getHistoricalX(idx, h),
+                            event.getHistoricalEventTime(h)
+                        )
+                    }
+                    dispatchMove(event.getX(idx), event.eventTime)
+                }
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                // R5-0740: the tracked finger lifting while another
+                // remains IS this gesture's release — judged here,
+                // on this finger, exactly as its ACTION_UP would
+                // be. Any other pointer's lift changes nothing.
+                if (event.getPointerId(event.actionIndex) == activePointerId) {
+                    activePointerId = MotionEvent.INVALID_POINTER_ID
+                    when (mode) {
+                        Mode.DRAG -> endDrag(event, cancelled = false)
+                        Mode.REFUSAL_HOLD, Mode.REFUSAL_RETREAT, Mode.REFUSAL_RETURN ->
+                            parent?.requestDisallowInterceptTouchEvent(false)
+                        else -> Unit
+                    }
+                }
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 when (mode) {
                     Mode.DRAG -> endDrag(event, cancelled = false)
                     Mode.REFUSAL_HOLD, Mode.REFUSAL_RETREAT, Mode.REFUSAL_RETURN -> {
@@ -2380,6 +2504,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 if (mode == Mode.DRAG) endDrag(event, cancelled = true)
                 parent?.requestDisallowInterceptTouchEvent(false)
                 return true
@@ -2399,8 +2524,10 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         latchKnockFired = false
         retreatTouched = false
         downTimeMs = event.eventTime
+        activePointerId = event.getPointerId(0)
         downXPx = event.x
         movedBeyondSlop = false
+        dragVelocitySigned = 0f
         prevDragDisplayed = displayed
         prevDragTimeMs = event.eventTime
 
@@ -2434,7 +2561,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         invalidate()
     }
 
-    private fun dragMove(event: MotionEvent) {
+    private fun dragMove(touchX: Float, eventTimeMs: Long) {
         // The verdict consulted is never older than the frame that
         // uses it: re-read on every MOVE (Joss (c)) — except in a
         // retreat-touched attempt, where the pin holds the verdict
@@ -2442,7 +2569,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         val prevWarrant = attemptWarrant
         attemptWarrant = readWarrant()
         if (retreatTouched) attemptWarrant = WarrantState.OFF
-        if (abs(event.x - downXPx) > dp(8f)) movedBeyondSlop = true
+        if (abs(touchX - downXPx) > dp(8f)) movedBeyondSlop = true
 
         // Mid-drag death above the stop: powered retreat to 0.65 in
         // 160ms (Curve A); a snap would teleport and break the lag law.
@@ -2452,7 +2579,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             startRefusalRetreat()
             return
         }
-        applyDragPosition(event.x, event.eventTime)
+        applyDragPosition(touchX, eventTimeMs)
         invalidate()
     }
 
@@ -2469,22 +2596,39 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
      *  is the refusal's own door — nothing here can commit, because
      *  the warrant that drove us into retreat is OFF and every
      *  commit check re-reads it. */
-    private fun retreatMove(event: MotionEvent) {
-        if (fingerFraction(event.x) >= displayed) return
+    private fun retreatMove(touchX: Float, eventTimeMs: Long) {
+        if (fingerFraction(touchX) >= displayed) return
         stopIntegrator()
         mode = Mode.DRAG
         // The seat-seed bookkeeping restarts at the rejoin point:
         // the crossing MOVE inside dragMove then measures velocity
         // from the finger's own motion, not the machine's retreat.
         prevDragDisplayed = displayed
-        prevDragTimeMs = event.eventTime
-        dragMove(event)
+        prevDragTimeMs = eventTimeMs
+        dragMove(touchX, eventTimeMs)
     }
 
     // Velocity bookkeeping for the seat seed: the previous drag
     // frame's displayed value and its event time.
     private var prevDragDisplayed: Float = 0f
     private var prevDragTimeMs: Long = 0L
+
+    // R5-0723: the drag's SIGNED displayed velocity (frac/s), kept
+    // beside the seat's floored seed: a release, a refusal or a
+    // spring-back inherits the hand's actual motion — a fast
+    // retreat included — instead of restarting from rest. Reset
+    // at every attempt birth, so no attempt inherits a throw.
+    private var dragVelocitySigned: Float = 0f
+
+    // R5-0723: the refusal return's seed, captured at the refusal's
+    // first frame. The 300ms hold is a held breath, not amnesia:
+    // the return spring still owes the hand its velocity.
+    private var refusalSeedVelocity: Float = 0f
+
+    // R5-0723: the mesh's instantaneous rate (frac/s), sampled per
+    // frame — the mesh is curve-driven and holds no velocity
+    // field, so an abort mid-mesh seeds its return from this.
+    private var meshVelocity: Float = 0f
 
     /** Position the cap from the finger under the current warrant. */
     private fun applyDragPosition(touchX: Float, eventTimeMs: Long) {
@@ -2524,25 +2668,25 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             return
         }
 
-        // The commit (Vega + D3's boundary): displayed crossing the
-        // catch under contact, on this frame's LIVE read, ends finger
-        // ownership — Cato's integrator drives the seat from here.
-        // Seed velocity from the crossing MOVE delta (floor 0, cap
-        // +6.0 frac/s): a thrown seat is faster, never slower.
+        // The drag's standing velocity measure (Vega + R5-0723):
+        // the signed per-frame delta, kept current on every MOVE
+        // so the release can inherit the hand's actual motion —
+        // a retreat included — exactly as the old under-contact
+        // crossing inherited its floored twin.
         val dtSec = (eventTimeMs - prevDragTimeMs) / 1000f
-        val moveVelocity = if (dtSec > 0.001f) {
-            ((next - prevDragDisplayed) / dtSec).coerceIn(0f, 6f)
+        dragVelocitySigned = if (dtSec > 0.001f) {
+            ((next - prevDragDisplayed) / dtSec).coerceIn(-6f, 6f)
         } else {
             0f
         }
         prevDragDisplayed = next
         prevDragTimeMs = eventTimeMs
-        if (SlideGestureMath.commits(next, underContact = true, attemptWarrant)) {
-            displayed = next
-            startSeat(fromDrag = true, seedVelocity = moveVelocity)
-            return
-        }
-
+        // Issue #125 F2 (Sarthak's ruling): crossing the catch
+        // under contact commits NOTHING — the point of no return
+        // mid-gesture is abolished. The cap stays the finger's
+        // past the catch and back down, and the order lives or
+        // dies at the release, which endDrag judges against
+        // SlideGestureMath.commitsOnRelease.
         displayed = next
     }
 
@@ -2586,10 +2730,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             // an order any more. The old tap path ran the driven mesh
             // to 0.92 on pointer-up alone, so a ≥90ms pocket/bag press
             // on the cap sealed a session the user never chose.
-            // Completion is now by cap POSITION only: the cap must be
-            // dragged under contact to the catch (SlideGestureMath
-            // .commits in applyDragPosition) — never by pointer-up
-            // inference, velocity, or fling. A classified tap on a
+            // Completion is by cap POSITION only: the cap must be
+            // dragged to the catch and released there
+            // (SlideGestureMath.commitsOnRelease, judged in this
+            // function — issue #125 F2) — never by velocity or
+            // fling, and a no-travel release is never an order. A
+            // classified tap on a
             // dead wire still earns the full refusal (Joss J-3, as
             // the brush branch above); on a live wire it is a
             // non-order contact, answered exactly like a brush:
@@ -2611,19 +2757,31 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             return
         }
 
-        // A plain drag release. At the UNPROVEN catch-stop, release
-        // refuses FROM the catch (Rosa): knock, 300ms hold at the
-        // catch, universal spring home.
-        if (attemptWarrant == WarrantState.UNPROVEN &&
-            displayed >= SlideGestureMath.CATCH - 0.001f
-        ) {
-            startRefusal(knockFirst = true)
+        // Issue #125 F2 (Sarthak's ruling): the release judges the
+        // order. A genuine release — never a cancel — at or past
+        // the catch on this frame's fresh read seats the slide:
+        // Cato's integrator drives it to the latch exactly as the
+        // abolished under-contact crossing did, seeded with the
+        // hand's last measured motion floored and capped by the
+        // crossing's own law (floor 0, cap +6.0 frac/s). The read
+        // that seats is any not-positively-dead one (issue #515
+        // F2 as adjudicated, #515 comment 6545245897): Rosa's
+        // UNPROVEN catch-stop refusal, which stood ahead of this
+        // check and refused the release FROM the catch, is
+        // deleted — an UNPROVEN release at the catch seats here
+        // and the proving cascade judges the attempt.
+        if (!cancelled && SlideGestureMath.commitsOnRelease(displayed, attemptWarrant)) {
+            startSeat(fromDrag = true, seedVelocity = dragVelocitySigned.coerceIn(0f, 6f))
             return
         }
 
-        // Sub-catch release: the shipped spring-back survives for this
-        // path alone (Cato's site law) — it is not the seat, not the
-        // refusal spring, and is not unified into the integrator.
+        // Sub-catch release — which since #125 F2 includes every
+        // drag-back below the catch: the release is a cancel, and
+        // the shipped spring-back survives for this path alone
+        // (Cato's site law) — it is not the seat, not the refusal
+        // spring. R5-0723: it now shares the integrator's CLOCK
+        // and the hand's release velocity, never their constants
+        // — the voice stays its own.
         mode = Mode.REST
         animateSpringBack(0f) { onPressEnd?.invoke() }
     }
@@ -2642,6 +2800,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         meshTarget = target
         modeStartNanos = System.nanoTime()
         velocity = 0f
+        meshVelocity = 0f
         startIntegrator()
         invalidate()
     }
@@ -2660,8 +2819,16 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // Buttonhole abort: spring-back from the abort frame's sampled
         // fraction, on the same integrator (250ms class). Nothing was
         // dispatched — enforcement dispatches only at the latch.
+        // R5-0723: the return inherits the motion it interrupts —
+        // the seat's live spring velocity, or the mesh's sampled
+        // rate — instead of restarting from rest on the very frame
+        // the machine was moving fastest.
+        velocity = when (mode) {
+            Mode.SEAT -> velocity
+            Mode.MESH -> meshVelocity
+            else -> 0f
+        }.coerceIn(-6f, 6f)
         mode = Mode.ABORT_RETURN
-        velocity = 0f
         startIntegrator()
         invalidate()
     }
@@ -2674,6 +2841,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // sat below the floor, and Joss's filing was a build gate,
         // not a deferral). The device session may only raise it.
         if (knockFirst) fireWeightedKnock(12, 0.70f, 220f)
+        refusalSeedVelocity = dragVelocitySigned
         mode = Mode.REFUSAL_HOLD
         holdUntilNanos = System.nanoTime() + 300_000_000L
         velocity = 0f
@@ -2720,7 +2888,13 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             Mode.MESH -> {
                 val elapsedMs = (frameNanos - modeStartNanos) / 1_000_000f
                 val u = (elapsedMs / MonolithCurves.DURATION_140).coerceIn(0f, 1f)
+                val beforeMesh = displayed
                 displayed = modeFrom + (meshTarget - modeFrom) * SlideGestureMath.meshCurve(u)
+                // R5-0723: the mesh's instantaneous rate, sampled
+                // for the abort seed (the curve holds no velocity).
+                if (dt > 0f) {
+                    meshVelocity = ((displayed - beforeMesh) / dt).coerceIn(-6f, 6f)
+                }
                 if (u >= 1f) {
                     displayed = meshTarget
                     if (meshTarget >= 0.92f) {
@@ -2732,12 +2906,15 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                         // Arrival at the catch on an unproven wire:
                         // one fresh read (the latch-time-verdict
                         // law). LIVE — the wire healed during the
-                        // mesh — seats from the catch; anything else
-                        // refuses FROM the catch: knock, 300ms hold
-                        // at 0.84, universal spring home (Rosa F3).
+                        // mesh — seats from the catch; UNPROVEN
+                        // seats too (issue #515 F2: the proving
+                        // cascade judges the attempt); only a
+                        // positively dead wire refuses FROM the
+                        // catch: knock, 300ms hold at 0.84,
+                        // universal spring home (Rosa F3).
                         val verdict = readWarrant()
                         attemptWarrant = verdict
-                        if (verdict == WarrantState.LIVE) {
+                        if (verdict != WarrantState.OFF) {
                             startSeat(fromDrag = false, seedVelocity = 0f)
                         } else {
                             startRefusal(knockFirst = true)
@@ -2754,10 +2931,12 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                 var remaining = dt
                 while (remaining > 0f && mode == Mode.ABORT_RETURN) {
                     val h = min(remaining, 0.005f)
-                    val accel = 484f * (0f - displayed) - 39.6f * velocity
-                    velocity += accel * h
-                    displayed += velocity * h
-                    if (displayed <= 0.001f && abs(velocity) < 0.05f) {
+                    val (nx, nv) = SlideGestureMath.springStep(
+                        displayed, velocity, 0f, 484f, 39.6f, h
+                    )
+                    displayed = nx
+                    velocity = nv
+                    if (SlideGestureMath.springSettled(displayed, velocity)) {
                         displayed = 0f
                         velocity = 0f
                         mode = Mode.REST
@@ -2787,23 +2966,35 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                         onPressEnd?.invoke()
                     } else {
                         mode = Mode.REFUSAL_RETURN
-                        velocity = 0f
+                        velocity = refusalSeedVelocity
                     }
                 }
             }
             Mode.REFUSAL_RETURN -> {
                 // Fen's universal return spring (dampingRatio 0.78,
                 // stiffness 260, ~320ms) — the app's one
-                // "not committed" voice (Joss A6).
-                val accel = 260f * (0f - displayed) - 25.2f * velocity
-                velocity += accel * dt
-                displayed += velocity * dt
-                if (displayed <= 0.001f && abs(velocity) < 0.05f) {
-                    displayed = 0f
-                    velocity = 0f
-                    mode = Mode.REST
-                    stopIntegrator()
-                    onPressEnd?.invoke()
+                // "not committed" voice (Joss A6). R5-0723:
+                // substepped at ≤5ms like the abort return beside
+                // it — the raw frame step this branch used crossed
+                // the spring's stability bound at the loop's own
+                // 50ms clamp and integrated a different spring at
+                // every frame rate.
+                var remaining = dt
+                while (remaining > 0f && mode == Mode.REFUSAL_RETURN) {
+                    val h = min(remaining, 0.005f)
+                    val (nx, nv) = SlideGestureMath.springStep(
+                        displayed, velocity, 0f, 260f, 25.2f, h
+                    )
+                    displayed = nx
+                    velocity = nv
+                    if (SlideGestureMath.springSettled(displayed, velocity)) {
+                        displayed = 0f
+                        velocity = 0f
+                        mode = Mode.REST
+                        stopIntegrator()
+                        onPressEnd?.invoke()
+                    }
+                    remaining -= h
                 }
             }
             else -> stopIntegrator()
@@ -2839,13 +3030,17 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     }
 
     /** The latch frame (D3's boundary): a fresh read dispatches.
-     *  LIVE → the commit fires. Anything else → the refusal runs
-     *  from the seat's end (displayed == 1.00): the seat proved
-     *  nothing, so nothing dispatches. */
+     *  LIVE → the commit fires. UNPROVEN → the commit fires too
+     *  (issue #515 F2): the residency stamp the old law waited
+     *  for is not an action the user can take, and the proving
+     *  cascade behind this dispatch re-checks every witness
+     *  before t=0 and annuls honestly — it is the judge. OFF →
+     *  the refusal runs from the seat's end (displayed == 1.00):
+     *  the wire is positively dead, so nothing dispatches. */
     private fun latchFrame() {
         val verdict = readWarrant()
         attemptWarrant = verdict
-        if (verdict == WarrantState.LIVE) {
+        if (verdict != WarrantState.OFF) {
             stopIntegrator()
             mode = Mode.SEATED
             // The commit dispatches BEFORE the press latch releases
@@ -2919,6 +3114,7 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
         // a dead sequence until process death.
         mode = Mode.REST
         displayed = 0f
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         refusalFired = false
         super.onDetachedFromWindow()
     }
