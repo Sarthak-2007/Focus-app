@@ -266,6 +266,14 @@ class MonolithShieldService : Service() {
      *  MonolithBootReceiver's battery branch. No-op before the
      *  first post — there is no promise on screen to correct. */
     fun refreshBatteryNotification() {
+        // Issue #155 (WING-F, gate completeness): the re-post is
+        // LATCH-GATED — while the latch is down the stored base is
+        // the full session card, and re-posting it on a battery
+        // event would revive a protection claim the loop has
+        // already retracted. The loop owns the screen while
+        // unproven (it posts the arming card); a battery event
+        // never speaks over it.
+        if (!protecting) return
         val title = lastBaseTitle ?: return
         val subtitle = lastBaseSubtitle ?: return
         updateNotification(title, subtitle)
@@ -568,7 +576,18 @@ class MonolithShieldService : Service() {
                     // the detached LOW notification below.
                     postSummons(
                         "SESSION COMPLETE",
-                        "Your session has ended. The receipt is on the Deck."
+                        // Issue #155 (IQ-5 F-1): one story on both
+                        // completion cards — the Ledger line, as on
+                        // the shield card below (main's #164 wording).
+                        "Your session has ended. Your receipt is waiting in the Ledger.",
+                        // Issue #155, verifier residue (3b): the
+                        // completion moment posts TWO cards — the
+                        // expiring shield card below (F3) and this
+                        // summons. The summons previously had no
+                        // timeout and could linger forever,
+                        // re-creating the F3 ghost on the HIGH
+                        // channel. Same 45-minute expiry as F3.
+                        timeoutAfterMs = COMPLETION_TIMEOUT_MS
                     )
                     // Issue #155 (F3) + R3b #164 F2 (composed at the
                     // STURM-4 recovery merge): the completion receipt
@@ -600,7 +619,15 @@ class MonolithShieldService : Service() {
                 if (wasInSafeBreak && !updated.isInSafeBreak) {
                     postSummons(
                         "BREAK OVER",
-                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started."
+                        "Block ${updated.currentBlockIndex} of ${updated.totalStudyBlocks} has started.",
+                        // Issue #155 (IQ-2 VC-4, wing-added cure):
+                        // the break-over summons carries a 10-minute
+                        // expiry — untimed, it could sit in the shade
+                        // asserting "has started" until tapped; the
+                        // completion cards' 45 minutes is not its
+                        // term (the block it announces is already
+                        // running, so its news is shorter-lived).
+                        timeoutAfterMs = BREAK_OVER_TIMEOUT_MS
                     )
                 }
                 // Issue #143 F1/F6: publish the break's dim phase
@@ -680,25 +707,6 @@ class MonolithShieldService : Service() {
                 // (when = session end) instead of this loop's 2s text
                 // snapshot as the only timer. The end is derived from
                 // the same remaining-seconds math as the text above.
-                val timeLeftLabel = when {
-                    updated.isInSafeBreak -> {
-                        val bMin = updated.safeBreakSecondsRemaining / 60
-                        val bSec = updated.safeBreakSecondsRemaining % 60
-                        String.format("Safe Break %02d:%02d left", bMin, bSec)
-                    }
-                    updated.isStopwatchMode -> {
-                        val mins = updated.elapsedSeconds / 60
-                        val secs = updated.elapsedSeconds % 60
-                        String.format("Stopwatch +%02d:%02d elapsed", mins, secs)
-                    }
-                    else -> {
-                        val effectiveTarget = updated.targetDurationSeconds + updated.penaltySecondsAdded
-                        val remainingSec = (effectiveTarget - updated.elapsedSeconds).coerceAtLeast(0)
-                        val mins = remainingSec / 60
-                        val secs = remainingSec % 60
-                        String.format("%02d:%02d left", mins, secs)
-                    }
-                }
                 val chronometerEndMillis: Long? = when {
                     updated.isStopwatchMode -> null
                     updated.isInSafeBreak ->
@@ -716,11 +724,24 @@ class MonolithShieldService : Service() {
                 val heldCount = runCatching {
                     dao.getCapturedNotificationsSnapshot().size
                 }.getOrNull()
-                val badgeNumber = heldCount ?: updated.phantomReachesBlocked
-                val bigText = "${updated.intention} • $timeLeftLabel • " +
-                    "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks} • " +
-                    "${updated.phantomReachesBlocked} urges stopped • " +
-                    (if (heldCount != null) "$heldCount held" else "held count unavailable")
+                // Issue #155 (IQ-2 M-5): NO fallback swap — the
+                // badge's one number keeps one meaning (held
+                // notifications). When the held count is unreadable
+                // the badge shows no number, never the urges count
+                // wearing the held count's slot.
+                val badgeNumber = heldCount
+                // Issue #155 (IQ-2 M-8): the bigText's time segment
+                // is the LABELLED format (timeFormatted, #127's two
+                // labelled scopes), never the bare per-block label;
+                // and a blank intention drops its segment instead
+                // of leaving a doubled separator at the head.
+                val bigText = listOfNotNull(
+                    updated.intention.takeIf { it.isNotBlank() },
+                    timeFormatted,
+                    "Block ${updated.currentBlockIndex}/${updated.totalStudyBlocks}",
+                    "${updated.phantomReachesBlocked} urges stopped",
+                    if (heldCount != null) "$heldCount held" else "held count unavailable"
+                ).joinToString(" • ")
 
                 // Audit R3b #149 (from main): the grace window exists
                 // off the Deck too. During the window the shield's own
@@ -729,6 +750,73 @@ class MonolithShieldService : Service() {
                 // Merge resolution (WELLE-4, #155 × #149): the grace
                 // subtitle rides on the #155 card — bigText,
                 // chronometer and badge number apply in both branches.
+                // Issue #155, verifier residue (3a): the flip runs
+                // BEFORE the card posts, and the card follows the
+                // flip's truth. The full session card previously
+                // posted unconditionally at this point in the loop —
+                // on an iteration where the flip could not happen
+                // (usage access revoked), the card went on implying
+                // protection that was not running and never reverted
+                // to the arming text. Now: protecting -> the full
+                // card; not protecting -> the honest arming card.
+                // Issue #122: PARK's battery stays fresh while a
+                // session runs — the shield loop is already awake
+                // every 2s; publishing here costs one sticky read.
+                WatchStore.publishBattery(readBatterySnapshot(applicationContext))
+
+                // Live Wire: the shield is PROTECTING only once a
+                // full monitor iteration has run under a live
+                // session - started is not protecting. The cascade
+                // witness (Opal L2) is stamped at the same flip:
+                // the session this iteration read, and the mono it
+                // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
+                // Issue #155, unified latch (IQ-1 verdict, WING-F):
+                // the flip requires BOTH doors standing — usage
+                // access AND the accessibility door armed for THIS
+                // session (service bound and armedSessionId == this
+                // session's id), measured here, per iteration, at
+                // the flip site. Because the flip requires both
+                // doors and the demote below fires on either door
+                // closing, the protecting witness itself implies
+                // the accessibility door: the widget's truth rule
+                // needs no second derivation and no second reader
+                // (the fork IQ-1 rejected is removed, not re-homed).
+                // Demote on EITHER door closing —
+                // Race 1b's usage half plus the accessibility half —
+                // with a falling-edge widget refresh, in the same
+                // iteration that measures the closed door. Before
+                // the usage half landed, the latch only ever flipped
+                // up: once protecting, a revoked door left it
+                // stale-true forever and both the card below and
+                // the widget kept claiming protection that was not
+                // running.
+                val accessibilityStanding =
+                    MonolithAccessibilityService.instance != null &&
+                        MonolithAccessibilityService.armedSessionId == updated.id
+                if (protecting && (!usageGranted || !accessibilityStanding)) {
+                    protecting = false
+                    protectingSessionId = -1
+                    protectingMono = 0L
+                    // Falling edge: the widget re-reads NOW, not at
+                    // the platform's 30-minute cadence.
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
+                }
+                if (!protecting && usageGranted && accessibilityStanding) {
+                    protecting = true
+                    protectingSessionId = updated.id
+                    protectingMono = SystemClock.elapsedRealtime()
+                    WatchStore.poke()
+                    // Issue #155 (F1): a session is now live — refresh
+                    // the home-screen widget at the moment it matters.
+                    MonolithWidgetProvider.requestUpdate(applicationContext)
+                    // Issue #80 finding 4: the session just armed —
+                    // sweep notifications blocked apps posted BEFORE
+                    // this moment through the listener's capture path.
+                    try {
+                        MonolithNotificationListener.instance?.sweepActiveNotifications()
+                    } catch (_: Exception) {}
+                }
+
                 // Issue #69 F1: ONE guarded post for both branches.
                 // The grace subtitle counts down per second, so it
                 // re-posts through the window exactly as before;
@@ -744,9 +832,19 @@ class MonolithShieldService : Service() {
                         "GRACE ${10 - updated.elapsedSeconds}S — CANCEL FREE · TAP TO OPEN"
                     }
                 } else {
-                    "$timeFormatted • ${updated.phantomReachesBlocked} reaches blocked"
+                    // Issue #155 (IQ-2 M-8): the counter carries ONE
+                    // name in both scopes — "urges stopped", as the
+                    // bigText below already prints.
+                    "$timeFormatted • ${updated.phantomReachesBlocked} urges stopped"
                 }
-                val standingTitle = "Monolith • ${updated.intention}"
+                // Issue #155 (WING-F): a blank intention names no
+                // session — the title drops the segment instead of
+                // carrying a dangling separator.
+                val standingTitle = if (updated.intention.isBlank()) {
+                    "Monolith"
+                } else {
+                    "Monolith • ${updated.intention}"
+                }
                 // Merge composition with #337 (from main): the
                 // repair actions are probed at build time inside
                 // buildNotification, so the missing-grant set is
@@ -758,7 +856,21 @@ class MonolithShieldService : Service() {
                     accessibilityBound = MonolithAccessibilityService.instance != null,
                     usageAccessGranted = hasUsageAccessNow()
                 ).joinToString(",") { it.name }
-                if (notificationGuard.shouldPost(
+                if (!protecting) {
+                    // Issue #155 gate (3a) composed with #69's
+                    // guard: the arming card is a guarded post too.
+                    // Its key differs from every standing key, so a
+                    // demote posts it once, the loop does not spam
+                    // it per iteration, and a later re-flip re-posts
+                    // the standing card (its key differs from the
+                    // arming key the guard last recorded).
+                    if (notificationGuard.shouldPost(
+                            shieldNotificationKey("Monolith", "Arming shield\u2026", null, null, repairKey)
+                        )
+                    ) {
+                        updateNotification("Monolith", "Arming shield\u2026")
+                    }
+                } else if (notificationGuard.shouldPost(
                         shieldNotificationKey(standingTitle, standingSubtitle, bigText, badgeNumber, repairKey)
                     )
                 ) {
@@ -770,32 +882,7 @@ class MonolithShieldService : Service() {
                         badgeNumber = badgeNumber
                     )
                 }
-                // Issue #122: PARK's battery stays fresh while a
-                // session runs — the shield loop is already awake
-                // every 2s; publishing here costs one sticky read.
-                WatchStore.publishBattery(readBatterySnapshot(applicationContext))
 
-                // Live Wire: the shield is PROTECTING only once a
-                // full monitor iteration has run under a live
-                // session - started is not protecting. The cascade
-                // witness (Opal L2) is stamped at the same flip:
-                // the session this iteration read, and the mono it
-                // flipped - CONFIRMED stamp for SHIELD-PROTECTING.
-                if (!protecting && usageGranted) {
-                    protecting = true
-                    protectingSessionId = updated.id
-                    protectingMono = SystemClock.elapsedRealtime()
-                    WatchStore.poke()
-                    // Issue #155 (F1): a session is now live — refresh
-                    // the home-screen widget at the moment it matters.
-                    MonolithWidgetProvider.requestUpdate(applicationContext)
-                    // Issue #80 finding 4: the session just armed —
-                    // sweep notifications blocked apps posted BEFORE
-                    // this moment through the listener's capture path.
-                    try {
-                        MonolithNotificationListener.instance?.sweepActiveNotifications()
-                    } catch (_: Exception) {}
-                }
                 // Watch Store (chrome C3): ONE publication per
                 // iteration — the engine heartbeat plus a re-read of
                 // the two BIND items' present state (and, #81 F4,
@@ -925,6 +1012,16 @@ class MonolithShieldService : Service() {
                     protectingSessionId = -1
                     protectingMono = 0L
                     WatchStore.onShieldIteration(protecting = false)
+                    // Issue #155 (WING-F, gate completeness): the
+                    // exception demoted the latch — the full session
+                    // card from the last good iteration must not
+                    // stay on screen claiming protection. Replace
+                    // it with the honest arming card and refresh
+                    // the widget on the falling edge.
+                    runCatching {
+                        updateNotification("Monolith", "Arming shield\u2026")
+                        MonolithWidgetProvider.requestUpdate(applicationContext)
+                    }
                     // One cadence before the next attempt. If the
                     // scope was cancelled during this wait, the
                     // CancellationException from delay propagates —
@@ -947,6 +1044,10 @@ class MonolithShieldService : Service() {
         protectingMono = 0L
         WatchStore.onShieldIteration(protecting = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // Issue #155 (WING-F): a local stop is a shield-down
+        // moment exactly like the STOP dispatch — the widget
+        // refreshes now, not at the 30-minute cadence.
+        MonolithWidgetProvider.requestUpdate(applicationContext)
         stopSelf()
     }
 
@@ -1152,14 +1253,30 @@ class MonolithShieldService : Service() {
         // Issue #274 (R5 Platform): lock-screen redaction. The live
         // title/subtitle carry the user's private intention text and
         // urge count — on a locked phone anyone holding it could read
-        // both. VISIBILITY_PRIVATE + a generic public version: the
-        // owner (unlocked) sees the real session line, the lock screen
-        // sees only that Monolith is protecting a session.
+        // both. VISIBILITY_PRIVATE + a generic public version.
+        // Issue #155 (IQ-5 F-2, deepened by IQ-2 M-1): the public
+        // version is STATE-MATCHED, mirroring the private card —
+        // it used to be one hardcoded ongoing "Focus session
+        // protected" attached to every card: F2's claim verbatim
+        // on the lock screen during arming, and on the completion
+        // card a public form that never expired (the F3 ghost,
+        // lock-screen edition). Now: completion -> not ongoing,
+        // the same timeout, "Session complete"; arming -> the
+        // non-claim line; "Focus session protected" only on the
+        // post-flip standing card it describes.
+        val publicText = when {
+            !ongoing -> "Session complete"
+            subtitle.contains("Arming shield") -> "Monolith session in progress"
+            else -> "Focus session protected"
+        }
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle("Monolith")
-            .setContentText("Focus session protected")
-            .setOngoing(true)
+            .setContentText(publicText)
+            .setOngoing(ongoing)
+            .apply {
+                if (timeoutAfterMs > 0) setTimeoutAfter(timeoutAfterMs)
+            }
             .setContentIntent(pendingIntent)
             .build()
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -1202,14 +1319,19 @@ class MonolithShieldService : Service() {
             usageAccessGranted = hasUsageAccessNow()
         )
         if (missing.isNotEmpty()) {
+            // Issue #155 (IQ-2 M-8): the warning APPENDS to the
+            // card's normal bigText — it never replaces it (the
+            // session's own status line stays readable under the
+            // warning). Only a card with no bigText of its own
+            // (the arming card) builds the warning on its subtitle.
             val warning = buildString {
-                append(subtitle)
+                append(bigText ?: subtitle)
                 append(" — Missing: ")
                 append(
                     missing.joinToString(", ") {
                         when (it) {
                             RepairAction.ACCESSIBILITY -> "Accessibility (blocking is OFF)"
-                            RepairAction.USAGE_ACCESS -> "Usage access (detector degraded)"
+                            RepairAction.USAGE_ACCESS -> "Usage access (off — Monolith may miss app launches)"
                         }
                     }
                 )
@@ -1271,7 +1393,7 @@ class MonolithShieldService : Service() {
      *  Distinct id from the standing foreground notification, not
      *  ongoing, not only-alert-once — it arrives like news, because
      *  for the user who walked away, it is. */
-    private fun postSummons(title: String, text: String) {
+    private fun postSummons(title: String, text: String, timeoutAfterMs: Long = 0) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -1300,6 +1422,11 @@ class MonolithShieldService : Service() {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
+            .apply {
+                // Issue #155 (3b): a timed summons expires like the
+                // F3 completion card instead of ghosting.
+                if (timeoutAfterMs > 0) setTimeoutAfter(timeoutAfterMs)
+            }
             .build()
         manager.notify(SUMMONS_NOTIFICATION_ID, notification)
     }
@@ -1324,6 +1451,10 @@ class MonolithShieldService : Service() {
         protectingSessionId = -1
         protectingMono = 0L
         WatchStore.onShieldIteration(protecting = false)
+        // Issue #155 (WING-F): the shield is gone — the widget
+        // refreshes now, not at the 30-minute cadence, so a stale
+        // SEALED cannot outlive the service that proved it.
+        MonolithWidgetProvider.requestUpdate(applicationContext)
         // Issue #143: a dying shield takes its dim phase with it.
         publishBreakDim(BreakDimState())
         monitorJob?.cancel()
@@ -1379,6 +1510,7 @@ class MonolithShieldService : Service() {
         @Volatile
         var protectingMono: Long = 0L
             internal set
+
         const val TAG = "MonolithShield"
         const val RESTART_REQUEST_CODE = 0x5211
         // Issue #155 (F4): v2 carries setShowBadge(true); the legacy
@@ -1396,6 +1528,11 @@ class MonolithShieldService : Service() {
         const val BREAK_ALERT_TIMEOUT_MS = 90_000L
         /** Issue #155 (F3): the detached completion card self-expires. */
         const val COMPLETION_TIMEOUT_MS = 45 * 60 * 1000L
+        /** Issue #155 (IQ-2 VC-4): the BREAK OVER summons
+         *  self-expires after 10 minutes — its news (the next
+         *  block has started) is shorter-lived than the
+         *  completion receipt's. */
+        const val BREAK_OVER_TIMEOUT_MS = 600_000L
         /** Issue #155 (F5): present (true) on the shield card's content
          *  intent; MainActivity routes such a launch to SHIELD. */
         const val EXTRA_FROM_SHIELD_NOTIFICATION = "com.example.EXTRA_FROM_SHIELD_NOTIFICATION"

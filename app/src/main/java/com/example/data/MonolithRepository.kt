@@ -17,6 +17,7 @@ import android.util.Log
 import android.os.PowerManager
 import android.telecom.TelecomManager
 import com.example.service.MonolithAccessibilityService
+import com.example.widget.MonolithWidgetProvider
 import com.example.service.MonolithBootReceiver
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithNotificationListener
@@ -1972,6 +1973,10 @@ class MonolithRepository(
         // Issue #32 F2: THE routine write funnel (ViewModel's
         // persistRoutine routes here) — sanitize at the boundary.
         dao.updateRoutine(routine.sanitized())
+        // Issue #155, verifier residue (3c): NEXT SEAL is read from
+        // routines — an edit while idle must refresh the widget
+        // now, not at the platform's 30-minute cadence.
+        MonolithWidgetProvider.requestUpdate(context)
     }
 
     /** #153 F4: add a routine row (single persist funnel stamps
@@ -1979,6 +1984,8 @@ class MonolithRepository(
     suspend fun addRoutine(routine: RoutineEntity) {
         val now = System.currentTimeMillis()
         dao.insertRoutines(listOf(routine.copy(scheduleEditedAtMillis = now)))
+        // Issue #155 (3c): widget NEXT SEAL refresh, as above.
+        MonolithWidgetProvider.requestUpdate(context)
     }
 
     /** #153 F4: delete a routine row. Its sessions are not lost:
@@ -1986,6 +1993,8 @@ class MonolithRepository(
      *  stored window snapshot (R5). */
     suspend fun deleteRoutine(id: Int) {
         dao.deleteRoutineById(id)
+        // Issue #155 (3c): widget NEXT SEAL refresh, as above.
+        MonolithWidgetProvider.requestUpdate(context)
     }
 
     /** Guard settings as a flow (reset-note strip + tick stamps). */
@@ -4042,6 +4051,10 @@ class MonolithRepository(
             )
         )
         dao.updateSession(reSigned)
+        // Issue #155, verifier residue (3c): the widget's
+        // SEALED-until is derived from the target — an extension
+        // while sealed must refresh it now.
+        MonolithWidgetProvider.requestUpdate(context)
         return true
     }
 
@@ -4843,6 +4856,8 @@ class MonolithRepository(
                 hmacSignature = hmac
             )
             dao.updateSession(updated)
+            // Issue #155 (3c): widget SEALED-until refresh, as above.
+            MonolithWidgetProvider.requestUpdate(context)
             updated
         }
 
