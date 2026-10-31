@@ -36,6 +36,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -237,6 +239,12 @@ class VaultHistoryTruthTest {
             durationMinutes = 25,
             studyBlocksCount = 1
         )
+        // AUDIT-CLOCK census seat (b) cure (#166): advance the
+        // shadow clock past the 5-minute backdate before
+        // fabricating the anchor — clamped to 1L, the verified
+        // clock read (0s, tamper = true) and the stamp banked
+        // solely on the stored counter. The ForgeLot idiom.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
         db.monolithDao().updateSession(
             session.copy(
@@ -251,6 +259,10 @@ class VaultHistoryTruthTest {
         val row = db.monolithDao().getSessionById(session.id)!!
         assertEquals(PARTIAL_STAMP_ID, row.forgedArtifactId)
         assertEquals(1, repo.forgeStats()[PARTIAL_STAMP_ID]?.count)
+        // Seat (b) cure: the ending write stamps no tamper —
+        // the verified leg ran and agreed (before the cure the
+        // row was silently stamped tamperDetected).
+        assertFalse(row.tamperDetected)
     }
 
     // ---- Finding 2: the Drawer's SPENT prints say TOTAL ----
