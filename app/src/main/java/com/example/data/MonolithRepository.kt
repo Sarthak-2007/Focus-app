@@ -4944,7 +4944,19 @@ class MonolithRepository(
         // reads), but neither counter may call a let-through a
         // stop: the shield's "N reaches blocked" counts only
         // reaches that were not let through.
-        val countAsBlocked = countAsReach && outcome != InterceptOutcome.USED_PEEK
+        // Issue #7 charge N2 (DURCH-PRUEF2, verified LIVE on
+        // current main): the launcher-door exit is the same
+        // lie in a second verb — he was LET THROUGH (the doors
+        // exist so he can leave), yet "Opened Launcher" booked
+        // +1 on both counters, so a let-in printed as an urge
+        // stopped. It is gated here beside the peek. The one
+        // deliberate exception stands untouched: "Left Airlock
+        // Without Choosing" still counts — #99 F3 ruled the
+        // escape itself moves the counter, and that ruling is
+        // preserved by name, not inherited by accident.
+        val countAsBlocked = countAsReach &&
+            outcome != InterceptOutcome.USED_PEEK &&
+            outcome != InterceptOutcome.OPENED_LAUNCHER
         databaseProvider().withTransaction {
             if (countAsBlocked) {
                 dao.incrementInterceptCount(packageName)
