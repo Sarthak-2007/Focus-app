@@ -58,6 +58,16 @@ class CatalogSyncWindowTest {
         repository = MonolithRepository(context, db.monolithDao())
         context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
             .edit().clear().commit()
+        // Settled-world stamp (issue #7 rulings landing, BUILDER-7):
+        // after the clear above, mark the one-time LEGACY OPEN
+        // reset (Ren ruling 00:34 IST Oct 31) as already run — it
+        // fires at the end of the first seed-sync over a legacy
+        // catalogue and would close this class's staged OPEN rows
+        // mid-test. The reset is not this class's subject (its own
+        // pin is LegacyOpenResetRepositoryTest); no assertion in
+        // this class changes.
+        context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(MonolithRepository.LEGACY_OPEN_RESET_DONE_KEY, true).commit()
     }
 
     @After

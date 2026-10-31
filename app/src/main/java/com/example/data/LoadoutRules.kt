@@ -65,7 +65,24 @@ object LoadoutRules {
                     categoryName == AppCategory.SOCIAL.name ||
                     categoryName == AppCategory.GAMES.name ->
                     AppBlockTier.LOCKED
-                else -> AppBlockTier.OPEN
+                // Ren ruling 00:34 IST Oct 31 (#7, via KLAR-BAU's
+                // supplement): the loadout DEFAULT for the unruled
+                // set flips to SHUT. This branch used to answer OPEN
+                // for every category no rule above names — a routine
+                // firing STUDY silently re-opened (or held open)
+                // whatever the inversion had shut, defeating it.
+                // Now the loadout takes no position on the unruled
+                // set: a tier HE set stands (the Sheet is the only
+                // law-writing place, and #129's law — a loadout
+                // never overrides his ruling — is untouched), a
+                // PEEK stays a PEEK (no more silent loosening), and
+                // an app with no tier at all defaults to LOCKED.
+                // Named exceptions above (study surfaces, EDUCATION)
+                // are reasoned category policy, not the leak, and
+                // are unchanged. Independent of the routines freeze:
+                // the freeze covers firing/eviction, not a default
+                // that defeats the inversion.
+                else -> currentTier ?: AppBlockTier.LOCKED
             }
             SmartLoadout.WORK_SPRINT -> when {
                 categoryName == AppCategory.SHORT_VIDEO.name ||
@@ -74,7 +91,10 @@ object LoadoutRules {
                 categoryName == AppCategory.SOCIAL.name ||
                     categoryName == AppCategory.BROWSERS.name ->
                     AppBlockTier.PEEK_2M
-                else -> AppBlockTier.OPEN
+                // Ren ruling 00:34 IST Oct 31 (#7): same flip as
+                // STUDY above — the unruled default is SHUT, his
+                // own tier stands, a tierless app defaults LOCKED.
+                else -> currentTier ?: AppBlockTier.LOCKED
             }
             SmartLoadout.SLEEP -> {
                 // Issue #121: structurally time-critical packages

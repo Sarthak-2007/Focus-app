@@ -226,6 +226,14 @@ fun ShieldMatrixScreen(
     // composed by the caller, printed exactly.
     pruneNoteText: String? = null,
     onPruneNoteDismissed: () -> Unit = {},
+    // Ren ruling 00:34 IST Oct 31 (#7): the legacy OPEN reset's
+    // announcement — the counted strip above the catalogue, in the
+    // same one-time-strip grammar as the prune note. The words are
+    // the ruling's sentence with the live count, composed by the
+    // caller from the repository's record (LegacyOpenReset).
+    // Null = nothing to announce.
+    legacyResetNoteText: String? = null,
+    onLegacyResetNoteDismissed: () -> Unit = {},
     // Issue #129 F1: the unreviewed-auto-OPEN review prompt. Not
     // dismissible — it stands until each named app has a ruling.
     unreviewedOpenText: String? = null,
@@ -598,6 +606,28 @@ fun ShieldMatrixScreen(
                         .fillMaxWidth()
                         .clickable { onPruneNoteDismissed() }
                         .testTag("app_list_prune_note")
+                )
+            }
+        }
+
+        // Ren ruling 00:34 IST Oct 31 (#7): the legacy OPEN reset
+        // announces itself here — on the Sheet, the only
+        // law-writing place — directly above the catalogue where
+        // any reset app is re-opened by hand. One quiet counted
+        // line, same grammar as the prune note above; tapping it
+        // dismisses it, and so does the first row tap (the
+        // ViewModel owns that half, as with the prune note).
+        if (legacyResetNoteText != null) {
+            item {
+                Text(
+                    text = legacyResetNoteText,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 11.sp,
+                    color = scheme.primary,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onLegacyResetNoteDismissed() }
+                        .testTag("app_list_legacy_reset_note")
                 )
             }
         }

@@ -725,6 +725,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val allApps by viewModel.apps.collectAsStateWithLifecycle()
     val filteredApps by viewModel.filteredApps.collectAsStateWithLifecycle()
     val pruneNote by viewModel.pruneNote.collectAsStateWithLifecycle()
+    val legacyOpenResetCount by viewModel.legacyOpenResetCount.collectAsStateWithLifecycle()
     val unreviewedOpenNames by viewModel.unreviewedOpenNames.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategoryFilter.collectAsStateWithLifecycle()
@@ -1839,6 +1840,10 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                                             if (note.rulesRemoved) " — AND THEIR RULES WITH THEM" else ""
                                     },
                                     onPruneNoteDismissed = viewModel::dismissPruneNote,
+                                    legacyResetNoteText = legacyOpenResetCount?.let { count ->
+                                        com.example.data.LegacyOpenReset.announcementLine(count)
+                                    },
+                                    onLegacyResetNoteDismissed = viewModel::dismissLegacyOpenResetNote,
                                     unreviewedOpenText = unreviewedOpenNames.takeIf { it.isNotEmpty() }?.let { names ->
                                         val shown = names.take(3).joinToString(", ") { it.uppercase() }
                                         val more = if (names.size > 3) " +${names.size - 3} MORE" else ""
