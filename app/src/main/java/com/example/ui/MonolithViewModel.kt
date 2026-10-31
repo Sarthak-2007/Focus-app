@@ -604,7 +604,22 @@ data class AirlockInterceptState(
      *  interceptAttemptsToday, over dao.getInterceptLogsBetween).
      *  0 = not carried (previews, tests, or the count not yet read
      *  back): the door prints nothing rather than inventing one. */
-    val todayAttempts: Int = 0
+    val todayAttempts: Int = 0,
+    /** Issue #125 (armed-wrong F5 remainder): the armed session's
+     *  VERIFIED elapsed seconds at the intercept instant, read off
+     *  the live row like every other fact on this state. -1 = not
+     *  carried (no session, previews, tests): the door's grace
+     *  abort prints nothing rather than inventing a window. The
+     *  overlay ages this snapshot from [interceptedAtMonoMillis]
+     *  on the monotonic clock, so its countdown derives from the
+     *  same anchor the repository's grace law reads — never from
+     *  a counter that ticks itself. */
+    val sessionElapsedSecondsAtIntercept: Int = -1,
+    /** Issue #125: true when the armed session is routine-born —
+     *  its grace tap is judged by the routine funnel, never a free
+     *  cancel, and the door's chip must say so (the Deck's own
+     *  distinction, TactileDeckScreen's routine_judged_end_button). */
+    val sessionIsRoutine: Boolean = false
 )
 
 /**
@@ -5083,7 +5098,11 @@ class MonolithViewModel(
                 // session's end is not stated at all.
                 ?.takeIf { !it.isStopwatchMode && live }
                 ?.let { System.currentTimeMillis() + it.spanRemainingSeconds * 1000L },
-            sessionIsStopwatch = active?.isStopwatchMode == true
+            sessionIsStopwatch = active?.isStopwatchMode == true,
+            // Issue #125 (F5 remainder): the grace facts ride onto
+            // the door from the same live row.
+            sessionElapsedSecondsAtIntercept = active?.elapsedSeconds ?: -1,
+            sessionIsRoutine = active?.routineId != null
         )
 
         // C-11 (Tor round 7, ruled in full): BOOK AT ARRIVAL. The
@@ -5298,7 +5317,12 @@ class MonolithViewModel(
                         (MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS - it.elapsedSeconds)
                             .coerceAtLeast(0) * 1000L
                 },
-            todayAttempts = todayAttempts
+            todayAttempts = todayAttempts,
+            // Issue #125 (F5 remainder): the grace facts ride onto
+            // the door from the same live row, on the re-derive too —
+            // a restored door carries the same abort a live door does.
+            sessionElapsedSecondsAtIntercept = active?.elapsedSeconds ?: -1,
+            sessionIsRoutine = active?.routineId != null
         )
     }
 
@@ -5649,6 +5673,23 @@ class MonolithViewModel(
     fun requestDisarmFromAirlock() {
         _airlockState.value = _airlockState.value.copy(isVisible = false)
         requestDisarmChallenge()
+    }
+
+    /**
+     * Issue #125 (armed-wrong F5 remainder): the Airlock's grace
+     * abort. The door dismisses and the SAME grace cancel the Deck
+     * and off-Deck chips call runs — identical reason string, so
+     * the repository's grace classification (verified elapsed ≤
+     * [MonolithRepository.GRACE_WINDOW_SECONDS]) books it exactly
+     * as a Deck abort; a routine-born row diverts to its judging
+     * funnel inside that same path, as on the Deck. Nothing here
+     * widens the window: a tap that arrives after it is a late
+     * "Grace Cancel" and books as an early ending, exactly as a
+     * late Deck tap does today.
+     */
+    fun confirmGraceAbortFromAirlock() {
+        _airlockState.value = _airlockState.value.copy(isVisible = false)
+        confirmDisarmSession("Accidental Start Grace Cancel")
     }
 
 
