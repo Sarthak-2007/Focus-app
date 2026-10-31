@@ -506,6 +506,40 @@ abstract class MonolithDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Issue #253 lines 8 + 9 (20→21): the full-context
+         * profile bundle lands on focus_profiles — three bundle
+         * CSVs (per-app tiers, per-app limits, blocked sites;
+         * ProfileBundle's encodings) and three nullable fact
+         * columns (sound / sniper / browser-blocker rulings;
+         * NULL = the profile does not rule that surface, which
+         * is every pre-bundle row's truth). No backfill: a
+         * legacy profile keeps behaving as the pure category
+         * stencil it was saved as.
+         *
+         * Renumber history: authored as 18→19 on PR #748;
+         * main took 18→19 (#324 intercept kinds, above) and
+         * 19→20 (#138 CUT, above) while the PR waited, so
+         * the bundle lands as 20→21, the next free link
+         * (FINISHER-748 rebase, Oct 31).
+         */
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfAbsent(db, "focus_profiles", "appTiersCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN appTiersCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "appLimitsCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN appLimitsCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "sitesCsv",
+                    "ALTER TABLE focus_profiles ADD COLUMN sitesCsv TEXT NOT NULL DEFAULT ''")
+                addColumnIfAbsent(db, "focus_profiles", "soundEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN soundEnabled INTEGER")
+                addColumnIfAbsent(db, "focus_profiles", "sniperEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN sniperEnabled INTEGER")
+                addColumnIfAbsent(db, "focus_profiles", "browserBlockEnabled",
+                    "ALTER TABLE focus_profiles ADD COLUMN browserBlockEnabled INTEGER")
+            }
+        }
+
         val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
