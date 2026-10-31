@@ -5811,7 +5811,10 @@ class MonolithRepository(
         // Issue #32 F1: default 0 = no estimate given (was 25, which
         // fabricated an estimate for every caller that omitted it).
         estimatedMinutes: Int = 0,
-        categoryTag: String = "Study",
+        // Issue #270: default "" = no tag given (was "Study", which
+        // fabricated a category for every caller that omitted it —
+        // the same fabrication class as the minutes above).
+        categoryTag: String = "",
         notesOrSubsteps: String = "",
         promoteToActive: Boolean = false
     ): FocusTaskEntity = withContext(Dispatchers.IO) {
@@ -5862,7 +5865,12 @@ class MonolithRepository(
             notesOrSubsteps = notesOrSubsteps.trim(),
             estimatedMinutes = clampedMins,
             actualSecondsSpent = 0,
-            categoryTag = categoryTag.ifBlank { "Study" },
+            // Issue #270: a blank tag STAYS blank — nameless is a
+            // lawful state (Sarthak's 08:55 ruling: his own words
+            // or no name, never app-assigned). The old code forced
+            // "Study" back onto every untagged task, so the Drawer
+            // filed his whole archive under a bucket he never chose.
+            categoryTag = categoryTag.trim(),
             queueOrder = nextOrder,
             status = if (shouldBeActive) TaskQueueStatus.ACTIVE.name else TaskQueueStatus.QUEUED.name
         )

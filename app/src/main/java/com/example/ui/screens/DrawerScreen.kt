@@ -417,17 +417,25 @@ fun DrawerScreen(
                     // facts — never a delta, never a percentage. The
                     // estimate prints only where one was actually
                     // given (MINUTES DIE): never "ESTIMATE 0 MIN".
-                    Text(
-                        text = if (detail.estimatedMinutes > 0) {
-                            "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
-                        } else {
-                            detail.categoryTag
-                        },
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 11.sp,
-                        letterSpacing = 1.sp,
-                        color = scheme.onSurfaceVariant
-                    )
+                    // Issue #270: a tag prints only when one exists —
+                    // a blank tag is nameless by the user's ruling,
+                    // never an empty line or a dangling separator
+                    // standing for a category. The estimate keeps its
+                    // own law above: it prints only where given.
+                    if (detail.categoryTag.isNotBlank() || detail.estimatedMinutes > 0) {
+                        Text(
+                            text = when {
+                                detail.categoryTag.isNotBlank() && detail.estimatedMinutes > 0 ->
+                                    "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
+                                detail.categoryTag.isNotBlank() -> detail.categoryTag
+                                else -> "ESTIMATE ${detail.estimatedMinutes} MIN"
+                            },
+                            fontFamily = AnonymousProFamily,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         // Issue #110, finding 2 (main's form,
@@ -1426,12 +1434,15 @@ private fun StoredRow(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = task.categoryTag,
-                fontFamily = AnonymousProFamily,
-                fontSize = 10.5.sp,
-                color = scheme.onSurfaceVariant
-            )
+            // Issue #270: a tag prints only when one exists.
+            if (task.categoryTag.isNotBlank()) {
+                Text(
+                    text = task.categoryTag,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 10.5.sp,
+                    color = scheme.onSurfaceVariant
+                )
+            }
             Text(
                 text = clockTime(task.completedAtMillis),
                 fontFamily = AnonymousProFamily,
