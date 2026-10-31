@@ -107,6 +107,14 @@ data class StoredMonth(val year: Int, val month: Int)
 data class FocusTaskEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
+    // Audit R6 #341 F67 (DB 23->24): the task's free NOTE text,
+    // split out of [notesOrSubsteps]. The two shared one
+    // delimiter-encoded column, so ordinary note text was parsed
+    // as substeps on every read (a note line reading "[x] ..."
+    // came back as a completed substep). [notesOrSubsteps] keeps
+    // ONLY the serialized substeps from this migration on; the
+    // note lives here, verbatim, never parsed. '' = no note.
+    val noteText: String = "",
     val notesOrSubsteps: String = "",
     // Truth Car 2 (MINUTES DIE — Sarthak's order): a task is a
     // name, torn off when done. New tasks are stored with 0 = no
@@ -633,7 +641,18 @@ data class FocusSessionEntity(
     // Voss (routine-edit, RC-03): the routine's WITHIN label,
     // frozen at seal; null = no label. Nullable, NO default in
     // the migration — the only nullable column of the eight.
-    val withinLabel: String? = null
+    val withinLabel: String? = null,
+    // Audit R6 #341 F05 (DB 23->24): the timer's END, backed up at
+    // birth outside the mutable progress row. The session row is
+    // rewritten every tick; this column is written exactly once,
+    // inside startSession's birth transaction, from the same facts
+    // the HMAC signs (start + target), and is the restore source
+    // when the live row's own arithmetic is ever lost or doubted:
+    // MonolithRepository.restorePlannedEndIfLost re-derives the
+    // end from the append-only session_event_logs STARTED event
+    // and this column, never from a tick's stale snapshot.
+    // 0 = no backup (stopwatch mode, or a pre-v24 row).
+    val plannedEndWallMillis: Long = 0L
 ) {
     // ONE derivation of session time (the Now Frame fix, Nadia x Freya):
     // every surface - Deck, desk clock, airlock, the enforcing service -
@@ -1418,8 +1437,72 @@ data class GuardSettingsEntity(
 @Entity(tableName = "day_notes")
 data class DayNoteEntity(
     @PrimaryKey val dateIso: String,
-    val word: String
+    val word: String,
+    // Audit R6 #341 F58 (DB 23->24): WHEN this word was declared,
+    // wall clock. A day word is the permanent explanation filed
+    // against a day; before this column the record carried no
+    // declaration time at all, so an overwrite left no trace of
+    // when either declaration happened. 0 = declared before the
+    // column existed (never backfilled — an invented time would
+    // be a fabricated record).
+    val declaredAtMillis: Long = 0L
 )
+
+/**
+ * Audit R6 #341 F05: one append-only timer event. The session row
+ * is one mutable record overwritten every tick; this log is the
+ * event-sourced backup Forest's timer was measured against: every
+ * lifecycle transition of a session (STARTED, SUPERSEDED, ENDED,
+ * USER_GAP) appends a row and no row is ever updated or deleted
+ * in production code. [detail] carries the kind's facts (for
+ * STARTED: the planned end; for USER_GAP: the return instant).
+ */
+@Entity(tableName = "session_event_logs")
+data class SessionEventLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val sessionId: Int,
+    val kind: String,
+    val atWallMillis: Long,
+    val atElapsedMillis: Long = 0L,
+    val detail: String = ""
+)
+
+/** The session-event vocabulary (Audit R6 #341 F05). */
+object SessionEventKind {
+    const val STARTED = "STARTED"
+    const val SUPERSEDED = "SUPERSEDED"
+    const val ENDED = "ENDED"
+    const val USER_GAP = "USER_GAP"
+}
+
+/**
+ * Audit R6 #341 F20: one append-only rule-change record. Tiers,
+ * routines and the site list used to be overwritten or deleted in
+ * place, so on a shared phone the owner could never tell who
+ * weakened a rule or when. Every mutation funnel in
+ * MonolithRepository appends exactly one row after the mutation
+ * lands — a failed mutation writes no row, and no update/delete
+ * path for this table exists.
+ */
+@Entity(tableName = "rule_change_log")
+data class RuleChangeLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val atWallMillis: Long,
+    val kind: String,
+    val target: String,
+    val oldValue: String = "",
+    val newValue: String = ""
+)
+
+/** The rule-change vocabulary (Audit R6 #341 F20). */
+object RuleChangeKind {
+    const val APP_TIER = "APP_TIER"
+    const val SITE_ADD = "SITE_ADD"
+    const val SITE_REMOVE = "SITE_REMOVE"
+    const val ROUTINE_ADD = "ROUTINE_ADD"
+    const val ROUTINE_UPDATE = "ROUTINE_UPDATE"
+    const val ROUTINE_DELETE = "ROUTINE_DELETE"
+}
 
 /**
  * The Partial Stamp's honest identity (Issue #110, finding 5).

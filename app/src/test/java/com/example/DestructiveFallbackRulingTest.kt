@@ -146,6 +146,6 @@ class DestructiveFallbackRulingTest {
         const val DB_NAME = "monolith_tactile_db"
 
         /** @Database(version = …) on MonolithDatabase in this tree. */
-        const val CURRENT_VERSION = 23
+        const val CURRENT_VERSION = 24
     }
 }

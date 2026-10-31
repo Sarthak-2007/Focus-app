@@ -20,9 +20,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         RoutineEntity::class,
         EmergencyBreakSpendEntity::class,
         DayNoteEntity::class,
-        TaskAccrualSegmentEntity::class
+        TaskAccrualSegmentEntity::class,
+        SessionEventLogEntity::class,
+        RuleChangeLogEntity::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -477,6 +479,50 @@ abstract class MonolithDatabase : RoomDatabase() {
         }
 
         /**
+         * Audit R6 #341 BUILD bundle, PR-B (23->24) — four findings,
+         * one migration, schema only (no data invented anywhere):
+         * - F05: session_event_logs (append-only timer events) +
+         *   focus_sessions.plannedEndWallMillis (the end backup,
+         *   written once at birth; 0 = no backup).
+         * - F20: rule_change_log (append-only rule-change record).
+         * - F58: day_notes.declaredAtMillis (0 = declared before
+         *   the column existed — never backfilled; an invented
+         *   declaration time would be a fabricated record).
+         * - F67: focus_tasks.noteText (the verbatim note, split
+         *   out of the delimiter-encoded notesOrSubsteps; existing
+         *   notesOrSubsteps content stays exactly as stored — no
+         *   row is re-parsed or rewritten by this migration).
+         * Sole schema owner: #341 PR-B (ruling 6544758887). The
+         * typed stop-reason column is sequenced AFTER this step
+         * as its own migration — no parallel schema authorship.
+         */
+        val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `session_event_logs` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`sessionId` INTEGER NOT NULL, " +
+                        "`kind` TEXT NOT NULL, " +
+                        "`atWallMillis` INTEGER NOT NULL, " +
+                        "`atElapsedMillis` INTEGER NOT NULL, " +
+                        "`detail` TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `rule_change_log` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`atWallMillis` INTEGER NOT NULL, " +
+                        "`kind` TEXT NOT NULL, " +
+                        "`target` TEXT NOT NULL, " +
+                        "`oldValue` TEXT NOT NULL, " +
+                        "`newValue` TEXT NOT NULL)"
+                )
+                db.execSQL("ALTER TABLE focus_sessions ADD COLUMN plannedEndWallMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE day_notes ADD COLUMN declaredAtMillis INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE focus_tasks ADD COLUMN noteText TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
+        /**
          * TOKEN-SPEC §6: the spend ledger arrives as an explicit
          * migration. There is NO backfill — today's in-memory spends
          * were never recorded, so v8 truthfully starts with an empty
@@ -661,7 +707,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24)
                     // Issue #31, Sarthak's ruling (2026-10-31, issue
                     // comment 6544207912) — the only two destructive
                     // paths in this app, each scoped to its ruled case:

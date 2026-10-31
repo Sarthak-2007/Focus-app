@@ -346,15 +346,16 @@ class RoutinesMigrationChainTest {
                 MonolithDatabase.MIGRATION_19_20,
                 MonolithDatabase.MIGRATION_20_21,
                 MonolithDatabase.MIGRATION_21_22,
-                MonolithDatabase.MIGRATION_22_23
+                MonolithDatabase.MIGRATION_22_23,
+                MonolithDatabase.MIGRATION_23_24
             )
             .build()
 
         runBlocking {
             val dao = room.monolithDao()
             // This read forces the open: Room has now migrated
-            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21 AND
-            // validated the resulting schema against every v21
+            // 7→8→9→10→11→12→13→14→15→16→17→18→19→20→21→22→23→24 AND
+            // validated the resulting schema against every v24
             // entity, day_notes included.
             assertTrue(dao.getAllDayNotesSnapshot().isEmpty())
             dao.insertDayNotes(listOf(DayNoteEntity("2026-10-29", "REST")))
@@ -402,8 +403,10 @@ class RoutinesMigrationChainTest {
             )
         }
 
-        // day_notes is exactly the specced two columns, date as PK.
-        assertEquals(setOf("dateIso", "word"), columnsOf(raw, "day_notes"))
+        // day_notes columns, date as PK. (Audit R6 #341 F58, v24:
+        // declaredAtMillis joins the specced two — the declaration
+        // instant the record never carried before v24.)
+        assertEquals(setOf("dateIso", "word", "declaredAtMillis"), columnsOf(raw, "day_notes"))
 
         // Issue #138's v20 pin (captured_notifications survives
         // metadata-only) is SUPERSEDED by Issue #100's ruling at
