@@ -85,21 +85,20 @@ class MonolithWidgetProvider : AppWidgetProvider() {
                 // AND a fresh persisted beat (WidgetSealTruth).
                 // A live row beside a dead/blind shield prints the
                 // honest unproven line, never SEALED.
-                // Issue #155 (IQ-1 unified latch, WING-F): the
-                // accessibility input is the shield loop's OWN
-                // published standing — measured at the flip site
-                // every iteration (bound AND armed for this
-                // session). The widget never reads the
-                // accessibility service itself; that fork would
-                // let a bound-but-unarmed door print SEALED.
+                // Issue #155 (IQ-1 unified latch, WING-F): no
+                // accessibility input is read here at all. The
+                // shield's flip requires both doors and its demote
+                // fires on either door closing, so the protecting
+                // witness implies the accessibility door — the
+                // widget never derives it a second time (the fork
+                // IQ-1 rejected is removed, not re-homed).
                 val sealedProven = WidgetSealTruth.sealedProven(
                     isActive = session.isActive,
                     protecting = MonolithShieldService.protecting,
                     protectingSessionId = MonolithShieldService.protectingSessionId,
                     sessionId = session.id,
                     beatWallMillis = session.shieldLastBeatWallMillis,
-                    nowWallMillis = now,
-                    accessibilityBound = MonolithShieldService.protectingAccessibilityStanding
+                    nowWallMillis = now
                 )
                 if (!sealedProven) {
                     // Issue #155 (IQ-2 VC-2 + IQ-5 F-4): no

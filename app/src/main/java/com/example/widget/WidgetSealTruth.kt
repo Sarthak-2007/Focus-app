@@ -14,6 +14,14 @@ package com.example.widget
  * loop stamps it every iteration). Anything else is unproven and
  * the widget must print the honest check line instead.
  *
+ * IQ-1 unified latch (WING-F): there is NO accessibility input
+ * here any more. The shield's flip requires BOTH doors (usage
+ * access AND the accessibility door armed for this session) and
+ * its demote fires on EITHER door closing, so the protecting
+ * witness itself implies the accessibility door — a second
+ * derivation in a second reader (the provider fork, and the
+ * F-3(ii) parameter that fed it) is removed, not re-homed.
+ *
  * Pure on purpose — no Android, no stored state — so the rule is
  * pinned by plain unit tests (WidgetSealTruthTest).
  */
@@ -33,17 +41,10 @@ object WidgetSealTruth {
         protectingSessionId: Int,
         sessionId: Int,
         beatWallMillis: Long,
-        nowWallMillis: Long,
-        accessibilityBound: Boolean
+        nowWallMillis: Long
     ): Boolean {
         if (!isActive) return false
         if (!protecting) return false
-        // Issue #155 (IQ-5 F-3(ii)): the accessibility door is a
-        // truth input, not a detail — when it dies mid-session
-        // blocking is OFF, whatever the usage witness says, and
-        // the shield card already warns so. The widget must not
-        // print SEALED over a dead door.
-        if (!accessibilityBound) return false
         if (protectingSessionId != sessionId) return false
         if (beatWallMillis <= 0L) return false
         val beatAgeMillis = nowWallMillis - beatWallMillis

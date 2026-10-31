@@ -13,7 +13,11 @@ import org.junit.Test
  * beside a live row still read SEALED. Every test below states a
  * world and the only honest print it allows: SEALED is proven
  * solely by the shield's protecting witness standing for THIS
- * session AND a fresh persisted shield beat.
+ * session AND a fresh persisted shield beat. The accessibility
+ * door is NOT an input: the shield's unified latch flips only
+ * when both doors stand and demotes when either closes, so the
+ * witness implies the door (IQ-1, WING-F — the second-derivation
+ * parameter was removed, not re-homed).
  */
 class WidgetSealTruthTest {
 
@@ -25,16 +29,14 @@ class WidgetSealTruthTest {
         protecting: Boolean = true,
         protectingSessionId: Int = sessionId,
         beatWallMillis: Long = now - 1_000L,
-        nowWallMillis: Long = now,
-        accessibilityBound: Boolean = true
+        nowWallMillis: Long = now
     ): Boolean = WidgetSealTruth.sealedProven(
         isActive = isActive,
         protecting = protecting,
         protectingSessionId = protectingSessionId,
         sessionId = sessionId,
         beatWallMillis = beatWallMillis,
-        nowWallMillis = nowWallMillis,
-        accessibilityBound = accessibilityBound
+        nowWallMillis = nowWallMillis
     )
 
     @Test
@@ -82,14 +84,12 @@ class WidgetSealTruthTest {
         assertFalse(proven(beatWallMillis = now + 1_000L))
     }
 
-    @Test
-    fun unproven_whenAccessibilityDoorIsDead() {
-        // IQ-5 F-3(ii): the usage witness can stand and the beat
-        // be fresh while the accessibility door — the door that
-        // actually blocks — is dead. Blocking is OFF; SEALED
-        // must not print.
-        assertFalse(proven(accessibilityBound = false))
-    }
+    // The accessibility-door case (IQ-5 F-3(ii)) is no longer a
+    // truth-rule input: with the unified latch, a dead door
+    // demotes `protecting` in the shield loop itself, so that
+    // world arrives here as protecting = false — pinned above by
+    // unproven_whenShieldNeverProvedProtection and, at the latch
+    // site, by Issue155CompletionExpiryTest's demote pins.
 
     @Test
     fun unproven_whenSessionIsNotActive() {

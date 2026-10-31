@@ -293,7 +293,6 @@ class MonolithShieldService : Service() {
                 protecting = false
                 protectingSessionId = -1
                 protectingMono = 0L
-                protectingAccessibilityStanding = false
                 WatchStore.onShieldIteration(protecting = false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 // Issue #155 (F1): the shield is down — refresh
@@ -772,12 +771,13 @@ class MonolithShieldService : Service() {
                 // access AND the accessibility door armed for THIS
                 // session (service bound and armedSessionId == this
                 // session's id), measured here, per iteration, at
-                // the flip site. The measured standing is published
-                // on the shield's own witness
-                // (protectingAccessibilityStanding): the widget
-                // reads THAT as its WidgetSealTruth input and never
-                // reads the accessibility service itself (the fork
-                // IQ-1 rejected). Demote on EITHER door closing —
+                // the flip site. Because the flip requires both
+                // doors and the demote below fires on either door
+                // closing, the protecting witness itself implies
+                // the accessibility door: the widget's truth rule
+                // needs no second derivation and no second reader
+                // (the fork IQ-1 rejected is removed, not re-homed).
+                // Demote on EITHER door closing —
                 // Race 1b's usage half plus the accessibility half —
                 // with a falling-edge widget refresh, in the same
                 // iteration that measures the closed door. Before
@@ -789,12 +789,10 @@ class MonolithShieldService : Service() {
                 val accessibilityStanding =
                     MonolithAccessibilityService.instance != null &&
                         MonolithAccessibilityService.armedSessionId == updated.id
-                protectingAccessibilityStanding = accessibilityStanding
                 if (protecting && (!usageGranted || !accessibilityStanding)) {
                     protecting = false
                     protectingSessionId = -1
                     protectingMono = 0L
-                    protectingAccessibilityStanding = false
                     // Falling edge: the widget re-reads NOW, not at
                     // the platform's 30-minute cadence.
                     MonolithWidgetProvider.requestUpdate(applicationContext)
@@ -1009,7 +1007,6 @@ class MonolithShieldService : Service() {
                     protecting = false
                     protectingSessionId = -1
                     protectingMono = 0L
-                    protectingAccessibilityStanding = false
                     WatchStore.onShieldIteration(protecting = false)
                     // Issue #155 (WING-F, gate completeness): the
                     // exception demoted the latch — the full session
@@ -1041,7 +1038,6 @@ class MonolithShieldService : Service() {
         protecting = false
         protectingSessionId = -1
         protectingMono = 0L
-        protectingAccessibilityStanding = false
         WatchStore.onShieldIteration(protecting = false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         // Issue #155 (WING-F): a local stop is a shield-down
@@ -1331,7 +1327,7 @@ class MonolithShieldService : Service() {
                     missing.joinToString(", ") {
                         when (it) {
                             RepairAction.ACCESSIBILITY -> "Accessibility (blocking is OFF)"
-                            RepairAction.USAGE_ACCESS -> "Usage access off — Monolith may miss app launches"
+                            RepairAction.USAGE_ACCESS -> "Usage access (off — Monolith may miss app launches)"
                         }
                     }
                 )
@@ -1450,8 +1446,11 @@ class MonolithShieldService : Service() {
         protecting = false
         protectingSessionId = -1
         protectingMono = 0L
-        protectingAccessibilityStanding = false
         WatchStore.onShieldIteration(protecting = false)
+        // Issue #155 (WING-F): the shield is gone — the widget
+        // refreshes now, not at the 30-minute cadence, so a stale
+        // SEALED cannot outlive the service that proved it.
+        MonolithWidgetProvider.requestUpdate(applicationContext)
         // Issue #143: a dying shield takes its dim phase with it.
         publishBreakDim(BreakDimState())
         monitorJob?.cancel()
@@ -1508,17 +1507,6 @@ class MonolithShieldService : Service() {
         var protectingMono: Long = 0L
             internal set
 
-        /** Issue #155 (IQ-1 unified latch, WING-F): the
-         *  accessibility door's standing for the protecting
-         *  session, measured by the shield loop at the flip site
-         *  on every iteration (service bound AND armed for the
-         *  protecting session's id). The loop is the only writer;
-         *  the widget reads this witness as its WidgetSealTruth
-         *  input — it never reads the accessibility service
-         *  itself. False whenever the latch is down. */
-        @Volatile
-        var protectingAccessibilityStanding: Boolean = false
-            internal set
         const val TAG = "MonolithShield"
         const val RESTART_REQUEST_CODE = 0x5211
         // Issue #155 (F4): v2 carries setShowBadge(true); the legacy

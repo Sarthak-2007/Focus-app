@@ -112,6 +112,13 @@ class Issue155CompletionExpiryTest {
     ).firstOrNull { it.exists() }?.readText()
         ?: error("MonolithWidgetProvider.kt not found from ${File(".").absolutePath}")
 
+    private fun widgetTruthSource(): String = listOf(
+        File("src/main/java/com/example/widget/WidgetSealTruth.kt"),
+        File("app/src/main/java/com/example/widget/WidgetSealTruth.kt"),
+        File("../app/src/main/java/com/example/widget/WidgetSealTruth.kt")
+    ).firstOrNull { it.exists() }?.readText()
+        ?: error("WidgetSealTruth.kt not found from ${File(".").absolutePath}")
+
     @Test
     fun summonsCompletionCardCarriesTheSameExpiry() {
         // Residue (3b): the SESSION COMPLETE summons call must pass
@@ -184,24 +191,24 @@ class Issue155CompletionExpiryTest {
             )
         )
         assertTrue(
-            "the loop publishes the measured standing on the shield witness",
-            source.contains("protectingAccessibilityStanding = accessibilityStanding")
+            "the latch must not re-home the door as a published second witness",
+            !source.contains("protectingAccessibilityStanding")
         )
     }
 
     @Test
-    fun widgetReadsTheShieldPublishedStandingNeverTheAccessibilityService() {
-        // IQ-1's fork pin: the widget's WidgetSealTruth input is
-        // the shield's published standing. If the provider ever
-        // reads MonolithAccessibilityService again, SEALED can
-        // print over a bound-but-unarmed door.
+    fun widgetNeverReadsTheAccessibilityServiceNorADoorParameter() {
+        // IQ-1's fork pin, final form (WING-F): the provider fork
+        // is REMOVED, not re-homed — the widget reads no
+        // accessibility service, and WidgetSealTruth takes no
+        // accessibility parameter. With the unified latch the
+        // protecting witness implies the door; if either file
+        // grows a second derivation again, this pin fails.
         val widget = widgetSource()
         assertTrue(!widget.contains("MonolithAccessibilityService"))
-        assertTrue(
-            widget.contains(
-                "accessibilityBound = MonolithShieldService.protectingAccessibilityStanding"
-            )
-        )
+        assertTrue(!widget.contains("accessibilityBound"))
+        val truth = widgetTruthSource()
+        assertTrue(!truth.contains("accessibilityBound"))
     }
 
     @Test
@@ -253,6 +260,20 @@ class Issue155CompletionExpiryTest {
     }
 
     @Test
+    fun onDestroyRefreshesTheWidget() {
+        // A destroyed shield is a shield-down moment: the widget
+        // refresh fires in onDestroy exactly as on STOP dispatch,
+        // so a stale SEALED cannot outlive the service.
+        val source = shieldSource()
+        val fnIdx = source.indexOf("override fun onDestroy()")
+        assertTrue(fnIdx >= 0)
+        val window = source.substring(fnIdx, minOf(fnIdx + 900, source.length))
+        assertTrue(
+            window.contains("MonolithWidgetProvider.requestUpdate(applicationContext)")
+        )
+    }
+
+    @Test
     fun missingGrantWarningAppendsAndNamesTheCost() {
         // IQ-2 M-8: the warning appends to the normal bigText,
         // the usage wording names the real cost, and the counter
@@ -262,7 +283,7 @@ class Issue155CompletionExpiryTest {
         assertTrue(!source.contains("detector degraded"))
         assertTrue(
             source.contains(
-                "\"Usage access off \u2014 Monolith may miss app launches\""
+                "\"Usage access (off \u2014 Monolith may miss app launches)\""
             )
         )
     }
