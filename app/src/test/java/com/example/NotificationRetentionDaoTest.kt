@@ -41,6 +41,21 @@ class NotificationRetentionDaoTest {
     @Before
     fun clearCaptured() = runBlocking {
         dao.clearAllCapturedNotifications()
+        // FIX-COMPILE (#478 revival, Oct 31): the covering-instant
+        // tests assert about the whole focus_sessions table in the
+        // shared singleton DB, and other suites leave session rows
+        // behind — including ACTIVE rows with startWallTimeMillis
+        // = 0, which the covering predicate (isActive = 1) reads
+        // as covering every instant since the epoch. That pollution
+        // was invisible while this class was dead (the DAO sweep's
+        // initializationError); revived, it broke both assertNull
+        // covering checks deterministically (run 41165139902: a
+        // leftover "Deep Study" row, id=33, startWallTimeMillis=0,
+        // was returned for instants the test's own row cannot
+        // cover). Clear sessions in @Before as well, so every test
+        // here starts from the empty world it asserts about. Each
+        // covering test inserts its own row inside the test.
+        dao.getSessionHistorySnapshot().forEach { dao.deleteSessionById(it.id) }
     }
 
     private fun captured(ts: Long, pkg: String = "com.example.chat", title: String = "Mum", body: String = "hi") =

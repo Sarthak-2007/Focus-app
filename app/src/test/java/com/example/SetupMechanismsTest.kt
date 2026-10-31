@@ -231,10 +231,12 @@ class SetupMechanismsTest {
                 WatchItemId.NOTIFICATION_LISTENER to PermState.MISSING
             )
         ) { item -> if (item == WatchItemId.DEVICE_ADMIN) aged else fresh }
-        // Bits: ACC(0) + USAGE(1) set; ADMIN(2) granted but STALE
-        // — the ledger never upgrades aged proof; LISTENER(3)
-        // missing. Mask = 0b0011.
-        assertEquals(0b0011, doorsMaskAt(snap, now))
+        // Bits follow the live COUNTED order (issue #309 F5,
+        // cheapest-first): USAGE(0) + ACC(2) set; LISTENER(1)
+        // missing; ADMIN(3) granted but STALE — the ledger
+        // never upgrades aged proof. Mask = 0b0101. (Originally
+        // written 0b0011 against the pre-#309 board order.)
+        assertEquals(0b0101, doorsMaskAt(snap, now))
         assertEquals(0, doorsMaskAt(null, now))
     }
 

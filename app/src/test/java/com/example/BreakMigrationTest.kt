@@ -69,15 +69,24 @@ class BreakMigrationTest {
                             "`intention` TEXT NOT NULL)"
                     )
                     db.execSQL("INSERT INTO focus_sessions (id, intention) VALUES (1, 'shaped row')")
-                    // Batch-10 composition: MIGRATION_11_12 is the
-                    // COMPOSED migration — it also adds
-                    // shortsReelsSniperEnabled to guard_settings
-                    // (Truth Car 3's delta), so the v11 fixture
-                    // must carry that table for the migration to
-                    // run against, exactly as a real v11 file did.
+                    // Test-floor cure: MIGRATION_11_12 alters guard_settings
+                    // FIRST; a v11 file without that table made the whole
+                    // migration die with SQLiteException before the column
+                    // under test was ever reached. A real v11 file always
+                    // carries guard_settings — the fixture now does too
+                    // (shape mirrored from ShortsSniperTruthTest's v11).
                     db.execSQL(
                         "CREATE TABLE IF NOT EXISTS `guard_settings` (" +
-                            "`id` INTEGER PRIMARY KEY NOT NULL)"
+                            "`id` INTEGER PRIMARY KEY NOT NULL, " +
+                            "`browserBlockerEnabled` INTEGER NOT NULL, " +
+                            "`routineReseedV1Done` INTEGER NOT NULL, " +
+                            "`routineReseedNoteDismissed` INTEGER NOT NULL, " +
+                            "`lastBootAtMillis` INTEGER NOT NULL, " +
+                            "`lastRoutineTickMillis` INTEGER NOT NULL, " +
+                            "`lastCompositeSessionId` INTEGER NOT NULL, " +
+                            "`lastReceiptOutcome` TEXT NOT NULL, " +
+                            "`receiptSequence` INTEGER NOT NULL, " +
+                            "`lastReceiptSessionId` INTEGER NOT NULL)"
                     )
                 }
 

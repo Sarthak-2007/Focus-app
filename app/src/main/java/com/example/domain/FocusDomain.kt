@@ -48,6 +48,12 @@ object FocusDomain {
         val anchorEndMono = maxOf(lastPeekEndMono, activePeekUntilMono)
         if (anchorEndMono <= 0L) return 0
         val remainingMs = (anchorEndMono + cooldownMillis - nowMono).coerceAtMost(cooldownMillis)
+        // FIX-5a (issue #11, restored at the merge): the CEILING
+        // form — floor division understates the remaining cooldown
+        // before the print ceilings it back up, the one direction
+        // the Held Door swears it never goes. Ceiling once, here
+        // at the source (this matches the repository's own
+        // peekSecondsRemaining ceiling).
         return if (remainingMs > 0L) ((remainingMs + 999L) / 1000L).toInt() else 0
     }
 

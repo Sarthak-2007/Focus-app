@@ -159,6 +159,8 @@ class ReceptionSheetTest {
         assertEquals("NOT SET", receptionDoorWord(com.example.service.PermPrint.MISSING))
         assertEquals("UNPROVED", receptionDoorWord(com.example.service.PermPrint.STALE))
         assertEquals("NOT CHECKED", receptionDoorWord(com.example.service.PermPrint.UNMEASURED))
+        // #340 F44: the oath print reprints as itself, as on the board.
+        assertEquals("SWORN", receptionDoorWord(com.example.service.PermPrint.SWORN))
     }
 
     @Test
@@ -311,10 +313,15 @@ class ReceptionSheetTest {
         )
         val total = receptionTotal(snap, now)
         assertEquals(2, total.count)
+        // Board order is the live COUNTED order — since issue
+        // #309 F5 that is cheapest-first (USAGE, LISTENER, ACC,
+        // ADMIN), so the LISTENER's price prints before
+        // ACCESSIBILITY's. (This expectation originally named
+        // ACC first, from the pre-#309 board order.)
         assertEquals(
-            "WITHOUT ACCESSIBILITY, BLOCKING CANNOT PROVE ITSELF — " +
-                "SESSIONS WILL NOT SEAL. " +
-                "WITHOUT THE LISTENER, MESSAGES ARRIVE AS THEY COME — NOTHING IS HELD.",
+            "WITHOUT THE LISTENER, MESSAGES ARRIVE AS THEY COME — NOTHING IS HELD. " +
+                "WITHOUT ACCESSIBILITY, BLOCKING CANNOT PROVE ITSELF — " +
+                "SESSIONS WILL NOT SEAL.",
             total.sentence
         )
     }
@@ -331,8 +338,10 @@ class ReceptionSheetTest {
         // and totalPricesMixedLacksEachInItsOwnKindsWords above:
         // as written it would have failed on first run. The law
         // is per-kind pricing: EVERY lack is priced, in COUNTED
-        // order, each in its own kind's words — here the stale
-        // door (ACCESSIBILITY, first counted) prices first.
+        // order, each in its own kind's words — under the #309
+        // cheapest-first board order USAGE ACCESS leads the
+        // counted board, so its absence prices first and the
+        // stale door keeps its own kind's words after it.
         val snap = snapshotWithMonos(
             mapOf(
                 WatchItemId.ACCESSIBILITY to PermState.GRANTED,
@@ -344,8 +353,8 @@ class ReceptionSheetTest {
         val total = receptionTotal(snap, now)
         assertEquals(2, total.count)
         assertEquals(
-            "THE LAST PROOF OF ACCESSIBILITY AGED OUT — CHECK RE-PROVES IT. " +
-                "WITHOUT USAGE ACCESS, BLOCKING CANNOT PROVE ITSELF — SESSIONS WILL NOT SEAL.",
+            "WITHOUT USAGE ACCESS, BLOCKING CANNOT PROVE ITSELF — SESSIONS WILL NOT SEAL. " +
+                "THE LAST PROOF OF ACCESSIBILITY AGED OUT — CHECK RE-PROVES IT.",
             total.sentence
         )
     }
@@ -498,7 +507,7 @@ class ReceptionSheetTest {
             now
         )
         composeRule.setContent {
-            MyApplicationTheme(darkTheme = false, dynamicColor = false) {
+            MyApplicationTheme(darkTheme = false) {
                 ReceptionSheet(
                     visible = true,
                     snapshot = snap,
@@ -558,11 +567,7 @@ class ReceptionSheetTest {
             .performClick()
         assertTrue("the stamp books at the press", stamped)
         assertFalse("the enter waits for the tear (260ms)", done)
-        // Batch-10 compile cure: MainTestClock.advanceBy does not
-        // resolve against this tree's ui-test (1.7.x) — waitUntil
-        // advances the test clock while polling, which is the same
-        // 260ms tear, waited out honestly instead of stepped.
-        composeRule.waitUntil(timeoutMillis = 2_000) { done }
+        composeRule.mainClock.advanceTimeBy(300)
         assertTrue("DONE hands the exit to the host after the tear", done)
     }
 

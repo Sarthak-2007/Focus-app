@@ -160,16 +160,18 @@ fun FocusSequencerScreen(
     }
 
     // Issue #106, finding 3: the undo banner lives at the TOP of
-    // this list (item index 2 — Horizon, composer, banner). A
-    // delete taken low in the queue used to birth it off-screen,
-    // where its whole 5-second life expired unseen. When a delete
-    // lands, the list scrolls the banner into view the moment it
-    // appears, so its full window is usable from where the user
-    // actually is.
+    // this list (item index 1 in the composed list — composer,
+    // banner; main's form carried a Horizon header item above the
+    // composer and scrolled to 2, an index the train's list never
+    // had — corrected at the composition, K8). A delete taken low
+    // in the queue used to birth it off-screen, where its whole
+    // 5-second life expired unseen. When a delete lands, the list
+    // scrolls the banner into view the moment it appears, so its
+    // full window is usable from where the user actually is.
     val listState = rememberLazyListState()
     LaunchedEffect(deletedTaskForUndo) {
         if (deletedTaskForUndo != null) {
-            listState.scrollToItem(2)
+            listState.scrollToItem(1)
         }
     }
 

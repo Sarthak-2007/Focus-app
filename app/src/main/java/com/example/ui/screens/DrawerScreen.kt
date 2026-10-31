@@ -1,4 +1,27 @@
 package com.example.ui.screens
+import androidx.compose.ui.res.stringResource
+import com.example.R
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextDecoration
+import com.example.data.CurioCatalog
+import com.example.data.ClockText
+import androidx.compose.ui.platform.LocalContext
+import com.example.data.FocusSessionEntity
+import com.example.data.ForgeStat
+import com.example.data.KineticArtifact
+import com.example.data.PARTIAL_STAMP_ARTIFACT
+import com.example.data.PARTIAL_STAMP_ID
+import com.example.data.ReceiptIndexEntry
+import com.example.data.SessionOutcome
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -68,7 +91,30 @@ import java.util.Locale
  * beside its date heading as his authored word — never a number.
  */
 
-private enum class DrawerView { LANDING, MONTH }
+private enum class DrawerView { LANDING, INDEX, MONTH, CABINET, RECEIPTS }
+
+/** Audit R3b #145, reopened defect A: the cabinet's standing forge
+ *  rule, as ONE named print so a test can pin the exact sentence.
+ *  The sentence is scoped to what the forge gates actually do
+ *  (MonolithRepository): MANUAL — a routine-born span forges
+ *  nothing (the finalise gate is `allBlocksCompleted &&
+ *  !isRoutineSession`, and the disarm door fences routine rows
+ *  too); IN FULL — a timed span hand-ended before all its blocks
+ *  complete forges nothing (at most a Partial Stamp), and a FLOW
+ *  span forges only at its completed hand finish. The earlier
+ *  print ("A SPAN YOU FINISH YOURSELF FORGES ONE") claimed both
+ *  exceptions away. */
+internal val CABINET_FORGE_RULE: String =
+    "A MANUAL SPAN YOU FINISH IN FULL FORGES ONE — THE FORGE CHOOSES WHICH."
+
+internal fun curioForgeGapMark(record: FocusSessionEntity): String =
+    if (record.outcome == SessionOutcome.ELAPSED_SHIELD_GAP ||
+        record.shieldGapSeen
+    ) {
+        " · SHIELD GAP"
+    } else {
+        ""
+    }
 
 private data class DrawerDayGroup(
     val date: LocalDate,
@@ -138,6 +184,12 @@ fun DrawerScreen(
     drawerQuery: String,
     drawerResults: List<FocusTaskEntity>,
     drawerSearchHasEarlier: Boolean,
+    // #158 F2: the ViewModel's word-aware search state — every
+    // date carrying a word the query names (word-only days
+    // included), merged with the words of the task-hit dates.
+    // Defaults empty so a caller without it still gets the
+    // dayWords-derived search rendering below.
+    drawerSearchDayWords: Map<String, String> = emptyMap(),
     dayWords: Map<String, String>,
     isSealed: Boolean,
     isDarkTheme: Boolean = false,
@@ -145,14 +197,47 @@ fun DrawerScreen(
     onLoadEarlier: () -> Unit,
     onQueryChange: (String) -> Unit,
     onLoadEarlierSearch: () -> Unit,
-    onDeclareDayWord: (LocalDate, String?) -> Unit
-    // Issue #8 (AUDIT-drawer §2A): the cabinet is EVICTED from the
-    // Drawer — no CURIOS row, no cabinet view, no cabinet params.
-    // Its data stays in code (CurioCatalog, the DISTINCT forged-id
-    // read in repository/DAO) for its future home (issue #21);
-    // nothing is deleted — it simply has no Drawer address. (The
-    // VM's consumer-less forged flow was deleted by the closer,
-    // SPITZ Charge 5: plumbing with no reader is not preservation.)
+    onDeclareTodayWord: (String?) -> Unit,
+    // R3b #163 F1: yesterday's word stays declarable the morning
+    // after. (F2/F3 struck — see DrawerDayGroup.)
+    onDeclareDayWord: (LocalDate, String?) -> Unit = { _, _ -> },
+    // The cabinet (chrome C10): the curios' new home. The Drawer is
+    // storage; the cabinet is its furniture — the six artifacts as
+    // ruled rows, their forged state read from real sessions, their
+    // detail carrying the lore the Vault screen printed. The
+    // kinetic toy VISUALS were never built as views in the shipped
+    // app and are not built here; the cabinet is the catalog and
+    // the record — not the toys. (Truth Car 2: the requirements
+    // print, the SELECT verb, and the serial-plate synth egg were
+    // removed with DRW-01/06/07 — each printed a fact the app does
+    // not hold.)
+    artifacts: List<KineticArtifact> = CurioCatalog.artifacts,
+    forgedArtifactIds: Set<String> = emptySet(),
+    // Audit R3b #145: forge provenance per artifact — the sessions
+    // that forged it (date, intention, outcome ride the row), so
+    // the cabinet can count duplicates and name their spans.
+    curioForgeRecords: Map<String, List<FocusSessionEntity>> = emptyMap(),
+    // Issue #110, finding 5: the forge record per artifact — count
+    // of forging sessions + most recent forge instant, derived by
+    // the repository from stored session rows. The cabinet detail
+    // prints it, so a forged artifact names real days instead of
+    // only standing there. The Partial Stamp row joins the list
+    // whenever a session actually carries the stamp.
+    forgeStats: Map<String, ForgeStat> = emptyMap(),
+    // Issue #157: the Vault IS the "Receipts" destination, so the
+    // receipts live here — an index of every claimed slip, each
+    // row carrying only what its session row proves. Tapping a
+    // row re-presents that session's slip (the host renders the
+    // same ReceiptSheet); the slip itself is never stored and
+    // nothing is printed on it from here.
+    receipts: List<ReceiptIndexEntry> = emptyList(),
+    onReceiptClick: (Int) -> Unit = {},
+    // Issue #52 F3 cure: the month read's state, from the
+    // ViewModel — loading while a page is in flight, an error
+    // line when the read failed. An empty month, a loading
+    // month and a broken month are three different prints.
+    drawerLoading: Boolean = false,
+    drawerError: String? = null
 ) {
     val scheme = MaterialTheme.colorScheme
     // AUDIT-drawer §2 (wave-2): view + selection IDs are saveable —
@@ -167,10 +252,49 @@ fun DrawerScreen(
     var viewName by rememberSaveable { mutableStateOf(DrawerView.LANDING.name) }
     val view = runCatching { DrawerView.valueOf(viewName) }.getOrDefault(DrawerView.LANDING)
     var selectedTaskId by rememberSaveable { mutableStateOf(-1) }
-    val selectedTask: FocusTaskEntity? = if (selectedTaskId > 0) {
+    val selectedTask: FocusTaskEntity? =
         (drawerRows + drawerResults).firstOrNull { it.id == selectedTaskId }
+    var cabinetArtifactId by rememberSaveable { mutableStateOf("") }
+    // Issue #110, finding 5: the Partial Stamp joins the cabinet
+    // only when a real session carries it — an honest row for a
+    // real record, never a seventh curio on offer. The joined list
+    // is computed ONCE, here: the cabinet's list renders it and the
+    // detail lookup below resolves against it. (Floor lane, #166
+    // row 29: the lookup previously read the curios-only list
+    // while the stamp was appended to a second, list-local copy —
+    // the stamp's row rendered and took the tap, the detail could
+    // never resolve, and the detail the finding built was
+    // unreachable. One list, both readers.)
+    val cabinetArtifacts = if (
+        PARTIAL_STAMP_ID in forgedArtifactIds || forgeStats.containsKey(PARTIAL_STAMP_ID)
+    ) {
+        artifacts + PARTIAL_STAMP_ARTIFACT
     } else {
-        null
+        artifacts
+    }
+    val cabinetArtifact: KineticArtifact? =
+        cabinetArtifacts.firstOrNull { it.id == cabinetArtifactId }
+    // #158 F3, kept on the saveable stack: the surface the MONTH
+    // view was entered from, so its BACK returns there — never a
+    // silent month reload.
+    var monthEnteredFromName by rememberSaveable {
+        mutableStateOf(DrawerView.LANDING.name)
+    }
+    val monthEnteredFrom = runCatching { DrawerView.valueOf(monthEnteredFromName) }
+        .getOrDefault(DrawerView.LANDING)
+
+    // System Back pops ONE internal level (detail -> its list,
+    // cabinet detail -> cabinet list, any view -> LANDING)
+    // instead of ejecting to DECK via MainActivity's handler.
+    BackHandler(
+        enabled = selectedTaskId != -1 || cabinetArtifactId.isNotEmpty() ||
+            view != DrawerView.LANDING
+    ) {
+        when {
+            selectedTaskId != -1 -> selectedTaskId = -1
+            cabinetArtifactId.isNotEmpty() -> cabinetArtifactId = ""
+            else -> viewName = DrawerView.LANDING.name
+        }
     }
 
     // DRW-05 (Truth Car 2): "today" keys to the day boundary, not
@@ -306,7 +430,12 @@ fun DrawerScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "SPENT ${spentLabel(detail.actualSecondsSpent)}",
+                        // Issue #110, finding 2 (main's form,
+                        // restored at the composition, K8): SPENT
+                        // IN TOTAL — the detail's spent is the
+                        // task's lifetime accrual, same law as the
+                        // row's TOTAL print.
+                        text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = scheme.onBackground
@@ -354,7 +483,355 @@ fun DrawerScreen(
     }
 
     // ------------------------------------------------------------------
-    // LIST VIEWS — landing (current month + MONTHS shelf) / one month / search results.
+    // CABINET — the curios, re-homed (chrome C10). Ruled rows like
+    // everything else in the Drawer; forged state from real
+    // sessions; sealed = read-only (the detail reads, SELECT does
+    // not answer).
+    // ------------------------------------------------------------------
+    if (view == DrawerView.CABINET) {
+        val artifact = cabinetArtifact
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scheme.background)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag("drawer_cabinet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.drawer_cabinet),
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = stringResource(R.string.label_back),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                if (cabinetArtifact != null) {
+                                    cabinetArtifactId = ""
+                                } else {
+                                    viewName = DrawerView.LANDING.name
+                                }
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 14.dp)
+                            .testTag("cabinet_back")
+                    )
+                }
+            }
+            if (artifact == null) {
+                items(cabinetArtifacts, key = { "cabinet-${it.id}" }) { item ->
+                    val forged = item.id in forgedArtifactIds
+                    val stat = forgeStats[item.id]
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { cabinetArtifactId = item.id }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 6.dp)
+                            .testTag("cabinet_row_${item.id}"),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = item.serialCode.uppercase(Locale.US),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                            if (forged) {
+                                Text(
+                                    // The stamp is STAMPED, never
+                                    // FORGED; a repeat forge counts.
+                                    text = when {
+                                        item.id == PARTIAL_STAMP_ID -> "STAMPED"
+                                        stat != null && stat.count > 1 -> "FORGED ×${stat.count}"
+                                        else -> "FORGED"
+                                    },
+                                    fontFamily = AnonymousProFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 10.5.sp,
+                                    letterSpacing = 1.sp,
+                                    color = scheme.onBackground
+                                )
+                            }
+                        }
+                        // Audit R3b #145: an un-forged artifact's
+                        // name and subtitle are the reward's text —
+                        // they are earned, not previewed. The row
+                        // shows the serial (its public identity) and
+                        // the unforged fact; the name prints only
+                        // once a real span has forged it.
+                        if (forged) {
+                            Text(
+                                text = item.name,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 14.sp,
+                                color = scheme.onBackground
+                            )
+                            Text(
+                                text = item.subtitle,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "NOT YET FORGED",
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+                // DRW-01: the true rule, printed once as the
+                // cabinet's standing line — exactly what the
+                // forge does (Repository: a manual span finished
+                // in full forges one artifact, the forge chooses
+                // which; routine-born spans forge nothing). No
+                // per-artifact prices, no thresholds nothing
+                // enforces.
+                item {
+                    Text(
+                        // Audit R3b #145, reopened defect A: the
+                        // sentence lives in CABINET_FORGE_RULE so
+                        // its exact wording is test-pinned; its
+                        // MANUAL / IN FULL scoping is the truth the
+                        // earlier unscoped print denied.
+                        text = CABINET_FORGE_RULE,
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 10.5.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("cabinet_forge_rule")
+                    )
+                }
+            } else {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // The serial plate is print. (Truth Car 2,
+                        // DRW-07: the five-tap egg that toggled a
+                        // "HARMONIC SYNTH UNLOCKED" line is gone —
+                        // the synth it named was removed from the
+                        // app, and an achieved state for a feature
+                        // that does not exist is not an easter egg,
+                        // it is a false print.)
+                        Text(
+                            text = artifact.serialCode.uppercase(Locale.US),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("cabinet_serial_plate")
+                        )
+                        // Audit R3b #145: name, subtitle and lore
+                        // are the earned text — an un-forged
+                        // artifact's detail is its serial plate and
+                        // the unforged fact, nothing more. What is
+                        // not yet earned is not previewed.
+                        if (artifact.id in forgedArtifactIds) {
+                            Text(
+                                text = artifact.name,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 17.sp,
+                                color = scheme.onBackground
+                            )
+                            Text(
+                                text = artifact.subtitle,
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = artifact.lore,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontSize = 13.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                        // DRW-01: the "REQUIRES … MIN · …
+                        // INTERCEPTIONS" price tag is gone — no
+                        // code ever read those numbers. The true
+                        // rule prints once, on the cabinet's list
+                        // (below), not as a per-artifact price.
+                        Text(
+                            text = when {
+                                artifact.id == PARTIAL_STAMP_ID &&
+                                    artifact.id in forgedArtifactIds ->
+                                    "STAMPED — IT STANDS IN THE CABINET"
+                                artifact.id == PARTIAL_STAMP_ID ->
+                                    "NOT YET STAMPED"
+                                artifact.id in forgedArtifactIds ->
+                                    "FORGED — IT STANDS IN THE CABINET"
+                                else -> "NOT YET FORGED"
+                            },
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                        // Issue #110, finding 5: the forge record —
+                        // how many sessions forged (or stamped) it,
+                        // and the most recent one's date, from the
+                        // stored session rows. A cabinet that names
+                        // real days is a record; one that doesn't
+                        // was decoration.
+                        val detailStat = forgeStats[artifact.id]
+                        if (detailStat != null && detailStat.count > 0) {
+                            val lastDate = java.time.Instant
+                                .ofEpochMilli(detailStat.lastForgedAtMillis)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toLocalDate()
+                            Text(
+                                text = if (artifact.id == PARTIAL_STAMP_ID) {
+                                    "STAMPED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                                } else {
+                                    "FORGED ×${detailStat.count} · LAST ${headingLabel(lastDate, withYear = true)}"
+                                },
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("cabinet_forge_record_${artifact.id}")
+                            )
+                        }
+                        // Audit R3b #145: provenance under the
+                        // summary — every forge of this artifact,
+                        // dated, with the span's intention and its
+                        // outcome. A duplicate forge is a second
+                        // line, never a silent no-op; a shield-gap
+                        // forge says so.
+                        val forgeRecords = curioForgeRecords[artifact.id].orEmpty()
+                        forgeRecords.forEach { record ->
+                            val forgeDay = java.text.SimpleDateFormat(
+                                "d MMM yyyy", Locale.US
+                            ).format(java.util.Date(record.startWallTimeMillis))
+                            // Reopened defect B: the mark derives
+                            // from the shield-gap fact via
+                            // curioForgeGapMark — a FLOW forge's
+                            // outcome is STOPWATCH_ENDED even when
+                            // its shieldGapSeen latch is set, so an
+                            // outcome-only test marked nothing.
+                            val gapMark = curioForgeGapMark(record)
+                            Text(
+                                text = "$forgeDay · ${record.intention}$gapMark",
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant
+                            )
+                        }
+                        // DRW-06: no SELECT verb, no SELECTED
+                        // state — the selection was consumed by
+                        // nothing, survived nothing, and chose
+                        // between toys that do not exist. The
+                        // detail now ends at the record.
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    // ------------------------------------------------------------------
+    // RECEIPTS — the index of claimed slips (issue #157). Ruled
+    // rows like everything else in the Drawer. A row prints its
+    // №, its date, its outcome word — and, where the session's
+    // own record proves it, the warning the slip carried, in
+    // Drawer type: the warnings live in the furniture now, so
+    // they survive the slip. Tapping a row re-presents the slip.
+    // ------------------------------------------------------------------
+    if (view == DrawerView.RECEIPTS) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(scheme.background)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag("drawer_receipts"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(bottom = 100.dp)
+        ) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "RECEIPTS",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 2.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = stringResource(R.string.label_back),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier
+                            .clickable { viewName = DrawerView.LANDING.name }
+                            .testTag("receipts_back")
+                    )
+                }
+            }
+            if (receipts.isEmpty()) {
+                item {
+                    Text(
+                        text = "NO RECEIPTS YET",
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 13.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 24.dp)
+                    )
+                }
+            } else {
+                items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
+                    ReceiptIndexRow(
+                        entry = entry,
+                        onClick = { onReceiptClick(entry.sessionId) }
+                    )
+                }
+            }
+        }
+        return
+    }
+
+    // ------------------------------------------------------------------
+    // LIST VIEWS — landing / month index / one month / search results.
     // ------------------------------------------------------------------
     // SPITZ Charge 7 (closer): NO column gap in the list — the
     // audit ruled rows breathe by their own padding + hairline
@@ -548,6 +1025,48 @@ fun DrawerScreen(
                 }
             }
         } else when (view) {
+            // Unreachable: the CABINET and RECEIPTS pages return
+            // early above, before this column exists. Present for
+            // exhaustiveness.
+            DrawerView.CABINET, DrawerView.RECEIPTS -> {
+                item { Spacer(Modifier.height(0.dp)) }
+            }
+            DrawerView.INDEX -> {
+                // ---------- ALL MONTHS ----------
+                item {
+                    DrawerNavRow(
+                        label = "BACK",
+                        onClick = { viewName = DrawerView.LANDING.name }
+                    )
+                }
+                items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) {
+                                onSelectMonth(month.year, month.month)
+                                monthEnteredFromName = DrawerView.INDEX.name
+                                viewName = DrawerView.MONTH.name
+                            }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 10.dp)
+                            .testTag("drawer_month_${month.year}_${month.month}"),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = monthLabel(month.year, month.month),
+                            fontFamily = AtkinsonHyperlegibleFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 14.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+            }
+
             DrawerView.MONTH -> {
                 // ---------- ONE MONTH ----------
                 item {
@@ -708,6 +1227,65 @@ fun DrawerScreen(
                         }
                     }
                 }
+                // The drawers doors (main, C10 — restored at
+                // the composition, K8): the composed landing had
+                // kept the train shelf but lost every entry row,
+                // stranding the CABINET / RECEIPTS / INDEX views
+                // the sections above implement. ALL MONTHS keeps
+                // main's case split (populated landings only).
+                if (!globallyEmpty) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                role = androidx.compose.ui.semantics.Role.Button
+                            ) { viewName = DrawerView.INDEX.name }
+                            .sizeIn(minHeight = 48.dp)
+                            .padding(vertical = 6.dp)
+                            .testTag("drawer_all_months"),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(R.string.drawer_all_months),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                        androidx.compose.material3.Icon(
+                            imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                            contentDescription = null,
+                            tint = scheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+                }
+                // The cabinet's door: ONE furniture row under
+                // ALL MONTHS (chrome C10).
+                item {
+                    DrawerNavRow(
+                        label = "CABINET",
+                        onClick = { viewName = DrawerView.CABINET.name },
+                        modifier = Modifier.testTag("drawer_curios_row")
+                    )
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
+                // The receipts index's door: ONE furniture row
+                // under CABINET (issue #157) — this destination
+                // is named "Receipts"; the receipts are here.
+                item {
+                    DrawerNavRow(
+                        label = "RECEIPTS",
+                        onClick = { viewName = DrawerView.RECEIPTS.name },
+                        modifier = Modifier.testTag("drawer_receipts_row")
+                    )
+                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+                }
             }
         }
     }
@@ -861,10 +1439,97 @@ private fun StoredRow(
                 color = scheme.onSurfaceVariant
             )
             Text(
-                text = spentLabel(task.actualSecondsSpent),
+                // Issue #110, finding 2 (main's form, restored at
+                // the composition, K8): TOTAL — the lifetime
+                // accrual riding under the finish day's shelf,
+                // not time that day contained. Both parents'
+                // VaultHistoryTruthTest pins this print; the
+                // train's bare-label row contradicted its own.
+                text = "TOTAL ${spentLabel(task.actualSecondsSpent)}",
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
+            )
+        }
+    }
+    HorizontalDivider(thickness = 1.dp, color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+private fun DrawerNavRow(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scheme = MaterialTheme.colorScheme
+    Text(
+        text = label,
+        fontFamily = AtkinsonHyperlegibleFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 12.sp,
+        color = scheme.onBackground,
+        modifier = modifier
+            .clickable(role = androidx.compose.ui.semantics.Role.Button) { onClick() }
+            .sizeIn(minHeight = 48.dp)
+            .padding(vertical = 14.dp)
+    )
+}
+
+/** One receipts-index row (issue #157): № · date · outcome word,
+ *  in the Drawer's furniture. The warnings print here — in Drawer
+ *  type, on the furniture, never on the slip — only where the
+ *  session's own record proves them: the release-fault stamp
+ *  proves "SHIELD FAULT — SEE RECEIPT"; the re-derived slip's
+ *  shieldWasOff fact (the row's shield-gap outcome) proves "THE
+ *  SHIELD WAS OFF FOR PART OF THAT SESSION". */
+@Composable
+private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    val date = java.time.Instant.ofEpochMilli(entry.endedAtWallMs)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp)
+            .testTag("receipt_row_${entry.sessionId}"),
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        // GESTALT receipts audit F7 (filed on PR #250): numerals are
+        // Anonymous Pro by law — the № segment carries its own span;
+        // date + outcome stay Atkinson.
+        Text(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(fontFamily = AnonymousProFamily)) {
+                    append(entry.numberPrint)
+                }
+                append(" · ${headingLabel(date, withYear = true)} · ${entry.outcomeWord}")
+            },
+            fontFamily = AtkinsonHyperlegibleFamily,
+            fontWeight = FontWeight.Medium,
+            fontSize = 14.sp,
+            color = scheme.onBackground
+        )
+        if (entry.releaseFaultShield) {
+            Text(
+                text = "SHIELD FAULT — SEE RECEIPT",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_fault_${entry.sessionId}")
+            )
+        }
+        if (entry.shieldWasOff) {
+            Text(
+                text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 10.5.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground,
+                modifier = Modifier.testTag("receipt_shield_off_${entry.sessionId}")
             )
         }
     }
@@ -877,13 +1542,17 @@ private fun EarlierRow(onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(
+                role = androidx.compose.ui.semantics.Role.Button
+            ) { onClick() }
+            .sizeIn(minHeight = 48.dp)
             .padding(vertical = 10.dp)
             .testTag("drawer_earlier"),
-        horizontalArrangement = Arrangement.Center
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = "EARLIER",
+            text = stringResource(R.string.drawer_earlier),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 11.sp,

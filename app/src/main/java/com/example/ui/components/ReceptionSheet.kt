@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -135,6 +137,12 @@ fun receptionDoorWord(print: PermPrint): String = when (print) {
     PermPrint.MISSING_STALE -> "NOT SET"
     PermPrint.UNPROVED -> "UNPROVED"
     PermPrint.UNMEASURED -> "NOT CHECKED"
+    // The enum grew again on main (Audit R6 #340 F44): SWORN,
+    // the user's own timestamped oath where the OS cannot
+    // measure. The board prints the word itself (ParkDrawer's
+    // two SWORN rows), and this sheet reprints the board's
+    // grammar — so the sheet's word is the same word.
+    PermPrint.SWORN -> "SWORN"
 }
 
 /** First-open gate: the sheet opens itself only while the setup
@@ -388,6 +396,7 @@ fun chitLineText(line: String, repaired: Boolean, ink: Color): AnnotatedString =
         }
     }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ReceptionSheet(
     visible: Boolean,
@@ -962,6 +971,7 @@ fun ReceptionSheet(
  *  proof and for an unread door — a sweep is the only honest
  *  verb for both; SET carries no key). STALE cards also print
  *  the aged-proof gloss (S-12). */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReceptionDoorCard(
     item: WatchItemId,
