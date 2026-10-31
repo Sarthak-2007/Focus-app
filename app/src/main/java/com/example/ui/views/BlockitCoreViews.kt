@@ -1732,21 +1732,33 @@ internal object SlideGestureMath {
     /** The travel limit a warrant state imposes on displayed travel. */
     fun travelLimit(state: WarrantState): Float = when (state) {
         WarrantState.LIVE -> 1f
-        // No positive evidence of death: travel to the catch is free;
-        // the catch itself cannot commit (Rosa §3.1).
-        WarrantState.UNPROVEN -> CATCH
+        // Issue #515 F2: no positive evidence of death is not a
+        // stop. An unproven wire travels free, exactly like a
+        // live one — the catch commits the attempt and the
+        // proving cascade judges it (its witnesses measure the
+        // enforcement facts themselves, before t=0, and annul
+        // honestly). Only a positively dead wire (OFF) clamps
+        // travel. (Rosa §3.1's catch cap governed until #515:
+        // it made the residency stamp — not a user action — the
+        // arm's deciding input.)
+        WarrantState.UNPROVEN -> 1f
         WarrantState.OFF -> OFF_STOP
     }
 
     /** The commit predicate (issue #125 F2, Sarthak's ruling —
      *  supersedes D1's under-contact crossing): a drag commits
-     *  when it is RELEASED with displayed at or past the catch on
-     *  a LIVE release-frame read. Position at release is the only
-     *  judge — never velocity or fling (issue #117's law stands);
-     *  crossing the catch under contact seats nothing, and a
-     *  drag back below it before release cancels the order. */
+     *  when it is RELEASED with displayed at or past the catch.
+     *  Position at release is the only judge — never velocity or
+     *  fling (issue #117's law stands); crossing the catch under
+     *  contact seats nothing, and a drag back below it before
+     *  release cancels the order. The warrant term is issue #515
+     *  F2 as adjudicated (Ren (clone), #515 comment 6545245897):
+     *  a release-frame read that is not positively dead commits —
+     *  LIVE directly, UNPROVEN via the seat into the ArmProving
+     *  cascade, the judge; only OFF, the positively dead wire,
+     *  never commits. */
     fun commitsOnRelease(displayed: Float, state: WarrantState): Boolean =
-        displayed >= CATCH && state == WarrantState.LIVE
+        displayed >= CATCH && state != WarrantState.OFF
 
     /** Rhea's brush floor: 90ms inclusive is an order; below is a brush. */
     fun isBrush(pressDurationMs: Long): Boolean = pressDurationMs < BRUSH_FLOOR_MS
@@ -2745,23 +2757,19 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
             return
         }
 
-        // A plain drag release. At the UNPROVEN catch-stop, release
-        // refuses FROM the catch (Rosa): knock, 300ms hold at the
-        // catch, universal spring home.
-        if (attemptWarrant == WarrantState.UNPROVEN &&
-            displayed >= SlideGestureMath.CATCH - 0.001f
-        ) {
-            startRefusal(knockFirst = true)
-            return
-        }
-
         // Issue #125 F2 (Sarthak's ruling): the release judges the
         // order. A genuine release — never a cancel — at or past
-        // the catch on this frame's fresh LIVE read seats the
-        // slide: Cato's integrator drives it to the latch exactly
-        // as the abolished under-contact crossing did, seeded
-        // with the hand's last measured motion floored and capped
-        // by the crossing's own law (floor 0, cap +6.0 frac/s).
+        // the catch on this frame's fresh read seats the slide:
+        // Cato's integrator drives it to the latch exactly as the
+        // abolished under-contact crossing did, seeded with the
+        // hand's last measured motion floored and capped by the
+        // crossing's own law (floor 0, cap +6.0 frac/s). The read
+        // that seats is any not-positively-dead one (issue #515
+        // F2 as adjudicated, #515 comment 6545245897): Rosa's
+        // UNPROVEN catch-stop refusal, which stood ahead of this
+        // check and refused the release FROM the catch, is
+        // deleted — an UNPROVEN release at the catch seats here
+        // and the proving cascade judges the attempt.
         if (!cancelled && SlideGestureMath.commitsOnRelease(displayed, attemptWarrant)) {
             startSeat(fromDrag = true, seedVelocity = dragVelocitySigned.coerceIn(0f, 6f))
             return
@@ -2898,12 +2906,15 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
                         // Arrival at the catch on an unproven wire:
                         // one fresh read (the latch-time-verdict
                         // law). LIVE — the wire healed during the
-                        // mesh — seats from the catch; anything else
-                        // refuses FROM the catch: knock, 300ms hold
-                        // at 0.84, universal spring home (Rosa F3).
+                        // mesh — seats from the catch; UNPROVEN
+                        // seats too (issue #515 F2: the proving
+                        // cascade judges the attempt); only a
+                        // positively dead wire refuses FROM the
+                        // catch: knock, 300ms hold at 0.84,
+                        // universal spring home (Rosa F3).
                         val verdict = readWarrant()
                         attemptWarrant = verdict
-                        if (verdict == WarrantState.LIVE) {
+                        if (verdict != WarrantState.OFF) {
                             startSeat(fromDrag = false, seedVelocity = 0f)
                         } else {
                             startRefusal(knockFirst = true)
@@ -3019,13 +3030,17 @@ class SlideToStartView(context: Context) : BlockitCanvasView(context) {
     }
 
     /** The latch frame (D3's boundary): a fresh read dispatches.
-     *  LIVE → the commit fires. Anything else → the refusal runs
-     *  from the seat's end (displayed == 1.00): the seat proved
-     *  nothing, so nothing dispatches. */
+     *  LIVE → the commit fires. UNPROVEN → the commit fires too
+     *  (issue #515 F2): the residency stamp the old law waited
+     *  for is not an action the user can take, and the proving
+     *  cascade behind this dispatch re-checks every witness
+     *  before t=0 and annuls honestly — it is the judge. OFF →
+     *  the refusal runs from the seat's end (displayed == 1.00):
+     *  the wire is positively dead, so nothing dispatches. */
     private fun latchFrame() {
         val verdict = readWarrant()
         attemptWarrant = verdict
-        if (verdict == WarrantState.LIVE) {
+        if (verdict != WarrantState.OFF) {
             stopIntegrator()
             mode = Mode.SEATED
             // The commit dispatches BEFORE the press latch releases

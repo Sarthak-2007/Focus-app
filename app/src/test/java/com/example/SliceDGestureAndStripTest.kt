@@ -54,7 +54,9 @@ class SlideGestureMathTest {
     @Test
     fun travelLimitsByWarrantState() {
         assertEquals(1f, SlideGestureMath.travelLimit(WarrantState.LIVE), 0f)
-        assertEquals(0.84f, SlideGestureMath.travelLimit(WarrantState.UNPROVEN), 0f)
+        // Issue #515 F2: an unproven wire is not a stop — travel
+        // is free like a live wire's; only OFF clamps.
+        assertEquals(1f, SlideGestureMath.travelLimit(WarrantState.UNPROVEN), 0f)
         assertEquals(0.65f, SlideGestureMath.travelLimit(WarrantState.OFF), 0f)
     }
 

@@ -32,6 +32,7 @@ import com.example.service.WatchStore
 import androidx.annotation.WorkerThread
 import androidx.room.withTransaction
 import com.example.domain.FocusDomain
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -40,6 +41,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -531,7 +534,14 @@ class MonolithRepository(
     // Main's provider seam, composed with the injection above:
     // the provider resolves the injected database when present,
     // else the singleton — one resolution path either way.
-    private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) }
+    private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) },
+    // Issue #515 F1: owns the fire-and-forget birth catalogue
+    // sync fired by startSession (see launchBirthCatalogSync).
+    // Injected so a test can hold the launch on a test
+    // dispatcher and prove the sync is NOT on the seal's
+    // birth path; production uses the IO default.
+    private val birthSyncScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) {
     private fun db(): MonolithDatabase = databaseProvider()
 
@@ -3777,15 +3787,27 @@ class MonolithRepository(
         windowEndMillis: Long = 0L,
         breakMinutes: Int? = null
     ): FocusSessionEntity {
-        // Issue #129 F2: the catalogue resyncs at EVERY session
-        // birth, before the held counts are captured below. An app
-        // installed after the last Monolith launch / sync — even a
-        // factory-preset one that will be born LOCKED — previously
-        // had no row, no tier and no enforcement for the whole
-        // session, because both enforcement doors only read rows
-        // that exist. Birth is the one moment every session passes
-        // through, whichever door armed it (hand or routine).
-        ensureSeededAndSyncPackages()
+        // Issue #129 F2 (placement amended by issue #515 F1): the
+        // catalogue resyncs at EVERY session birth — an app
+        // installed after the last sync must gain its row at
+        // birth, because both enforcement doors only read rows
+        // that exist, and birth is the one moment every session
+        // passes through, whichever door armed it (hand or
+        // routine). But #515 F1 proved the resync's PLACE was
+        // wrong: run inline here, a phone-wide PackageManager +
+        // LauncherApps scan sat inside the proving budget
+        // (DWELL 210 / DEADLINE 500 / ANNUL 1500), so a cold or
+        // slow scan jammed L1 and annulled correctly performed
+        // arms. The birth now inserts from the STANDING catalogue
+        // — the rows that exist; L1 is a Room insert, not a
+        // phone-wide scan — and the resync fires async the moment
+        // the insert lands (launchBirthCatalogSync, below). The
+        // #129 coverage is preserved: the new row arrives seconds
+        // into the session, both doors read rows live per event
+        // so enforcement picks it up the moment it exists, and
+        // only the seal's printed held count — captured from the
+        // standing catalogue, as its single-writer law requires —
+        // predates it.
         val isStopwatch = durationMinutes < 10
         val targetSecs = if (isStopwatch) {
             STOPWATCH_MIN_FLOOR_SECONDS
@@ -3864,7 +3886,7 @@ class MonolithRepository(
         // itself. Exactly one writer exists for these columns
         // (this insert); no DAO update for them will ever exist.
         val database = db() // ISSUE-67: injected database, no re-fetch
-        return database.withTransaction {
+        val born = database.withTransaction {
             val snapshotApps = dao.getAllAppsSnapshot()
             val heldApps = countHeldApps(snapshotApps)
             // W-41: the tier split rides the same snapshot and
@@ -3915,6 +3937,28 @@ class MonolithRepository(
                 id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
                 heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
             )
+        }
+        // Issue #515 F1: the insert has landed — fire the birth
+        // resync off the proving path (see the note at this
+        // function's head). L1 resolves on the insert alone.
+        launchBirthCatalogSync()
+        return born
+    }
+
+    /** Issue #515 F1: the birth catalogue resync, fired off the
+     *  seal's proving path. Fire-and-forget by design: the sync
+     *  is mutex-guarded, idempotent and collapse-windowed, and
+     *  its failure is only logged — the next sync any surface
+     *  fires (ViewModel init, shield start, the next birth)
+     *  re-runs it, so a failed birth sync delays catalogue truth
+     *  by one launch at worst. It never blocks, jams or annuls
+     *  the arm that fired it. */
+    private fun launchBirthCatalogSync() {
+        birthSyncScope.launch {
+            runCatching { ensureSeededAndSyncPackages() }
+                .onFailure {
+                    Log.w(TAG, "birth catalogue sync failed; a later sync re-runs it", it)
+                }
         }
     }
 

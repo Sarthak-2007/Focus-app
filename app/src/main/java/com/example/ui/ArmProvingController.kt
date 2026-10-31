@@ -332,8 +332,11 @@ class ArmProvingController(
         if (current is ArmPhase.SealedRunning) return
         // DISPATCH LAW, settled (Joss's §3(c)/§6.5 governs;
         // Ren's Charge-2 ruling, Oct 29): this entry is called
-        // only on a latch frame that read LIVE — the slide's
-        // latch frame IS the verdict, and it is the only one.
+        // only on a latch frame that read LIVE — or UNPROVEN
+        // since issue #515 F2, whose cure moved the unproven
+        // arm's judgment from the slide's stamp-wait to this
+        // cascade's witnesses — the slide's latch frame IS the
+        // verdict, and it is the only one.
         // An earlier §F2 draft re-read the warrant here as a
         // dispatch precondition; that second read is dropped.
         // Two derivations of one fact will disagree, and a
