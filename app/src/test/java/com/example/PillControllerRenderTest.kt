@@ -82,12 +82,17 @@ class PillControllerRenderTest {
      *  stand behind, and witness a foreign app in front. Each grant is
      *  proven by its own assertion before the controller starts.
      *
-     *  The overlay op is granted under every key the framework reads
-     *  it under (the process uid and the Binder calling uid — the
-     *  sandbox does not promise they are the same number), and the
-     *  legacy permission is granted alongside, because canDrawOverlays
-     *  falls back to it when the op reads MODE_DEFAULT. The raw mode
-     *  is asserted first so a shut door names its own reading. */
+     *  The grants are laid under every key and shelf the framework
+     *  might read: the op under both uids (the sandbox does not
+     *  promise the process uid and the Binder calling uid are the
+     *  same number), the uid-mode forms, and the legacy permission
+     *  canDrawOverlays falls back to when the op reads MODE_DEFAULT.
+     *  The door assertion then prints the full state vector — the
+     *  string-op read, the int-op read (24 is OP_SYSTEM_ALERT_WINDOW's
+     *  frozen AOSP code; neither the OP_* int constants nor strOpToOp
+     *  are public in this SDK surface, as two compile verdicts on
+     *  this file established) and canDrawOverlays itself — so a shut
+     *  door names the exact reading that stayed shut. */
     private fun openTheDoors(repository: MonolithRepository) {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         for (uid in setOf(Process.myUid(), Binder.getCallingUid())) {
@@ -103,51 +108,26 @@ class PillControllerRenderTest {
                 context.packageName,
                 AppOpsManager.MODE_ALLOWED
             )
-            // The same two ops under their int codes: the shadow's
-            // string-keyed and int-keyed mode stores are not the same
-            // shelf in every Robolectric version, and the framework
-            // reads canDrawOverlays through the int op. The int codes
-            // come from strOpToOp — the OP_* int constants are not
-            // public API in this SDK surface.
-            shadowOf(appOps).setMode(
-                AppOpsManager.strOpToOp(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW),
-                uid,
-                context.packageName,
-                AppOpsManager.MODE_ALLOWED
-            )
-            shadowOf(appOps).setMode(
-                AppOpsManager.strOpToOp(AppOpsManager.OPSTR_GET_USAGE_STATS),
-                uid,
-                context.packageName,
-                AppOpsManager.MODE_ALLOWED
-            )
+            runCatching {
+                appOps.setUidMode(24, uid, AppOpsManager.MODE_ALLOWED)
+                appOps.setUidMode(43, uid, AppOpsManager.MODE_ALLOWED)
+            }
         }
         @Suppress("DEPRECATION")
         shadowOf(context as Application).grantPermissions(
             Manifest.permission.SYSTEM_ALERT_WINDOW
         )
-        val rawMode = appOps.unsafeCheckOpNoThrow(
+        val vector = "stringOp=" + appOps.unsafeCheckOpNoThrow(
             AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW,
             Process.myUid(),
             context.packageName
-        )
-        assertEquals(
-            "overlay door: the SYSTEM_ALERT_WINDOW op must read MODE_ALLOWED once granted",
-            AppOpsManager.MODE_ALLOWED,
-            rawMode
-        )
-        val rawModeInt = appOps.unsafeCheckOpNoThrow(
-            AppOpsManager.strOpToOp(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW),
+        ) + " intOp=" + appOps.unsafeCheckOpNoThrow(
+            24,
             Process.myUid(),
             context.packageName
-        )
-        assertEquals(
-            "overlay door: the SYSTEM_ALERT_WINDOW op (int form) must read MODE_ALLOWED once granted",
-            AppOpsManager.MODE_ALLOWED,
-            rawModeInt
-        )
+        ) + " canDrawOverlays=" + Settings.canDrawOverlays(context)
         assertTrue(
-            "overlay door: Settings.canDrawOverlays must read true once the op is granted",
+            "overlay door: canDrawOverlays must read true once the op is granted [$vector]",
             Settings.canDrawOverlays(context)
         )
 
