@@ -1,8 +1,10 @@
 package com.example.service
 
 import android.util.Log
+import android.Manifest
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.graphics.Rect
 import android.media.AudioManager
@@ -1418,16 +1420,26 @@ class MonolithAccessibilityService : AccessibilityService() {
             }
             val telecomInCall = telecom?.let {
                 // isInCall is permission-gated (READ_PHONE_STATE,
-                // which this app deliberately never holds): an
-                // unpermitted read throws SecurityException and
-                // lands as "not in call" — named explicitly, the
-                // way the generic catch below already treated it,
-                // so no exemption can ever be minted on an
-                // unreadable state.
-                try { it.isInCall } catch (e: SecurityException) {
-                    noteDetectionFailure("callTrackingIsInCall", e); false
-                } catch (e: Exception) {
-                    noteDetectionFailure("callTrackingIsInCall", e); false
+                // which this app deliberately never holds), so the
+                // read is attempted only on a granted permission —
+                // and this app never requests one, so in practice
+                // the telecom leg simply abstains and the surface
+                // leg of C-11 carries the lock on its own evidence.
+                // The ungranted path is the designed state, not a
+                // failure: it lands as "not in call" silently, so
+                // no exemption can ever be minted on an unreadable
+                // state. A granted-but-throwing read is handled
+                // the same way, SecurityException named explicitly.
+                if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) {
+                    false
+                } else {
+                    try { it.isInCall } catch (e: SecurityException) {
+                        noteDetectionFailure("callTrackingIsInCall", e); false
+                    } catch (e: Exception) {
+                        noteDetectionFailure("callTrackingIsInCall", e); false
+                    }
                 }
             } ?: false
             // The candidate IS the foreground app in both shapes
