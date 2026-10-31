@@ -1187,6 +1187,14 @@ class MonolithShieldService : Service() {
                 } else {
                     null
                 }
+                // Issue #520 (5-D): the accessibility door's call
+                // owner, imported — read only while that service
+                // is bound (its mirror zeroes with the binding).
+                val a11yCallOwner = if (MonolithAccessibilityService.instance != null) {
+                    MonolithAccessibilityService.callOwnerPackageNow
+                } else {
+                    null
+                }
                 // Issue #332 F2: a live call no longer suspends
                 // this door wholesale (the pre-cure shape made
                 // every call a complete enforcement holiday on
@@ -1195,16 +1203,25 @@ class MonolithShieldService : Service() {
                 // per-package through the safety floor (dialer /
                 // incallui / telecom), and every other blocked app
                 // stays blocked mid-call — Flipd's construction.
-                // The VoIP-owner exemption lives in the
-                // accessibility door (shouldBypassForCall); this
-                // fallback door fails closed, as a fallback must.
+                // Issue #520 (5-D): the VoIP owner is exempt here
+                // too — one call truth, both doors. Before this,
+                // this door deliberately did NOT inherit the owner
+                // exemption ("this fallback door fails closed")
+                // and could select the call's owner app mid-call
+                // and launch the Airlock over a live call the a11y
+                // door lawfully exempted. The surface narrowing
+                // (5-C) stays the a11y door's own refinement; this
+                // door imports the owner fact only.
                 val selectedForeground = ForegroundSelection
                     .selectBlockedForeground(
                         accessibilityForeground = a11yForeground,
                         blockedPackages = blockedPackages,
                         usageStatsFallback = { probe.blockedPackage }
                     )
-                    ?.takeUnless { com.example.data.SafetyFloor.isFloorPackage(it) }
+                    ?.takeUnless {
+                        com.example.data.SafetyFloor.isFloorPackage(it) ||
+                            ForegroundSelection.isCallOwnerExempt(it, a11yCallOwner)
+                    }
                 // The flip + the one WatchStore publication for
                 // this beat live at the composed latch above
                 // (FIX-R2, PR #388 recomposition): the latch's
