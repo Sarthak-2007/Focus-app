@@ -11,6 +11,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.example.R
 
 /**
  * Issue #114, finding 1 (Audit R3, moment-of-temptation, CRITICAL):
@@ -50,6 +51,9 @@ object PeekPillOverlay {
     private var root: LinearLayout? = null
     private var labelView: TextView? = null
     private var clockView: TextView? = null
+    // Issue #102: an exit fade in flight — a re-show in this
+    // window cancels the exit instead of fighting it.
+    private var exiting = false
 
     fun showOrUpdate(context: Context, appName: String, secondsRemaining: Int) {
         val appCtx = context.applicationContext
@@ -57,14 +61,18 @@ object PeekPillOverlay {
             hide(appCtx)
             return
         }
+        if (exiting) {
+            // The lease lives again before the fade finished:
+            // cancel the exit, restore the resting face.
+            root?.animate()?.cancel()
+            root?.alpha = PillCeremony.REST_ALPHA
+            root?.translationY = 0f
+            exiting = false
+        }
         if (root == null) {
             if (!buildAndAttach(appCtx)) return
         }
-        labelView?.text = if (peekPillWarning(secondsRemaining)) {
-            "PEEK · ${appName.uppercase()} · ENDING SOON"
-        } else {
-            "PEEK · ${appName.uppercase()}"
-        }
+        labelView?.text = peekPillLabelText(appName, secondsRemaining)
         clockView?.text = peekPillClockText(secondsRemaining)
         clockView?.setTextColor(
             if (peekPillWarning(secondsRemaining)) Color.rgb(0xE4, 0x7E, 0x35)
@@ -73,15 +81,23 @@ object PeekPillOverlay {
     }
 
     fun hide(context: Context) {
-        val wm = windowManager
-        val view = root
-        if (wm != null && view != null) {
-            runCatching { wm.removeView(view) }
+        val view = root ?: return
+        if (exiting) return
+        exiting = true
+        // Issue #102: the pill leaves the way it came — a fade,
+        // not a snap. The window is removed only when the fade
+        // completes (PillCeremony), and only if this window is
+        // still the standing one.
+        animatePillOut(view) {
+            if (root === view) {
+                runCatching { windowManager?.removeView(view) }
+                windowManager = null
+                root = null
+                labelView = null
+                clockView = null
+            }
+            exiting = false
         }
-        windowManager = null
-        root = null
-        labelView = null
-        clockView = null
     }
 
     private fun buildAndAttach(appCtx: Context): Boolean {
@@ -98,26 +114,39 @@ object PeekPillOverlay {
             setStroke(dp(1), Color.rgb(0xE4, 0x7E, 0x35))
         }
 
+        // Issue #102: the app's own figures reach this face —
+        // Anonymous Pro via PillTheme, the same typeface the
+        // #16 pill lane loads. Before this the one surface he
+        // sees inside another app wore the platform default.
+        val figures = PillTheme.figures(appCtx)
         val label = TextView(appCtx).apply {
             setTextColor(Color.rgb(0xF4, 0xEF, 0xEE))
             textSize = 11f
+            typeface = figures
             setPadding(0, 0, dp(10), 0)
         }
         val clock = TextView(appCtx).apply {
             setTextColor(Color.rgb(0xF4, 0xEF, 0xEE))
             textSize = 18f
+            typeface = figures
             setPadding(0, 0, dp(10), 0)
         }
         val end = Button(appCtx).apply {
-            text = "END PEEK"
+            text = appCtx.getString(R.string.pill_end_peek)
             textSize = 11f
+            typeface = figures
             setTextColor(Color.rgb(0x2A, 0x26, 0x23))
             background = GradientDrawable().apply {
                 shape = GradientDrawable.RECTANGLE
                 cornerRadius = dp(10).toFloat()
                 setColor(Color.rgb(0xF4, 0xEF, 0xEE))
             }
-            setOnClickListener { onEndPeekRequest?.invoke() }
+            setOnClickListener {
+                // A press you can feel: the hand-back answers
+                // in the hand, not only on the glass.
+                it.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                onEndPeekRequest?.invoke()
+            }
         }
 
         val row = LinearLayout(appCtx).apply {
@@ -155,6 +184,9 @@ object PeekPillOverlay {
         root = row
         labelView = label
         clockView = clock
+        // Issue #102: the ceremony — the pill settles in, it
+        // does not snap in like a system toast.
+        animatePillIn(row)
         return true
     }
 }
@@ -165,5 +197,28 @@ fun peekPillClockText(secondsRemaining: Int): String {
     return String.format(java.util.Locale.US, "%d:%02d", s / 60, s % 60)
 }
 
-/** The pill's expiry warning law: the last 30 seconds warn. Pure. */
-fun peekPillWarning(secondsRemaining: Int): Boolean = secondsRemaining in 0..30
+/**
+ * The pill's label print: `PEEK · NAME`, gaining `· ENDING SOON`
+ * inside the warning window — pure, tested. The name is uppercased
+ * with [java.util.Locale.US], the same pin the clock below already
+ * uses: the no-arg `uppercase()` follows the device's default
+ * locale, so under e.g. tr-TR "Instagram" would print "İNSTAGRAM" —
+ * a name the app does not have, at a different width.
+ */
+fun peekPillLabelText(appName: String, secondsRemaining: Int): String {
+    val name = appName.uppercase(java.util.Locale.US)
+    return if (peekPillWarning(secondsRemaining)) {
+        "PEEK · $name · ENDING SOON"
+    } else {
+        "PEEK · $name"
+    }
+}
+
+/**
+ * The pill's expiry warning law: the last 30 LIVE seconds warn.
+ * Zero is not a live second — `peekSecondsRemaining` retires the
+ * lease at its end (`remainingMs <= 0` → null) instead of ever
+ * deriving 0, so a face shown at 0 would be a dead lease wearing
+ * a warning. Pure, tested.
+ */
+fun peekPillWarning(secondsRemaining: Int): Boolean = secondsRemaining in 1..30

@@ -15,8 +15,46 @@ class MonolithApp : Application() {
     override fun onCreate() {
         super.onCreate()
         CrashCapture.install(this)
+        DebugStrictMode.install()
+        // Audit R6 #341 F56: every SharedPreferences file carries
+        // its schema version from this process start on.
+        com.example.data.PrefsSchema.stampAll(this)
         MLog.i("process start (debug=${BuildConfig.DEBUG})")
     }
+}
+
+/**
+ * Issue #272 (Build quality): StrictMode, debug builds only.
+ *
+ * The audit's charge: no StrictMode policy existed anywhere, so
+ * main-thread disk/network work and leaked closeables in
+ * development were invisible — the exact class of jank a blocker
+ * cannot afford on the arm path. The policy is LOG-ONLY
+ * (penaltyLog, never penaltyDeath): violations surface in the
+ * log for the developer, they never crash the user's — or a
+ * test's — process, and release builds install nothing at all.
+ */
+object DebugStrictMode {
+
+    fun install() {
+        if (!BuildConfig.DEBUG) return
+        runCatching {
+            android.os.StrictMode.setThreadPolicy(threadPolicy())
+            android.os.StrictMode.setVmPolicy(vmPolicy())
+        }
+    }
+
+    internal fun threadPolicy(): android.os.StrictMode.ThreadPolicy =
+        android.os.StrictMode.ThreadPolicy.Builder()
+            .detectAll()
+            .penaltyLog()
+            .build()
+
+    internal fun vmPolicy(): android.os.StrictMode.VmPolicy =
+        android.os.StrictMode.VmPolicy.Builder()
+            .detectAll()
+            .penaltyLog()
+            .build()
 }
 
 /**

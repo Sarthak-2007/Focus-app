@@ -193,7 +193,14 @@ class RepositoryArmSessionPort(
         intention = intention,
         profileName = profileName,
         durationMinutes = durationMinutes,
-        studyBlocksCount = studyBlocksCount
+        studyBlocksCount = studyBlocksCount,
+        // Issue #264 B-264-18: the hand arm's break choice is the
+        // preset the user last picked — the same stored fact the
+        // Deck's preset badge ("5m Break" / "10m Break") prints.
+        // Reading it here, at the one hand-arm door, stamps the
+        // choice on the row so the mechanism delivers the length
+        // the badge promised.
+        breakMinutes = com.example.data.PreArmStore(appContext).studyPreset().breakMinutes
     ).id
 
     override suspend fun activeSnapshotId(): Int? =
@@ -325,8 +332,11 @@ class ArmProvingController(
         if (current is ArmPhase.SealedRunning) return
         // DISPATCH LAW, settled (Joss's §3(c)/§6.5 governs;
         // Ren's Charge-2 ruling, Oct 29): this entry is called
-        // only on a latch frame that read LIVE — the slide's
-        // latch frame IS the verdict, and it is the only one.
+        // only on a latch frame that read LIVE — or UNPROVEN
+        // since issue #515 F2, whose cure moved the unproven
+        // arm's judgment from the slide's stamp-wait to this
+        // cascade's witnesses — the slide's latch frame IS the
+        // verdict, and it is the only one.
         // An earlier §F2 draft re-read the warrant here as a
         // dispatch precondition; that second read is dropped.
         // Two derivations of one fact will disagree, and a

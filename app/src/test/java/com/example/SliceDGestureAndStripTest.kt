@@ -54,18 +54,31 @@ class SlideGestureMathTest {
     @Test
     fun travelLimitsByWarrantState() {
         assertEquals(1f, SlideGestureMath.travelLimit(WarrantState.LIVE), 0f)
-        assertEquals(0.84f, SlideGestureMath.travelLimit(WarrantState.UNPROVEN), 0f)
+        // Issue #515 F2: an unproven wire is not a stop — travel
+        // is free like a live wire's; only OFF clamps.
+        assertEquals(1f, SlideGestureMath.travelLimit(WarrantState.UNPROVEN), 0f)
         assertEquals(0.65f, SlideGestureMath.travelLimit(WarrantState.OFF), 0f)
     }
 
     @Test
-    fun commitNeedsCatchContactAndLiveWire() {
-        assertTrue(SlideGestureMath.commits(0.84f, true, WarrantState.LIVE))
-        assertTrue(SlideGestureMath.commits(0.90f, true, WarrantState.LIVE))
-        assertFalse(SlideGestureMath.commits(0.839f, true, WarrantState.LIVE))
-        assertFalse(SlideGestureMath.commits(0.90f, false, WarrantState.LIVE))
-        assertFalse(SlideGestureMath.commits(0.90f, true, WarrantState.UNPROVEN))
-        assertFalse(SlideGestureMath.commits(0.90f, true, WarrantState.OFF))
+    fun commitNeedsCatchAndLiveWireAtRelease() {
+        // Issue #125 F2 (Sarthak's ruling): the commit is judged
+        // at RELEASE — displayed at or past the catch on a
+        // not-positively-dead release-frame read. The predicate
+        // has no contact term: crossing the catch under contact
+        // seats nothing any more, and drag-back below the catch
+        // before release cancels (the view's endDrag owns both
+        // calls). The UNPROVEN line is issue #515 F2 as
+        // adjudicated (Ren (clone), #515 comment 6545245897):
+        // Sarthak's #125 text rules timing only and never
+        // addressed warrant state; an UNPROVEN release at the
+        // catch seats and the proving cascade judges it. Only
+        // OFF, the positively dead wire, never commits.
+        assertTrue(SlideGestureMath.commitsOnRelease(0.84f, WarrantState.LIVE))
+        assertTrue(SlideGestureMath.commitsOnRelease(0.90f, WarrantState.LIVE))
+        assertFalse(SlideGestureMath.commitsOnRelease(0.839f, WarrantState.LIVE))
+        assertTrue(SlideGestureMath.commitsOnRelease(0.90f, WarrantState.UNPROVEN))
+        assertFalse(SlideGestureMath.commitsOnRelease(0.90f, WarrantState.OFF))
     }
 
     @Test
@@ -120,13 +133,17 @@ class StripDerivationsTest {
         state: WarrantState,
         bound: Boolean = true,
         stamped: Boolean = true,
-        usage: UsageAccess = UsageAccess.ALLOWED
+        usage: UsageAccess = UsageAccess.ALLOWED,
+        readMono: Long = 0L,
+        residencyStartMono: Long = 0L
     ) = Warrant(
         state = state,
         a11yBound = bound,
         a11yStampedThisResidency = stamped,
         shieldProtecting = false,
-        usage = usage
+        usage = usage,
+        readMono = readMono,
+        residencyStartMono = residencyStartMono
     )
 
     @Test
@@ -175,34 +192,55 @@ class StripDerivationsTest {
 
     @Test
     fun causeTablePicksOneSentenceByCausalPriority() {
-        // A11y death outranks everything.
+        // A11y death outranks everything. Timed overload with a
+        // fresh readMono/nowMono pair (TECH-1 B-Blocker-1): the
+        // no-clock overload reads SystemClock, a throwing stub in
+        // plain JVM tests. This warrant carries no residency, so
+        // no cold-open grace silence is owed and OFF stands at once.
         assertEquals(
             R.string.sentence_blocking_off,
-            refusalSentenceFor(warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED))?.textRes
+            refusalSentenceFor(
+                warrant(WarrantState.OFF, bound = false, stamped = false, usage = UsageAccess.DENIED, readMono = 10_000L),
+                10_000L
+            )?.textRes
         )
-        // Bound but unstamped: can't check.
-        assertEquals(
-            RefusalAction.RETRY_CHECK,
-            refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false))?.action
+        // Bound but unstamped, usage ALLOWED, and NO residency
+        // carried (this helper's hand-built warrant): the cured
+        // table (issue #7) prints BLOCKING IS OFF at once.
+        // WHY THE OLD EXPECTATION WAS THE BUG: this row used to
+        // expect RefusalAction.RETRY_CHECK — the fog sentence that
+        // printed "can't check, tap to retry" AT REST on a cold
+        // open, forever, on a guard whose only fault was that no
+        // a11y event had happened yet; the retry could never fix
+        // it, because nothing was broken that a tap repairs. The
+        // fog row is deleted, not reworded: an unstamped warrant
+        // carrying no residency is age-unknown, never fresh, so no
+        // grace silence is owed and bound-but-blind is off in fact.
+        // (A carried, in-grace residency IS silent — that half of
+        // the cured table is proven in ColdStartWarrantTest.)
+        val unstampedNoResidency = refusalSentenceFor(
+            warrant(WarrantState.UNPROVEN, stamped = false), 10_000L
         )
+        assertEquals(R.string.sentence_blocking_off, unstampedNoResidency?.textRes)
+        assertEquals(RefusalAction.FIX_ACCESSIBILITY, unstampedNoResidency?.action)
         // Usage positively denied names its own pane.
-        val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED))
+        val usageSentence = refusalSentenceFor(warrant(WarrantState.OFF, usage = UsageAccess.DENIED, readMono = 10_000L), 10_000L)
         assertEquals(R.string.sentence_usage_off, usageSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, usageSentence?.action)
         // Usage never granted (issue #6 C3): the sentence names
         // the Usage pane — the door its tap has always opened.
-        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET))
+        val unsetSentence = refusalSentenceFor(warrant(WarrantState.UNPROVEN, usage = UsageAccess.UNSET, readMono = 10_000L), 10_000L)
         assertEquals(R.string.sentence_usage_off, unsetSentence?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, unsetSentence?.action)
         // UNSET + unstamped + UNPROVEN (the C3 lie's other door): the
         // RETRY row must not claim this warrant — its tap opens the
         // Usage pane, so the Usage sentence is the only honest print.
-        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET))
+        val unsetUnstamped = refusalSentenceFor(warrant(WarrantState.UNPROVEN, stamped = false, usage = UsageAccess.UNSET, readMono = 10_000L), 10_000L)
         assertEquals(R.string.sentence_usage_off, unsetUnstamped?.textRes)
         assertEquals(RefusalAction.FIX_USAGE, unsetUnstamped?.action)
         // Healthy wire: the slot stands empty.
-        assertNull(refusalSentenceFor(warrant(WarrantState.LIVE)))
-        assertNull(refusalSentenceFor(null))
+        assertNull(refusalSentenceFor(warrant(WarrantState.LIVE, readMono = 10_000L), 10_000L))
+        assertNull(refusalSentenceFor(null, 10_000L))
     }
 
     @Test

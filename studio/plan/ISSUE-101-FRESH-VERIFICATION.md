@@ -94,3 +94,19 @@ ratchet's printed law; unsealed behaviour unchanged. Technical-
 execution — gh/git only, throttle held, no local compile.
 Implementation-quality — cures reuse the in-tree gate and warning
 idiom exactly; no new mechanism invented where one existed.
+
+## Addendum — drift re-verification vs main `3ef08237` (Oct 31, ~02:30 IST)
+
+Main moved `a43466cf` → `3ef08237` while this branch's CI queued.
+File-scoped drift check per the stamp rule: F1/F2/F3 regions are
+byte-identical on `3ef08237` (applyProfile MonolithRepository.kt:2525,
+selectAndApplyProfile MonolithViewModel.kt:3385, removeBlockedSite
+:2507, applySmartLoadout clamp :2324; MainActivity untouched) — stamps
+carry. The F4 region drifted only additively (#254 F12 attempt mirror
+in triggerAirlockIntercept, after the mint; transmuteImpulseAndReturn
+:4027 byte-identical) — F4 re-proved still real on `3ef08237`, and the
+annul hook's context is untouched. This branch was therefore
+recomposed onto `3ef08237` (same two cure commits, re-created via the
+Git Database API because local git writes were failing box-wide);
+**VERIFIED vs main `3ef08237`** for all four findings as scoped above.
+— closure seat under DURCH-C (#101)

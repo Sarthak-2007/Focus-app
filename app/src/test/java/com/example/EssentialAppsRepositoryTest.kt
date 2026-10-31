@@ -39,6 +39,20 @@ class EssentialAppsRepositoryTest {
             .allowMainThreadQueries()
             .build()
         repository = MonolithRepository(context, db.monolithDao())
+        // Settled-world stamp (issue #7 rulings landing, BUILDER-7):
+        // applySmartLoadout resyncs first, and the one-time LEGACY
+        // OPEN reset (Ren ruling 00:34 IST Oct 31) fires at the end
+        // of that sync over a legacy catalogue — it would close
+        // this class's staged OPEN rows before the loadout derives,
+        // and the #129 no-loosen clamp would then hold the SLEEP
+        // essentials shut. This class pins the loadout, not the
+        // reset (the reset's own pin is
+        // LegacyOpenResetRepositoryTest), so the fixture starts in
+        // the world after the reset has run; the reset×clamp
+        // composition itself is filed on #7 by name for an owner
+        // ruling. No assertion in this class changes.
+        context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(MonolithRepository.LEGACY_OPEN_RESET_DONE_KEY, true).commit()
     }
 
     @After

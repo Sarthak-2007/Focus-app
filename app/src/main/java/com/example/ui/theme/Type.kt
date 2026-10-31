@@ -62,24 +62,29 @@ val CenteredNumericLineHeightStyle = LineHeightStyle(
 // off-ladder, unused) is dead. The Atkinson "Medium" is dead - the family
 // ships 400/700 only, so body text is honest 400.
 
-/** H2 - the one big number in hand (running time, Deck total). */
+/** H2 - the one big number in hand (running time, Deck total).
+ *  Issue #256: tabular figures ("tnum") — Sora is a proportional
+ *  face, so without this the ticking hero number changed width
+ *  every second and the centred readout reflowed around it. */
 val DialClockTextStyle = TextStyle(
     fontFamily = SoraFamily,
     fontWeight = FontWeight.Bold,
     fontSize = 72.sp,
     lineHeight = 72.sp,
     letterSpacing = (-2.0).sp,
+    fontFeatureSettings = "tnum",
     platformStyle = TightNumericPlatformStyle,
     lineHeightStyle = CenteredNumericLineHeightStyle
 )
 
-/** H1 - across-the-room time. AOD only. */
+/** H1 - across-the-room time. AOD only. Tabular figures, as above. */
 val DeskClockTextStyle = TextStyle(
     fontFamily = SoraFamily,
     fontWeight = FontWeight.Bold,
     fontSize = 104.sp,
     lineHeight = 100.sp,
     letterSpacing = (-3.0).sp,
+    fontFeatureSettings = "tnum",
     platformStyle = TightNumericPlatformStyle,
     lineHeightStyle = CenteredNumericLineHeightStyle
 )
@@ -143,6 +148,20 @@ val AppTitleTextStyle = TextStyle(
 
 /** B1 body - Atkinson 400 (the only honest body weight the family ships). */
 val BodyTextStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 15.sp,
+    lineHeight = 22.sp
+)
+
+/** The reception sheet's second voice (Fein §B/§C, FINISH-type-print):
+ *  the door's job-adjacent lines — chit line, STALE gloss, prepare
+ *  escort — in BodyTextStyle's values, worn in onSurfaceVariant at
+ *  the call sites. Wave-2 fix (Pforte): ReceptionSheet used this
+ *  name at four sites with no definition and no import anywhere in
+ *  the tree — a compile-blocker caught by the Wave-2 finisher
+ *  cluster, not by Wave-1's "print CLOSED" record. */
+val DoorJobTextStyle = TextStyle(
     fontFamily = AtkinsonHyperlegibleFamily,
     fontWeight = FontWeight.Normal,
     fontSize = 15.sp,
