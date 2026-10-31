@@ -24,6 +24,7 @@ import com.example.data.InterceptLogEntity
 import com.example.data.KineticArtifact
 import com.example.data.MonolithRepository
 import com.example.data.PruneNote
+import com.example.data.breakRemainingAfter
 import com.example.data.SmartLoadout
 import com.example.data.StudyChecklistItem
 import com.example.data.StudyModePreset
@@ -31,6 +32,7 @@ import com.example.data.SystemGuardStatus
 import com.example.data.TaskQueueStatus
 import com.example.service.InterceptPath
 import com.example.service.MonolithShieldService
+import com.example.service.BreakPillOverlay
 import com.example.service.PeekPillOverlay
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
@@ -2520,6 +2522,35 @@ class MonolithViewModel(
                     )
                 } else {
                     PeekPillOverlay.hide(appContext)
+                }
+            }
+        }
+        // Issue #102 (retained DAYLIGHT break 2): the break gets
+        // the pill the peek already had. Until this collector the
+        // pill was half his idea — peek-only: during a Safe Break,
+        // over other apps, nothing told him how much break was
+        // left, so he had to return to Monolith to learn his own
+        // break was still running. The break face derives its
+        // clock from the session row's stored (remaining, lastTick)
+        // pair via breakRemainingAfter — the same derivation
+        // PillDerivation.Break and the progress machine use — so
+        // this face can never disagree with the break it names.
+        // Its END BREAK routes to the one hand-back verb, exactly
+        // as the peek pill's END PEEK does.
+        BreakPillOverlay.onEndBreakRequest = { endSafeBreakEarly() }
+        viewModelScope.launch {
+            activeSession.collect { session ->
+                if (session != null && session.isActive && session.isInSafeBreak) {
+                    BreakPillOverlay.showOrUpdate(
+                        appContext,
+                        breakRemainingAfter(
+                            storedRemaining = session.safeBreakSecondsRemaining,
+                            lastTickMonoMillis = session.lastTickElapsedRealtimeMillis,
+                            nowMonoMillis = SystemClock.elapsedRealtime()
+                        )
+                    )
+                } else {
+                    BreakPillOverlay.hide(appContext)
                 }
             }
         }
