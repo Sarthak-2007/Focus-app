@@ -115,6 +115,7 @@ class ForegroundSelectionTest {
     // exemption — one call truth, both doors. The package the
     // a11y door locked as the live call's owner is never
     // selected; a null owner exempts nothing.
+    // PIN-SCOPE: PLUMBING (pure selection helper).
 
     @Test
     fun callOwnerExempt_ownerPackage_isExempt() {

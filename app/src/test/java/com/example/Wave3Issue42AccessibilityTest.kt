@@ -392,6 +392,7 @@ class Wave3Issue42AccessibilityTest {
     // screen") is unchanged; what died is the old reading under
     // which owning a call exempted the whole app, surface or not.
     // That dead reading is pinned as a denial further down.
+    // PIN-SCOPE: PLUMBING (pure decision functions; parts C–F).
     // ---------------------------------------------------------------
 
     @Test
