@@ -2,6 +2,7 @@ package com.example.service
 
 import android.util.Log
 import android.Manifest
+import android.annotation.SuppressLint
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.pm.PackageManager
@@ -1353,6 +1354,21 @@ class MonolithAccessibilityService : AccessibilityService() {
         callOwnerPackageNow = pkg
     }
 
+    // MissingPermission is suppressed for exactly one call in
+    // this function: the TelecomManager.isInCall read below.
+    // That read is permission-gated by READ_PHONE_STATE, a
+    // permission this app never holds and never requests BY
+    // DESIGN — the read is attempted only behind a
+    // checkSelfPermission guard and its refusal lands as
+    // "not in call", with the surface leg of C-11 carrying the
+    // lock. The detector's remaining variant asks for the
+    // permission to be DECLARED in the manifest; declaring a
+    // never-requested dangerous permission to silence the
+    // checker would misstate the app's surface, so the variant
+    // is answered here, in writing, instead. Remove this
+    // suppression only together with a ruled decision to
+    // declare the permission.
+    @SuppressLint("MissingPermission")
     private fun refreshCallTracking(pkgName: String, eventType: Int, windowClassName: String?) {
         if (eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             lastForegroundPackage = pkgName
