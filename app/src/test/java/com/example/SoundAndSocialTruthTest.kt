@@ -5,10 +5,11 @@ import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodes
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.MonolithDatabase
@@ -453,17 +454,29 @@ class SoundAndSocialTruthTest {
             setParkContent(vm)
             settlePark()
             composeRule.onNodeWithTag("park_social_sled").assertExists()
-            // The premise — no OFF word on the composed board
-            // before the toggle — is a waited condition, not an
-            // instantaneous one: the board's first frames can
-            // carry a not-yet-swept interceptor's OFF (the census
-            // failure found exactly that frame: a board row's
-            // NOTIFICATIONS/OFF texts at 1.2 s, while the store
-            // already derived RUNNING). Poll the composed tree on
-            // this class's own driven loop until the premise
-            // actually holds; the claim asserted is unchanged.
-            awaitTrue("the composed board carries no OFF word before the toggle") {
-                composeRule.onAllNodesWithText("OFF").fetchSemanticsNodes().isEmpty()
+            // The premise, re-pinned to current law (#166, K8's
+            // seventh sitting). The original premise — no OFF word
+            // anywhere on the composed board before the toggle —
+            // was written before issue #109 F1 and has been
+            // unmeetable since: the NOTIFICATIONS interceptor is
+            // OFF by law whenever no session is capturing (printing
+            // RUNNING there was the false print caught on a real
+            // phone), so the board lawfully carries that row's OFF
+            // from the first frame, session or none. Census #4
+            // caught the old premise failing on exactly that row's
+            // (NOTIFICATIONS, OFF) texts; a waited form of the same
+            // premise (this PR's first run) proved the OFF never
+            // leaves in 30 s. What this case actually guards is
+            // attribution — the OFF that follows the toggle must be
+            // the SOCIAL row's — so premise and verdict are both
+            // read on the social row's own (name, word) pair,
+            // waited on this class's driven loop like every other
+            // condition here. The setParkContent comment records
+            // the same discipline for the SHORTS row (its setting
+            // staged ON so its word cannot print OFF either).
+            awaitTrue("the composed SOCIAL SITES row does not print OFF before the toggle") {
+                composeRule.onAllNodes(boardRowPairs("SOCIAL SITES", "OFF"))
+                    .fetchSemanticsNodes().isEmpty()
             }
 
             tapParkSled()
@@ -477,7 +490,15 @@ class SoundAndSocialTruthTest {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
             settlePark()
-            composeRule.onNodeWithText("OFF").assertExists()
+            // The verdict, on the same pair: the SOCIAL row itself
+            // must print OFF. (The old tail — some OFF exists
+            // anywhere — could be satisfied by the NOTIFICATIONS
+            // row's lawful OFF even if the social row never moved;
+            // this form cannot.)
+            awaitTrue("the composed SOCIAL SITES row prints OFF after the toggle") {
+                composeRule.onAllNodes(boardRowPairs("SOCIAL SITES", "OFF"))
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
         } finally {
             closeDb(db)
         }
@@ -542,6 +563,21 @@ class SoundAndSocialTruthTest {
         // the behaviour under test.
         throw AssertionError("Park sheet did not settle (compose never idled) within 5s")
     }
+
+    /** A board row pairing: a merged node whose texts carry both
+     *  the row's name and the given word (census #4's own failure
+     *  text shows rows merge exactly so — '[NOTIFICATIONS, OFF…').
+     *  Attribution-grade: unlike a bare OFF-text search, it cannot
+     *  be satisfied by another row's word. */
+    private fun boardRowPairs(name: String, word: String): SemanticsMatcher =
+        SemanticsMatcher("board row $name prints $word") { node ->
+            if (SemanticsProperties.Text !in node.config) {
+                false
+            } else {
+                val texts = node.config[SemanticsProperties.Text].map { it.text }
+                name in texts && word in texts
+            }
+        }
 
     /** DIAG-D3 §c2(iii) — the seed-settle gate, landed for the
      *  two rendered social cases. The VM's init launch assigns
