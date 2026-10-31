@@ -564,7 +564,7 @@ fun ShieldMatrixScreen(
         }
 
         // =====================================================================
-        // SECTION 3.5: YOUR RULES — THE STANDING ORDERS SLIP.
+        // SECTION 3.5: YOUR RULES — THE STANDING ORDERS SLIP. (probe: comment-only control for #90 F4 targeted verdict)
         // The tally first (three numbers that sum to the phone — a
         // ledger that doesn't balance is a lie), then PEEK before
         // SHUT (the holes are the urgent read), one printed line per
