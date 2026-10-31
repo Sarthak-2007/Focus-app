@@ -413,13 +413,18 @@ class PillRenderScaffoldTest {
         return runCatching { method?.invoke(null, target) }.getOrNull()
     }
 
-    /** Set an AppOp mode through ShadowAppOpsManager, whichever
-     *  signature this Robolectric carries. Returns what happened. */
+    /** Set an AppOp mode through ShadowAppOpsManager. EVERY
+     *  setMode signature shape is attempted (String-op and Int-op):
+     *  CI run 41155367631 proved the String form alone lands in a
+     *  store the AOSP readback does not consult for the overlay op
+     *  (setMode(String) reported ok, usage access read ALLOWED, yet
+     *  canDrawOverlays stayed false). Returns every outcome. */
     private fun probeSetAppOp(opStr: String, opInt: Int, mode: Int): String {
         val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         val shadow = shadowOf(appOps) ?: return "no-shadow"
         val uid = Process.myUid()
         val pkg = context.packageName
+        val outcomes = mutableListOf<String>()
         for (m in shadow.javaClass.methods.filter { it.name == "setMode" }) {
             val params = m.parameterTypes
             val args: Array<Any?>? = when {
@@ -431,10 +436,36 @@ class PillRenderScaffoldTest {
             }
             if (args != null) {
                 val ok = runCatching { m.invoke(shadow, *args) }.isSuccess
-                if (ok) return "setMode(${params[0].simpleName})-ok"
+                outcomes.add("setMode(${params[0].simpleName})=${if (ok) "ok" else "fail"}")
             }
         }
-        return "setMode-unavailable"
+        return if (outcomes.isEmpty()) "setMode-unavailable" else outcomes.joinToString(",")
+    }
+
+    /** Second overlay route: the runtime permission itself.
+     *  Settings.canDrawOverlays falls back to the SYSTEM_ALERT_WINDOW
+     *  permission grant when the AppOp reads MODE_DEFAULT, and some
+     *  Robolectric versions track the grant on the application
+     *  shadow, not in AppOps at all. Probe grantPermissions on the
+     *  application shadow by reflection; report what happened. */
+    private fun probeGrantOverlayPermission(): String {
+        val app = context.applicationContext
+        val shadow = shadowOf(app) ?: return "no-app-shadow"
+        for (m in shadow.javaClass.methods.filter { it.name == "grantPermissions" }) {
+            val params = m.parameterTypes
+            val args: Array<Any?>? = when {
+                params.size == 1 && params[0] == Array<String>::class.java ->
+                    arrayOf(arrayOf(android.Manifest.permission.SYSTEM_ALERT_WINDOW))
+                params.size == 1 && params[0] == String::class.java ->
+                    arrayOf(android.Manifest.permission.SYSTEM_ALERT_WINDOW)
+                else -> null
+            }
+            if (args != null) {
+                val ok = runCatching { m.invoke(shadow, *args) }.isSuccess
+                if (ok) return "grantPermissions(${params[0].simpleName})-ok"
+            }
+        }
+        return "grantPermissions-unavailable"
     }
 
     /** Seed a MOVE_TO_FOREGROUND usage event for [pkg] at wall-now,
@@ -487,7 +518,14 @@ class PillRenderScaffoldTest {
     }
 
     /** Open both gates and seed the foreground, recording every
-     *  probe outcome into the seam report. */
+     *  probe outcome into the seam report. Foreground seeding is
+     *  retried (up to 3 rounds): run 41155367631 read the seeded
+     *  event back in one test and null in two others with identical
+     *  seeding — the shadow event store's first-write timing is not
+     *  deterministic, so the scaffold seeds until the production
+     *  read itself confirms the foreground, and reports the rounds
+     *  it took. The readback that matters is the repository's own
+     *  queryForegroundPackage — the same call the ticker makes. */
     private fun openGatesAndSeedForeground(foreignPkg: String) {
         seamReport.clear()
         seamReport.append("usageOp=").append(
@@ -496,10 +534,20 @@ class PillRenderScaffoldTest {
         seamReport.append(" overlayOp=").append(
             probeSetAppOp(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, 24, AppOpsManager.MODE_ALLOWED)
         )
+        seamReport.append(" overlayGrant=").append(probeGrantOverlayPermission())
         seamReport.append(" canDrawOverlays=").append(Settings.canDrawOverlays(context))
         seamReport.append(" usageAccess=").append(repository.usageAccess())
-        seamReport.append(" foregroundEvent=").append(probeSeedForegroundEvent(foreignPkg))
-        seamReport.append(" foregroundRead=").append(repository.queryForegroundPackage())
+        var readback: String? = null
+        var rounds = 0
+        while (rounds < 3) {
+            rounds++
+            val seeded = probeSeedForegroundEvent(foreignPkg)
+            readback = repository.queryForegroundPackage()
+            seamReport.append(" fg[$rounds]=").append(seeded).append("->").append(readback)
+            if (readback == foreignPkg) break
+            Thread.sleep(60)
+        }
+        seamReport.append(" foregroundRead=").append(readback)
     }
 
     // ---- controller drive + harvest ----

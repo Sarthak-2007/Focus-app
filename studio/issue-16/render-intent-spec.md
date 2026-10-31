@@ -150,6 +150,21 @@ internals). Outcomes:
   not a scaffold bug to be silently routed around** — it means the
   pill's visible faces cannot be render-verified under Robolectric
   without a seam.
+- **CI run 1 evidence (PR #655, run 41155367631, head dfadf64e):**
+  compile green (assemble SUCCESS; test-compile warnings only);
+  460 tests executed, 4 failed — all 11 Tier A tests and both Tier B
+  absence tests PASS. The 3 visible-face Tier B tests failed at the
+  seam, with the report naming the exact gate: AppOps probes landed
+  (usage access read back ALLOWED; the seeded foreground event read
+  back through the production query in the peek test) but
+  **`Settings.canDrawOverlays` stayed false** — the String-op AppOps
+  store is not the one Robolectric 4.17's overlay readback consults.
+  The scaffold's probes were widened in response (Int-op setMode +
+  the SYSTEM_ALERT_WINDOW permission-grant route + foreground
+  seed-retry, after the run also showed seed readback is racy).
+  If run 2 still reads `canDrawOverlays=false` with every probe
+  landed, the overlay gate is declared Robolectric-closed on this
+  version and the §6 cure below is the only route to Tier B.
 - **Priced cure (train owners K1/W6, not this lane):** a
   `@VisibleForTesting` constructor seam on `PillController` —
   injectable foreground provider + overlay-grant provider,
