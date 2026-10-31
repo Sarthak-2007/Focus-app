@@ -310,6 +310,15 @@ class VaultHistoryTruthTest {
         composeRule.onNodeWithText("SPENT IN TOTAL 1H 00M").assertIsDisplayed()
     }
 
+    // Floor lane (#166 row 29): this test stood red from census
+    // #3 to #6 on the stamp assertions below, and the failure was
+    // production's, not the rig's — DrawerScreen resolved the open
+    // cabinet detail against the curios-only list while the
+    // Partial Stamp joined only a second, list-local copy, so the
+    // stamp's row rendered and took the tap but its detail could
+    // never open. The cure (PR #705) computes the joined list once
+    // and resolves against it; the assertions below stand exactly
+    // as written.
     @Test
     fun cabinetDetail_printsForgeCountAndLastDate_stampIsHonest() {
         val gyroLast = millis(LocalDate.of(2026, 10, 27), 18, 30)
