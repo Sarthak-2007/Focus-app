@@ -544,69 +544,13 @@ fun DrawerScreen(
         return
     }
 
-    // ------------------------------------------------------------------
-    // RECEIPTS — the index of claimed slips (issue #157). Ruled
-    // rows like everything else in the Drawer. A row prints its
-    // №, its date, its outcome word — and, where the session's
-    // own record proves it, the warning the slip carried, in
-    // Drawer type: the warnings live in the furniture now, so
-    // they survive the slip. Tapping a row re-presents the slip.
-    // ------------------------------------------------------------------
     if (view == DrawerView.RECEIPTS) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.background)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("drawer_receipts"),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "RECEIPTS",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = stringResource(R.string.label_back),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { viewName = DrawerView.LANDING.name }
-                            .testTag("receipts_back")
-                    )
-                }
-            }
-            if (receipts.isEmpty()) {
-                item {
-                    Text(
-                        text = "NO RECEIPTS YET",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 24.dp)
-                    )
-                }
-            } else {
-                items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
-                    ReceiptIndexRow(
-                        entry = entry,
-                        onClick = { onReceiptClick(entry.sessionId) }
-                    )
-                }
-            }
-        }
+        DrawerReceiptsView(
+            scheme = scheme,
+            receipts = receipts,
+            onReceiptClick = onReceiptClick,
+            onBackToLanding = { viewName = DrawerView.LANDING.name }
+        )
         return
     }
 
@@ -1454,6 +1398,85 @@ private fun DrawerCabinetView(
                     // between toys that do not exist. The
                     // detail now ends at the record.
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the RECEIPTS view — extracted
+ * out of DrawerScreen's body as its own composable, in the pattern
+ * of DrawerCabinetView. Behaviour-identical: same rows, same keys,
+ * same testTags; the host's captures are explicit parameters and
+ * the back-to-landing state write rides a callback to the host's
+ * saveable state holder.
+ */
+@Composable
+private fun DrawerReceiptsView(
+    scheme: androidx.compose.material3.ColorScheme,
+    receipts: List<ReceiptIndexEntry>,
+    onReceiptClick: (Int) -> Unit,
+    onBackToLanding: () -> Unit
+) {
+    // ------------------------------------------------------------------
+    // RECEIPTS — the index of claimed slips (issue #157). Ruled
+    // rows like everything else in the Drawer. A row prints its
+    // №, its date, its outcome word — and, where the session's
+    // own record proves it, the warning the slip carried, in
+    // Drawer type: the warnings live in the furniture now, so
+    // they survive the slip. Tapping a row re-presents the slip.
+    // ------------------------------------------------------------------
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(scheme.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .testTag("drawer_receipts"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "RECEIPTS",
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.label_back),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable { onBackToLanding() }
+                        .testTag("receipts_back")
+                )
+            }
+        }
+        if (receipts.isEmpty()) {
+            item {
+                Text(
+                    text = "NO RECEIPTS YET",
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 13.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 24.dp)
+                )
+            }
+        } else {
+            items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
+                ReceiptIndexRow(
+                    entry = entry,
+                    onClick = { onReceiptClick(entry.sessionId) }
+                )
             }
         }
     }
