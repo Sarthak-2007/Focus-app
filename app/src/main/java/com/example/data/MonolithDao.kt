@@ -533,4 +533,23 @@ interface MonolithDao {
      *  already-absent prefs key and the union read resurrected it). */
     @Query("DELETE FROM day_notes WHERE dateIso = :dateIso")
     suspend fun deleteDayNote(dateIso: String)
+
+    // Audit R6 #341 F05: the append-only timer event log. Insert
+    // and read only — no update/delete exists for this table.
+    @Insert
+    suspend fun insertSessionEvent(event: SessionEventLogEntity): Long
+
+    @Query("SELECT * FROM session_event_logs WHERE sessionId = :sessionId ORDER BY id ASC")
+    suspend fun getSessionEventsForSession(sessionId: Int): List<SessionEventLogEntity>
+
+    @Query("SELECT * FROM session_event_logs ORDER BY id ASC")
+    suspend fun getAllSessionEventsSnapshot(): List<SessionEventLogEntity>
+
+    // Audit R6 #341 F20: the append-only rule-change log. Insert
+    // and read only — no update/delete exists for this table.
+    @Insert
+    suspend fun insertRuleChange(change: RuleChangeLogEntity): Long
+
+    @Query("SELECT * FROM rule_change_log ORDER BY id ASC")
+    suspend fun getRuleChangeLogSnapshot(): List<RuleChangeLogEntity>
 }

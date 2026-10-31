@@ -4066,10 +4066,33 @@ class MonolithViewModel(
         val deleted = _deletedTaskForUndo.value ?: return
         undoDismissJob?.cancel()
         _deletedTaskForUndo.value = null
-        undoDeleteStore.clear()
         soundEngine.playHarmonicSeal(arming = true)
         viewModelScope.launch {
             repository.restoreDeletedTask(deleted)
+        }
+        // Audit R6 #341 F68: the undo spends the TOP of the stack —
+        // a buried snapshot (an earlier delete displaced inside its
+        // window) is promoted and re-presented while its own
+        // window still stands, instead of dying silently under the
+        // newer delete.
+        val next = undoDeleteStore.popTopAndPromote()
+        if (next != null) {
+            val remaining = com.example.data.UndoDeleteStore.remainingMillis(
+                deletedAtWallMillis = next.second,
+                deletedAtElapsedMillis = next.third,
+                nowWallMillis = System.currentTimeMillis(),
+                nowElapsedMillis = android.os.SystemClock.elapsedRealtime()
+            )
+            if (remaining > 0L) {
+                _deletedTaskForUndo.value = next.first
+                undoDismissJob = viewModelScope.launch {
+                    delay(remaining)
+                    _deletedTaskForUndo.value = null
+                    undoDeleteStore.clear()
+                }
+            } else {
+                undoDeleteStore.clear()
+            }
         }
     }
 

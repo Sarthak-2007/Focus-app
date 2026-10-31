@@ -344,6 +344,19 @@
                 <action android:name="android.app.action.DEVICE_ADMIN_DISABLED" />
             </intent-filter>
         </receiver>
+        <!-- Audit R6 #341 F01: the user-switch RETURN stamp. Both
+             actions are on the implicit-broadcast exemption list;
+             the receiver stamps the active session's event log
+             with the unguarded gap (MonolithUserReceiver). -->
+        <receiver
+            android:name=".service.MonolithUserReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.USER_SWITCHED" />
+                <action android:name="android.intent.action.USER_BACKGROUND" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -1515,7 +1515,70 @@ class MonolithRepository(
             swallow("runLegacyOpenResetIfNeeded", e)
         }
         drainDayWordsLocked()
+        // Audit R6 #341 F05: the planned-end restore rides the
+        // same pass — a failure here must never break the sync
+        // itself (same discipline as the legacy reset above).
+        try {
+            restorePlannedEndIfLost()
+        } catch (e: Exception) {
+            swallow("restorePlannedEndIfLost", e)
         }
+        }
+    }
+
+    /**
+     * Audit R6 #341 F05 restore path: the live session row is
+     * overwritten every tick; the planned end is backed up twice
+     * (the row's plannedEndWallMillis column and the STARTED
+     * event's detail). If an active, non-stopwatch row ever stands
+     * with no backup column, restore it from the event log.
+     * Returns the restored end, or null when nothing was lost.
+     */
+    suspend fun restorePlannedEndIfLost(): Long? {
+        val active = dao.getActiveSessionSnapshot() ?: return null
+        if (!active.isActive || active.isStopwatchMode || active.plannedEndWallMillis != 0L) return null
+        val started = dao.getSessionEventsForSession(active.id)
+            .firstOrNull { it.kind == SessionEventKind.STARTED } ?: return null
+        val planned = started.detail.toLongOrNull() ?: return null
+        if (planned <= 0L) return null
+        dao.updateSession(active.copy(plannedEndWallMillis = planned))
+        return planned
+    }
+
+    /** Audit R6 #341 F05: append one timer event (append-only). */
+    private suspend fun appendSessionEvent(sessionId: Int, kind: String, detail: String = "") {
+        dao.insertSessionEvent(
+            SessionEventLogEntity(
+                sessionId = sessionId,
+                kind = kind,
+                atWallMillis = System.currentTimeMillis(),
+                atElapsedMillis = SystemClock.elapsedRealtime(),
+                detail = detail
+            )
+        )
+    }
+
+    /** Audit R6 #341 F01 (return side): a user-switch return while
+     *  a session is active stamps the gap onto the session's event
+     *  log — the time in the other profile is named, never silently
+     *  absorbed into the session as if it had been guarded. No
+     *  active session: nothing is recorded (no fabricated record). */
+    suspend fun recordUserSwitchGap() {
+        val active = dao.getActiveSessionSnapshot() ?: return
+        if (!active.isActive) return
+        appendSessionEvent(active.id, SessionEventKind.USER_GAP, System.currentTimeMillis().toString())
+    }
+
+    /** Audit R6 #341 F20: append one rule-change record. Writers
+     *  call this AFTER the mutation lands, so a failed mutation
+     *  writes no row. */
+    private suspend fun logRuleChange(kind: String, target: String, oldValue: String, newValue: String) {
+        dao.insertRuleChange(
+            RuleChangeLogEntity(
+                atWallMillis = System.currentTimeMillis(),
+                kind = kind, target = target, oldValue = oldValue, newValue = newValue
+            )
+        )
     }
 
     /**
@@ -1795,7 +1858,10 @@ class MonolithRepository(
         if (captured.isEmpty()) return
         val drained = captured.mapNotNull { (dateIso, value) ->
             val word = value as? String ?: return@mapNotNull null
-            if (word in DAY_WORDS) DayNoteEntity(dateIso = dateIso, word = word) else null
+            // Audit R6 #341 F58: the declaration-time witness rides
+            // the drain into the row (0 when the word predates it).
+            val declaredAt = (captured["$dateIso#time"] as? Long) ?: 0L
+            if (word in DAY_WORDS) DayNoteEntity(dateIso = dateIso, word = word, declaredAtMillis = declaredAt) else null
         }
         if (drained.isEmpty()) return
         dao.insertDayNotes(drained)
@@ -2542,6 +2608,7 @@ class MonolithRepository(
     suspend fun addBlockedSite(raw: String): Boolean {
         val domain = BlockedBrowserDomains.normalizeDomain(raw) ?: return false
         dao.insertSite(BlockedSiteEntity(domain))
+        logRuleChange(RuleChangeKind.SITE_ADD, domain, "", domain)
         return true
     }
 
@@ -2552,6 +2619,7 @@ class MonolithRepository(
         // path; this closes the verb itself for every caller).
         if (dao.getActiveSessionSnapshot()?.isActive == true) return
         dao.deleteSite(domain)
+        logRuleChange(RuleChangeKind.SITE_REMOVE, domain, domain, "")
     }
 
     suspend fun setBrowserBlockerEnabled(enabled: Boolean) {
@@ -2610,7 +2678,13 @@ class MonolithRepository(
     suspend fun updateRoutine(routine: RoutineEntity) {
         // Issue #32 F2: THE routine write funnel (ViewModel's
         // persistRoutine routes here) — sanitize at the boundary.
+        val before = dao.getAllRoutinesSnapshot().firstOrNull { it.id == routine.id }
         dao.updateRoutine(routine.sanitized())
+        logRuleChange(
+            RuleChangeKind.ROUTINE_UPDATE, routine.name,
+            before?.let { "${it.startMinutes}-${it.endMinutes}/${it.daysMask}/${it.enabled}" } ?: "",
+            "${routine.startMinutes}-${routine.endMinutes}/${routine.daysMask}/${routine.enabled}"
+        )
         // Issue #155, verifier residue (3c): NEXT SEAL is read from
         // routines — an edit while idle must refresh the widget
         // now, not at the platform's 30-minute cadence.
@@ -2622,6 +2696,10 @@ class MonolithRepository(
     suspend fun addRoutine(routine: RoutineEntity) {
         val now = System.currentTimeMillis()
         dao.insertRoutines(listOf(routine.copy(scheduleEditedAtMillis = now)))
+        logRuleChange(
+            RuleChangeKind.ROUTINE_ADD, routine.name, "",
+            "${routine.startMinutes}-${routine.endMinutes}/${routine.daysMask}/${routine.enabled}"
+        )
         // Issue #155 (3c): widget NEXT SEAL refresh, as above.
         MonolithWidgetProvider.requestUpdate(context)
     }
@@ -2630,7 +2708,9 @@ class MonolithRepository(
      *  derive() finalises orphaned routine sessions by their
      *  stored window snapshot (R5). */
     suspend fun deleteRoutine(id: Int) {
+        val before = dao.getAllRoutinesSnapshot().firstOrNull { it.id == id }
         dao.deleteRoutineById(id)
+        logRuleChange(RuleChangeKind.ROUTINE_DELETE, before?.name ?: "id:$id", before?.name ?: "", "")
         // Issue #155 (3c): widget NEXT SEAL refresh, as above.
         MonolithWidgetProvider.requestUpdate(context)
     }
@@ -3033,6 +3113,7 @@ class MonolithRepository(
         }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
+        logRuleChange(RuleChangeKind.APP_TIER, app.packageName, app.resolvedTier.name, nextTier.name)
         // Audit R6 #340 F63: a re-ruled tier voids the episode
         // claim — the terms changed under the standing episode.
         com.example.service.InterceptClaim.release(app.packageName)
@@ -3058,7 +3139,9 @@ class MonolithRepository(
         // classify the default dialler / telephony stack LOCKED.
         val effectiveTier = EssentialApps.floorTier(packageName, tier)
         val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
+        val oldTier = dao.getAllAppsSnapshot().firstOrNull { it.packageName == packageName }?.resolvedTier?.name ?: ""
         dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
+        logRuleChange(RuleChangeKind.APP_TIER, packageName, oldTier, effectiveTier.name)
         // Audit R6 #340 F63: a re-ruled tier voids the episode
         // claim — the terms changed under the standing episode.
         // (On the gate's early return above no write happened, so
@@ -3749,6 +3832,9 @@ class MonolithRepository(
             routineId = routineId,
             windowStartMillis = windowStartMillis,
             windowEndMillis = windowEndMillis,
+            // Audit R6 #341 F05: the end backup, written once at
+            // birth from the same facts the HMAC signs.
+            plannedEndWallMillis = if (isStopwatch) 0L else wallNow + targetSecs * 1000L,
             // E1: the window is open and his kit is on (Sten §1.6.1).
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
@@ -3798,6 +3884,9 @@ class MonolithRepository(
                         endWallMillis = System.currentTimeMillis()
                     )
                 )
+                // Audit R6 #341 F05: the supersede is a logged
+                // transition in the predecessor's own event log.
+                appendSessionEvent(predecessor.id, SessionEventKind.SUPERSEDED)
             }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
@@ -3806,6 +3895,10 @@ class MonolithRepository(
                     heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
                 )
             ).toInt()
+            // Audit R6 #341 F05: STARTED opens the new session's
+            // append-only event log; its detail is the planned end
+            // (the restore source if the live row is ever lost).
+            appendSessionEvent(id, SessionEventKind.STARTED, session.plannedEndWallMillis.toString())
             session.copy(
                 id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
                 heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
@@ -5256,6 +5349,9 @@ class MonolithRepository(
                 endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
             )
             dao.updateSession(ended)
+            // Audit R6 #341 F05: this ending write appends its
+            // ENDED transition to the session's event log.
+            appendSessionEvent(session.id, SessionEventKind.ENDED, ended.outcome)
             return ended
         }
 
@@ -5639,6 +5735,12 @@ class MonolithRepository(
             }
         )
         dao.updateSession(updated)
+        // Audit R6 #341 F05: a completed span appends its ENDED
+        // transition (first ending write only — a re-tick of an
+        // ended row returns earlier and never reaches here).
+        if (allBlocksCompleted && session.isActive) {
+            appendSessionEvent(session.id, SessionEventKind.ENDED, outcomeStamp)
+        }
         // #152 residue: witness the end zone at this ending write
         // (a no-op unless this tick first-stamped the end).
         captureEndZone(session.endWallMillis, updated.endWallMillis)
@@ -6190,6 +6292,9 @@ class MonolithRepository(
         )
         databaseProvider().withTransaction {
             dao.updateSession(disarmed)
+            // Audit R6 #341 F05: the disarm ending appends its
+            // ENDED transition in the same transaction.
+            appendSessionEvent(active.id, SessionEventKind.ENDED, disarmed.outcome)
             if (!completed && !isGraceCancel) {
                 dao.insertInterceptLog(
                     InterceptLogEntity(
@@ -6483,7 +6588,11 @@ class MonolithRepository(
             title = newTitle.trim().ifEmpty { existing.title },
             estimatedMinutes = newEstimatedMinutes.coerceIn(5, 180),
             categoryTag = newCategoryTag.ifBlank { existing.categoryTag },
-            notesOrSubsteps = newNotes.trim()
+            // Audit R6 #341 F67: the editor's notes are the task's
+            // NOTE — they land in noteText, never again in the
+            // substeps column, where every read re-parsed them as
+            // substeps and corrupted them.
+            noteText = newNotes.trim()
         )
         dao.updateTask(updated)
         updated
