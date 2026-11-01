@@ -12,10 +12,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * Truth Car 3 (ST-02, Tamm) at the repository — the break exits.
@@ -49,6 +52,19 @@ class BreakVerbsRepositoryTest {
         get() = ApplicationProvider.getApplicationContext()
 
     private val target = 1500 // one 25-minute block
+
+    @Before
+    fun advanceShadowClock() {
+        // AUDIT-CLOCK census seat (d) cure (#166): this file
+        // fabricates mono anchors up to (target + 2000) seconds
+        // in the past (breakRow derives its start anchor 25
+        // minutes before lastTick); unadvanced, the shadow
+        // clock starts near zero and those anchors go negative,
+        // routing the rows to the reboot-fallback branch.
+        // Advance past the largest fabrication first (the
+        // ForgeLot idiom) so every anchor in the file is real.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(5400))
+    }
 
     /** The verb reads THE active session from a database file the
      *  whole suite shares (the token suite's hygiene precedent):

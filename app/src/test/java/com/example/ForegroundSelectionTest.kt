@@ -111,6 +111,33 @@ class ForegroundSelectionTest {
         )
     }
 
+    // Issue #520 (5-D): the shield selection's call-owner
+    // exemption — one call truth, both doors. The package the
+    // a11y door locked as the live call's owner is never
+    // selected; a null owner exempts nothing.
+    // PIN-SCOPE: PLUMBING (pure selection helper).
+
+    @Test
+    fun callOwnerExempt_ownerPackage_isExempt() {
+        assertTrue(
+            ForegroundSelection.isCallOwnerExempt("com.whatsapp", "com.whatsapp")
+        )
+    }
+
+    @Test
+    fun callOwnerExempt_otherPackageDuringCall_notExempt() {
+        assertFalse(
+            ForegroundSelection.isCallOwnerExempt("com.example.blocked", "com.whatsapp")
+        )
+    }
+
+    @Test
+    fun callOwnerExempt_noOwner_notExempt() {
+        assertFalse(
+            ForegroundSelection.isCallOwnerExempt("com.whatsapp", null)
+        )
+    }
+
     @Test
     fun restartPolicy_onlyWhenProtecting_andNearImmediate() {
         assertTrue(ShieldRestartPolicy.shouldScheduleRestart(wasProtecting = true))

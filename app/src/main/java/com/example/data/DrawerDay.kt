@@ -55,6 +55,13 @@ object DrawerDay {
 
     fun dateIso(date: LocalDate): String = date.toString()
 
+    /** The wall instant the current filing day began: filingDate's
+     *  03:30 local. Ranges that mean "today" (the Drawer's, and
+     *  Audit R6 #340 F17's per-day Airlock escalation) start here,
+     *  never at midnight. */
+    fun dayStartMillis(instantMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long =
+        filingDate(instantMillis, zone).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+
     /**
      * The next instant at which [filingDate] changes for a clock
      * starting at [fromMillis] — the next local 03:30 strictly

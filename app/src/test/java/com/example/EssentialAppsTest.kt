@@ -11,6 +11,8 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 
 /**
+ * PIN scope: SOURCE.
+ *
  * Issue #119, findings 4 + 5 — the essentials are defined by package,
  * and the dialler can never be classified LOCKED. Pure, no Android.
  */
@@ -113,10 +115,14 @@ class EssentialAppsTest {
     // ---- Finding 1 (truth half): when the token returns ----
 
     @Test
-    fun nextWeekAnchorIsTheFollowingMondayMidnight() {
+    fun nextWeekAnchorIsTheFollowingMonday0330() {
+        // Issue #523 (C-6): the token returns Monday 03:30 — his day
+        // seam — not Monday midnight. The probe instant (Fri 03:00)
+        // is filing-Thursday under the seam and belongs to the week
+        // that opened Mon Oct 26 03:30 either way.
         val ist = ZoneId.of("Asia/Kolkata")
         val friday = ZonedDateTime.of(2026, 10, 30, 3, 0, 0, 0, ist)
-        val expected = ZonedDateTime.of(2026, 11, 2, 0, 0, 0, 0, ist)
+        val expected = ZonedDateTime.of(2026, 11, 2, 3, 30, 0, 0, ist)
         assertEquals(
             expected.toInstant().toEpochMilli(),
             MonolithWeek.nextWeekAnchorMillis(friday.toInstant().toEpochMilli(), ist)

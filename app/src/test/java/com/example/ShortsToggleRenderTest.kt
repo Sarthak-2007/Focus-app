@@ -62,12 +62,23 @@ class ShortsToggleRenderTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    onCheckClick = {},
                     onToggleSound = {},
                     onToggleShortsReelsSniper = {},
                     // Wave-2 premise: social pair is scaffolding here —
                     // `true` is the persisted default; the toggle is not under test in this file.
                     socialSitesEnabled = true,
-                    onToggleSocialSites = {}
+                    onToggleSocialSites = {},
+                    // #253 line 1 premise (merge-introduced cure,
+                    // PR #723): the plate now carries a third sled
+                    // — the session soundscape's. Like the Sound
+                    // sled above, it prints ON in this fixture so
+                    // the file's invariant (the only OFF word on
+                    // the sheet is the sniper sled's) still holds;
+                    // the soundscape fact's own default (OFF) is
+                    // pinned in SoundscapeSettingTest, not here.
+                    soundscapeEnabled = true,
+                    onToggleSoundscape = {}
                 )
             }
         }

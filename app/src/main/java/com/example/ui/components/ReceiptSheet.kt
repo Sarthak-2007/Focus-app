@@ -3,11 +3,13 @@ import androidx.compose.ui.res.stringResource
 import com.example.R
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -100,9 +103,21 @@ fun ReceiptSheet(
     // fade the host's unmount made impossible.
     val enterState = remember { MutableTransitionState(false) }
     enterState.targetState = true
+    // Lead ruling R2 (train A7): the slip FEEDS — a whole-document
+    // slide from the bottom edge, the printer's one motion; a
+    // crossfade is a UI card appearing, and this is a document.
+    // Main's MutableTransitionState machinery (#57) drives the
+    // train motion. Restored slips render settled (contract Z6).
     AnimatedVisibility(
         visibleState = enterState,
-        enter = fadeIn(MonolithCurves.specC()),
+        enter = if (receipt.restored) {
+            EnterTransition.None
+        } else {
+            slideInVertically(
+                animationSpec = MonolithCurves.specC(),
+                initialOffsetY = { it }
+            ) + fadeIn(MonolithCurves.specC())
+        },
         exit = ExitTransition.None
     ) {
         val scheme = MaterialTheme.colorScheme
@@ -120,8 +135,18 @@ fun ReceiptSheet(
                 // #57: dismissal lands on the DOWN. `clickable`
                 // fires on release (UP); `onPress` is the press
                 // itself, as the header's spec has always said.
-                .pointerInput(receipt.sessionId) {
-                    detectTapGestures(onPress = { onDismiss() })
+                .pointerInput(receipt.sessionId, receipt.faulted) {
+                    detectTapGestures(onPress = {
+                        // Train A8 guards ported: no dismissal
+                        // before a 2-second dwell from the publish
+                        // stamp, and a FAULTED slip does not
+                        // dismiss at the sheet at all (its exits
+                        // are the host's: navigation, PARK).
+                        val mono = receipt.receiptPublishedMonoMs
+                        val dwellOver = receipt.restored || mono <= 0L ||
+                            android.os.SystemClock.elapsedRealtime() - mono >= 2_000L
+                        if (!receipt.faulted && dwellOver) onDismiss()
+                    })
                 }
                 .testTag("receiptSheetScrim")
                 .padding(12.dp),
@@ -130,9 +155,14 @@ fun ReceiptSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
+                    // Lead ruling R3 (train A5): thermal paper is
+                    // cut square — 3dp radius, NO border; the lift
+                    // is shadow alone. Main's animated slip
+                    // background composes with the square cut (it
+                    // needs no 24dp clip, no border), so it stays.
+                    .shadow(10.dp, RoundedCornerShape(3.dp))
+                    .clip(RoundedCornerShape(3.dp))
                     .background(animatedSlip)
-                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(24.dp))
                     .clickable(enabled = false) {}
                     .padding(20.dp)
                     .verticalScroll(rememberScrollState()),
@@ -146,7 +176,7 @@ fun ReceiptSheet(
                 // was missing was Monolith's own name on its artefact.
                 if (!receipt.faulted) {
                     Text(
-                        text = "MONOLITH",
+                        text = stringResource(R.string.receipt_slip_brand),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.sp,
@@ -156,7 +186,14 @@ fun ReceiptSheet(
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                    // Train A9: on a faulted slip the row COLLAPSES
+                    // — no title-height void with the No floating
+                    // over it (F-W1 still holds: no title prints).
+                    horizontalArrangement = if (receipt.faulted) {
+                        Arrangement.End
+                    } else {
+                        Arrangement.SpaceBetween
+                    },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!receipt.faulted) {
@@ -168,9 +205,6 @@ fun ReceiptSheet(
                             color = scheme.onBackground,
                             modifier = Modifier.weight(1f)
                         )
-                    } else {
-                        // F-W1: the faulted sheet has no title.
-                        Box(modifier = Modifier.weight(1f))
                     }
                     Text(
                         text = receipt.numberPrint,
@@ -300,7 +334,7 @@ fun ReceiptSheet(
                     }
                 )
                 ReceiptMonoLine(
-                    text = "$endedPrint · ${receipt.outcomeWord}"
+                    text = stringResource(R.string.receipt_ended_outcome, endedPrint, receipt.outcomeWord)
                 )
                 // #57: the slip's total — the sealed elapsed,
                 // carried in state since Slice E and printed
@@ -313,7 +347,7 @@ fun ReceiptSheet(
                     // divider-less sheet: no rule is added, only
                     // the strike the wave-2 line never carried.
                     ReceiptMonoLine(
-                        text = "RAN ${longSpan(receipt.sealedElapsedSeconds)}",
+                        text = stringResource(R.string.receipt_ran_total, longSpan(receipt.sealedElapsedSeconds)),
                         bold = true
                     )
                 }
@@ -330,11 +364,17 @@ fun ReceiptSheet(
                     // never invented for a row that predates it.
                     if (receipt.heldShutAtSeal >= 0 && receipt.heldPeekAtSeal >= 0) {
                         ReceiptMonoLine(
-                            text = "HELD ${receipt.heldShutAtSeal} SHUT · ${receipt.heldPeekAtSeal} PEEK (2 MIN) · ${receipt.heldSitesAtSeal} WEBSITES"
+                            text = stringResource(
+                            R.string.receipt_held_split_line,
+                            receipt.heldShutAtSeal, receipt.heldPeekAtSeal, receipt.heldSitesAtSeal
+                        )
                         )
                     } else {
                         ReceiptMonoLine(
-                            text = "HELD ${receipt.heldAppsAtSeal} APPS · ${receipt.heldSitesAtSeal} SITES ON THIS PHONE"
+                            text = stringResource(
+                            R.string.receipt_held_total_line,
+                            receipt.heldAppsAtSeal, receipt.heldSitesAtSeal
+                        )
                         )
                     }
                 }
@@ -343,7 +383,7 @@ fun ReceiptSheet(
                 // itself, in the same mono register as the HELD line.
                 receipt.forgedArtifactName?.let { forgedName ->
                     ReceiptMonoLine(
-                        text = "FORGED — ${forgedName.uppercase(Locale.US)}"
+                        text = stringResource(R.string.receipt_forged_line, forgedName.uppercase(Locale.US))
                     )
                 }
                 if (receipt.bankedBreakSeconds > 0) {
@@ -351,7 +391,7 @@ fun ReceiptSheet(
                     // false `0 MIN` for 1–59 banked seconds and
                     // truncated every other figure.
                     ReceiptMonoLine(
-                        text = "BREAK BANKED ${longSpan(receipt.bankedBreakSeconds)}"
+                        text = stringResource(R.string.receipt_break_banked_span, longSpan(receipt.bankedBreakSeconds))
                     )
                 }
                 // Issue #105 (F4): the Safe Breaks actually lived
@@ -363,7 +403,7 @@ fun ReceiptSheet(
                 // Exact span via longSpan, never rounded.
                 if (receipt.safeBreakSeconds > 0) {
                     ReceiptMonoLine(
-                        text = "BREAK TAKEN ${longSpan(receipt.safeBreakSeconds)}"
+                        text = stringResource(R.string.receipt_break_taken_span, longSpan(receipt.safeBreakSeconds))
                     )
                 }
                 // Issue #105 (F1): the tasks finished inside this
@@ -371,7 +411,7 @@ fun ReceiptSheet(
                 // booked them (completedTasksSummary) — the work
                 // the slip attests, named on the slip.
                 receipt.completedTasks.forEach { entry ->
-                    ReceiptMonoLine(text = "DONE · $entry")
+                    ReceiptMonoLine(text = stringResource(R.string.receipt_done_entry, entry))
                 }
                 // Nachdruck R2/R3/R4 (Finisher 3 §2.2/§3/§4,
                 // landed via WELLE-6 recovery, adapted to main's
@@ -410,9 +450,9 @@ fun ReceiptSheet(
                             // are different events and now print
                             // differently. No outcome recorded, no
                             // word printed (outcomePrint is empty).
-                            text = "· " + d.appName +
-                                (if (d.outcomePrint.isNotEmpty()) " · ${d.outcomePrint}" else "") +
-                                (if (d.isSite) " · SITE" else ""),
+                            text = stringResource(R.string.receipt_deflection_lead) + d.appName +
+                                (if (d.outcomePrint.isNotEmpty()) stringResource(R.string.receipt_deflection_outcome, d.outcomePrint) else "") +
+                                (if (d.isSite) stringResource(R.string.receipt_deflection_site) else ""),
                             fontFamily = AnonymousProFamily,
                             fontSize = 11.sp,
                             letterSpacing = 1.sp,
@@ -442,10 +482,26 @@ fun ReceiptSheet(
                     // plan silently included, in the same bold
                     // register as the shield-gap line.
                     Text(
-                        text = "A ${receipt.penaltySecondsAdded / 60} MIN TAMPER PENALTY WAS ADDED TO THIS SESSION",
+                        text = stringResource(R.string.receipt_tamper_penalty, receipt.penaltySecondsAdded / 60),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                if (receipt.rebootGapSeconds > 0) {
+                    // Issue #525: the reboot's unshielded span,
+                    // named in the same bold register — the
+                    // boot-to-shield uptime was never credited
+                    // as focus, and the slip says so instead of
+                    // letting a genuine reboot pass silently
+                    // (or worse, convert into gifted seconds).
+                    Text(
+                        text = stringResource(R.string.receipt_reboot_gap, receipt.rebootGapSeconds),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
                         color = scheme.onBackground
                     )
                 }
@@ -455,8 +511,10 @@ fun ReceiptSheet(
                     // session stamped OPEN APP USED never reads
                     // as clean, and the names are the evidence.
                     Text(
-                        text = "OPEN APPS USED IN THAT SESSION: " +
-                            receipt.openExposureApps.joinToString(", ") { it.uppercase() },
+                        text = stringResource(
+                            R.string.receipt_open_apps_used,
+                            receipt.openExposureApps.joinToString(", ") { it.uppercase() }
+                        ),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -493,7 +551,7 @@ fun ReceiptSheet(
                 // in plain words. 61 visible chars — inside the
                 // 62-char budget the 0.25.sp measurement allows.
                 Text(
-                    text = "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
+                    text = stringResource(R.string.receipt_footer_log),
                     fontFamily = AnonymousProFamily,
                     fontSize = 9.sp,
                     letterSpacing = 0.25.sp,
@@ -513,14 +571,14 @@ fun ReceiptSheet(
                     ) {
                         if (onDoneWithTask != null) {
                             ReceiptDoor(
-                                text = "DONE WITH THIS TASK",
+                                text = stringResource(R.string.receipt_done_with_task),
                                 modifier = Modifier.weight(1f),
                                 onClick = onDoneWithTask
                             )
                         }
                         if (onNextSession != null) {
                             ReceiptDoor(
-                                text = "NEXT SESSION",
+                                text = stringResource(R.string.receipt_next_session),
                                 modifier = Modifier.weight(1f),
                                 onClick = onNextSession
                             )
@@ -628,7 +686,7 @@ private fun ReceiptQuietRule(gapSeconds: Int) {
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "${longSpan(gapSeconds)} QUIET",
+            text = stringResource(R.string.receipt_quiet_span, longSpan(gapSeconds)),
             fontFamily = AnonymousProFamily,
             fontSize = 11.sp,
             letterSpacing = 1.sp,

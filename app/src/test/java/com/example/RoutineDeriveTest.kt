@@ -2,11 +2,13 @@ package com.example
 
 import com.example.data.DrawerDay
 import com.example.data.FocusSessionEntity
+import com.example.data.FocusTaskEntity
 import com.example.data.GuardSettingsEntity
 import com.example.data.RoutineDerive
 import com.example.data.RoutineEntity
 import com.example.data.RoutineSchedule
 import com.example.data.SmartLoadout
+import com.example.data.TaskQueueStatus
 import com.example.data.WindowJudgement
 import com.example.data.WindowState
 import org.junit.Assert.assertEquals
@@ -81,9 +83,41 @@ class RoutineDeriveTest {
         active: FocusSessionEntity? = null,
         sessions: List<FocusSessionEntity> = emptyList(),
         settings: GuardSettingsEntity = this.settings,
-        excused: Set<String> = emptySet()
-    ) = RoutineDerive.derive(routines, now, active, sessions, settings, excused)
+        excused: Set<String> = emptySet(),
+        // Defaulting to null keeps every pre-F-1 case above
+        // meaning exactly what it meant before F-1. (Merged-tree
+        // note: M-A1 G1 gave the production signature the same
+        // default, so main's existing call sites keep compiling;
+        // under R1 a null head seals "", never a routine name.)
+        headTaskTitle: String? = null
+    ) = RoutineDerive.derive(
+        routines, now, active, sessions, settings,
+        headTaskTitle = headTaskTitle, excusedDateIsos = excused
+    )
 
+    // --- F-1 fixtures: his real seeded morning --------------------------
+    // FASTED BLOCK 05:00–08:00 (routineTargets) and the seeded queue
+    // exactly as ensureSeededAndSyncPackages writes it (MonolithRepository):
+    // one ACTIVE head, then QUEUED in queueOrder. Titles verbatim.
+
+    private fun fastedBlock(id: Int = 3) = routine(
+        id = id, name = "FASTED BLOCK", start = 300, end = 480
+    )
+
+    private fun task(
+        id: Int,
+        title: String,
+        status: TaskQueueStatus,
+        queueOrder: Int
+    ) = FocusTaskEntity(
+        id = id, title = title, queueOrder = queueOrder, status = status.name
+    )
+
+    private fun seededMorningQueue() = listOf(
+        task(1, "Finish Chapter 4 Problem Set (#1–6)", TaskQueueStatus.ACTIVE, 0),
+        task(2, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.QUEUED, 1),
+        task(3, "Debug Dynamic Programming Memo Table", TaskQueueStatus.QUEUED, 2)
+    )
     /** The filing-date iso of an instant, as the Drawer files it. */
     private fun filingIso(millis: Long): String =
         DrawerDay.dateIso(DrawerDay.filingDate(millis))
@@ -396,5 +430,210 @@ class RoutineDeriveTest {
         val now = at(2, 8, 0) // Wed 08:00 — next is DAY BLOCKS start 09:00
         val result = derive(listOf(routine()), now)
         assertEquals(at(2, 9, 0), result.nextBoundaryMillis)
+    }
+
+    // --- F-1: the head resolver (pure; the caller's seam) -----------------
+
+    @Test
+    fun resolveHeadTitle_seededMorning_returnsTheActiveHead() {
+        assertEquals(
+            "Finish Chapter 4 Problem Set (#1–6)",
+            RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        )
+    }
+
+    @Test
+    fun resolveHeadTitle_followsDaoOrder_activeAheadOfQueuedRegardlessOfQueueOrder() {
+        // The DAO order (MonolithDao getAllTasksSnapshot) sorts by
+        // status CASE before queueOrder, so an ACTIVE row precedes a
+        // QUEUED row even when the queued row's queueOrder is lower.
+        // The resolver honours the list as ordered; it never re-sorts.
+        val daoOrdered = listOf(
+            task(3, "Debug Dynamic Programming Memo Table", TaskQueueStatus.ACTIVE, 2),
+            task(2, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.QUEUED, 0),
+            task(1, "Finish Chapter 4 Problem Set (#1–6)", TaskQueueStatus.QUEUED, 1)
+        )
+        assertEquals(
+            "Debug Dynamic Programming Memo Table",
+            RoutineDerive.resolveHeadTitle(daoOrdered)
+        )
+    }
+
+    @Test
+    fun resolveHeadTitle_deferredOnly_returnsNull() {
+        val deferredOnly = listOf(
+            task(4, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.DEFERRED, 0),
+            task(5, "Debug Dynamic Programming Memo Table", TaskQueueStatus.DEFERRED, 1)
+        )
+        assertNull(RoutineDerive.resolveHeadTitle(deferredOnly))
+    }
+
+    @Test
+    fun resolveHeadTitle_completedRowsNeverHeadline() {
+        val completedAndDeferred = listOf(
+            task(4, "Finish Chapter 4 Problem Set (#1–6)", TaskQueueStatus.COMPLETED, 0),
+            task(5, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.DEFERRED, 1)
+        )
+        assertNull(RoutineDerive.resolveHeadTitle(completedAndDeferred))
+    }
+
+    @Test
+    fun resolveHeadTitle_blankHead_skipsToNextEligibleRow() {
+        val blankHead = listOf(
+            task(1, "   ", TaskQueueStatus.ACTIVE, 0),
+            task(2, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.QUEUED, 1)
+        )
+        assertEquals(
+            "Synthesize Lecture 9 Architecture Notes",
+            RoutineDerive.resolveHeadTitle(blankHead)
+        )
+    }
+
+    @Test
+    fun resolveHeadTitle_allBlank_returnsNull() {
+        val allBlank = listOf(
+            task(1, "", TaskQueueStatus.ACTIVE, 0),
+            task(2, "  ", TaskQueueStatus.QUEUED, 1)
+        )
+        assertNull(RoutineDerive.resolveHeadTitle(allBlank))
+    }
+
+    @Test
+    fun resolveHeadTitle_emptyQueue_returnsNull() {
+        assertNull(RoutineDerive.resolveHeadTitle(emptyList()))
+    }
+
+    // --- F-1: derive-level intention (the plan's edge-case table) ---------
+
+    @Test
+    fun fastedBlock_openWindow_headTitleTakenAsIntention() {
+        val now = at(0, 6, 0) // Mon 06:00, inside FASTED BLOCK 05:00–08:00
+        val head = RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        val d = derive(listOf(fastedBlock()), now, headTaskTitle = head).derivations.single()
+        assertEquals(WindowState.OPEN_IDLE, d.state)
+        assertNotNull(d.desiredSession)
+        assertEquals("Finish Chapter 4 Problem Set (#1–6)", d.desiredSession!!.intention)
+        // The routine still owns the session's identity and window;
+        // only the intention comes from the queue.
+        assertEquals("Routine: FASTED BLOCK", d.desiredSession!!.profileName)
+        assertEquals(120, d.desiredSession!!.durationMinutes) // remainder to 08:00
+    }
+
+    @Test
+    fun fastedBlock_openWindow_emptyQueue_sealsEmptyIntention() {
+        val now = at(0, 6, 0)
+        val head = RoutineDerive.resolveHeadTitle(emptyList())
+        val d = derive(listOf(fastedBlock()), now, headTaskTitle = head).derivations.single()
+        assertNotNull(d.desiredSession)
+        assertEquals("", d.desiredSession!!.intention) // R1: no routine-name fallback — absent head seals "" (#124)
+    }
+
+    @Test
+    fun fastedBlock_blankHeadPassedDirectly_sealsEmptyIntention() {
+        // Wave-2 (Seat F1-Verify, H2): derive() guards itself —
+        // a blank head handed straight to derive (bypassing the
+        // resolver) must never seal.
+        val now = at(0, 6, 0)
+        val d = derive(listOf(fastedBlock()), now, headTaskTitle = "   ").derivations.single()
+        assertNotNull(d.desiredSession)
+        assertEquals("", d.desiredSession!!.intention) // R1: no routine-name fallback — absent head seals "" (#124)
+    }
+
+    @Test
+    fun fastedBlock_openWindow_deferredOnlyQueue_sealsEmptyIntention() {
+        val now = at(0, 6, 0)
+        val deferredOnly = listOf(
+            task(4, "Synthesize Lecture 9 Architecture Notes", TaskQueueStatus.DEFERRED, 0)
+        )
+        val head = RoutineDerive.resolveHeadTitle(deferredOnly)
+        val d = derive(listOf(fastedBlock()), now, headTaskTitle = head).derivations.single()
+        assertNotNull(d.desiredSession)
+        assertEquals("", d.desiredSession!!.intention) // R1: no routine-name fallback — absent head seals "" (#124)
+    }
+
+    @Test
+    fun intentionIsASnapshot_sameInputsSameIntention_laterHeadDoesNotRewriteEarlier() {
+        val now = at(0, 6, 0)
+        val morning = listOf(fastedBlock())
+        val first = derive(morning, now, headTaskTitle = "Finish Chapter 4 Problem Set (#1–6)")
+        val again = derive(morning, now, headTaskTitle = "Finish Chapter 4 Problem Set (#1–6)")
+        assertEquals(first, again) // derive is pure: same inputs, same intention
+        // The queue moved on before the next seal; the earlier
+        // derivation's frozen string does not move with it.
+        val later = derive(morning, now, headTaskTitle = "Synthesize Lecture 9 Architecture Notes")
+        assertEquals(
+            "Finish Chapter 4 Problem Set (#1–6)",
+            first.derivations.single().desiredSession!!.intention
+        )
+        assertEquals(
+            "Synthesize Lecture 9 Architecture Notes",
+            later.derivations.single().desiredSession!!.intention
+        )
+    }
+
+    @Test
+    fun twoRoutinesOneMorning_eachReadsTheHeadAtItsOwnSeal_andNothingIsConsumed() {
+        val head = RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        val routines = listOf(fastedBlock(), routine()) // + DAY BLOCKS 09:00–19:30
+        val atSix = derive(routines, at(0, 6, 0), headTaskTitle = head)
+        assertEquals(
+            "Finish Chapter 4 Problem Set (#1–6)",
+            atSix.derivations.first { it.routineId == 3 }.desiredSession!!.intention
+        )
+        val atTen = derive(routines, at(0, 10, 0), headTaskTitle = head)
+        assertEquals(
+            "Finish Chapter 4 Problem Set (#1–6)",
+            atTen.derivations.first { it.routineId == 1 }.desiredSession!!.intention
+        )
+        // Read-only derivation: after both seals the queue head is
+        // still the head — sealing completed, promoted or dequeued
+        // nothing (the resolver over the same list still answers it).
+        assertEquals(
+            "Finish Chapter 4 Problem Set (#1–6)",
+            RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        )
+    }
+
+    @Test
+    fun sleepRoutine_withHeadAvailable_takesTheHeadTitle_R1() {
+        // R1 (lead ruling at the main-merge sitting): the split has
+        // no SLEEP carve-out — a present head names the session,
+        // SLEEP included; what R1 struck is the routine-NAME
+        // fallback when no head exists. (Train's old SLEEP exception
+        // sealed the name "SLEEP" here; that was the name fallback
+        // in its strongest form, and R1 strikes it everywhere.)
+        // Non-interference stands: SLEEP is still never finalised
+        // and judges nothing (J2).
+        val now = at(2, 21, 0) // Wed 21:00, SLEEP 20:00–03:30
+        val sleep = routine(id = 2, name = "SLEEP", start = 1200, end = 210, loadout = SmartLoadout.SLEEP.name)
+        val head = RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        val d = derive(listOf(sleep), now, headTaskTitle = head).derivations.single()
+        assertEquals(WindowState.OPEN_IDLE, d.state)
+        assertNotNull(d.desiredSession)
+        assertEquals("Finish Chapter 4 Problem Set (#1–6)", d.desiredSession!!.intention)
+        assertTrue(d.finaliseDue.isEmpty())
+        assertNull(d.judgement)
+    }
+
+    @Test
+    fun headAvailable_subFiveRemainder_stillNeverSeals() {
+        val now = at(0, 7, 57) // 3 minutes left in FASTED BLOCK
+        val head = RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        val d = derive(listOf(fastedBlock()), now, headTaskTitle = head).derivations.single()
+        assertEquals(WindowState.OPEN_IDLE, d.state)
+        assertNull(d.desiredSession)
+    }
+
+    @Test
+    fun headAvailable_pauseInForce_stillPaused_neverSeals() {
+        val now = at(0, 6, 0)
+        val paused = routine(
+            id = 3, name = "FASTED BLOCK", start = 300, end = 480,
+            pausedUntil = at(0, 7, 0)
+        )
+        val head = RoutineDerive.resolveHeadTitle(seededMorningQueue())
+        val d = derive(listOf(paused), now, headTaskTitle = head).derivations.single()
+        assertEquals(WindowState.PAUSED, d.state)
+        assertNull(d.desiredSession)
     }
 }

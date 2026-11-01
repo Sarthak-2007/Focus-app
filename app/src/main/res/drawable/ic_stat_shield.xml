@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Issue #256 (B-256-33): the shield notification's dedicated small icon.
+     A notification small icon must be a single-colour silhouette — the
+     full-colour launcher art it replaces rendered as a smudge in the
+     status bar. The monolith slab with its arch doorway, one ink.
+     (Silhouette carried from WELLE-5 CELL C commit a4b8f6ca, re-based
+     onto current main by FINISH-K6/M.) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M5,2 L19,2 L19,22 L5,22 Z M9.5,22 L9.5,15 A2.5,2.5 0 0,1 14.5,15 L14.5,22 Z" />
+</vector>

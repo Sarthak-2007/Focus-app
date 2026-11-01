@@ -13,6 +13,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 
 /**
  * Truth Car 3 (ST-02, Tamm) — Pruefer's guard: cover, not proof.
@@ -34,6 +36,14 @@ class BreakTimerGuardTest {
         val db = MonolithDatabase.getInstance(context)
         val dao = db.monolithDao()
         val repository = MonolithRepository(context, dao)
+        // AUDIT-CLOCK census seat (d) cure (#166): the row below
+        // fabricates anchors 25 minutes and 601 seconds before
+        // nowMono; unadvanced, the shadow clock starts near zero
+        // and both go negative — the row routes to the
+        // reboot-fallback branch and the segment drift check
+        // never runs. Advance past the largest offset first
+        // (the ForgeLot idiom) so the anchors are real.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(1560))
         val nowMono = SystemClock.elapsedRealtime()
         val row = FocusSessionEntity(
             intention = "BREAK GUARD",

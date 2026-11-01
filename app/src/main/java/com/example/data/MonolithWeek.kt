@@ -1,7 +1,6 @@
 package com.example.data
 
 import java.time.DayOfWeek
-import java.time.Instant
 import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
 
@@ -9,11 +8,20 @@ import java.time.temporal.TemporalAdjusters
  * The week, defined once (TOKEN-SPEC §3). The token and any future
  * weekly surface consume this and only this: one fact, one definition.
  *
- * The week turns over Monday 00:00 local civil time in the device's
- * current timezone — the app's existing Monday-first convention.
- * Rollover needs no job, no reset, no alarm: a spend counts against
- * the current week iff [spendCountsAgainstWeek] says so, and at
- * Monday 00:00 last week's rows simply stop counting.
+ * The week turns over Monday 03:30 local civil time in the device's
+ * current timezone — his day seam, the same 03:30 boundary
+ * [DrawerDay] files his days by (issue #523, finding C-6: the token
+ * used to return at Monday 00:00, roughly three and a half hours
+ * before his Monday began, and a spend in Monday's small hours
+ * counted against a week he had not started). The week's Monday is
+ * the Monday of the FILING week: the containing date is the filing
+ * date (instant − 210 min), so Monday 00:00–03:29 still belongs to
+ * the week that is ending. Rollover needs no job, no reset, no
+ * alarm: a spend counts against the current week iff
+ * [spendCountsAgainstWeek] says so, and at Monday 03:30 last week's
+ * rows simply stop counting. Spends minted under the old 00:00 seam
+ * still count: their stored anchors sit 3.5h from the new ones, far
+ * inside the 26h anchor tolerance below.
  *
  * Issue #39 F1 (the timezone hole in the old rule): matching used to
  * be exact anchor EQUALITY, but the stored anchor was minted under
@@ -81,29 +89,32 @@ object MonolithWeek {
             (spentAtWallMillis >= currentAnchorMillis && spentAtWallMillis < nextWeekAnchorMillis)
 
     /**
-     * The instant of Monday 00:00:00.000 local time of the week
-     * containing [nowMillis], in [zone]. `atStartOfDay` applies
-     * java.time's DST gap/overlap rules (a nonexistent midnight shifts
-     * forward to the first valid instant), so this is correct in any
-     * zone the phone lands in.
+     * The instant of Monday 03:30:00.000 local time of the week
+     * containing [nowMillis], in [zone] — the Monday of the filing
+     * week (see the class doc: the containing date is
+     * [DrawerDay.filingDate], the instant's date under his 03:30 day
+     * seam). `atTime(3, 30).atZone` applies java.time's DST
+     * gap/overlap rules the same way [DrawerDay.monthBoundsMillis]
+     * accepts for its 03:30 bounds, so this is correct in any zone
+     * the phone lands in.
      */
     fun weekAnchorMillis(nowMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
-        val date = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
-        val monday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-        return monday.atStartOfDay(zone).toInstant().toEpochMilli()
+        val monday = DrawerDay.filingDate(nowMillis, zone)
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        return monday.atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
     }
 
     /**
-     * The anchor of the NEXT week: Monday 00:00 local, seven days
+     * The anchor of the NEXT week: Monday 03:30 local, seven days
      * after this week's anchor (issue #119, finding 1). This is the
      * instant a spent emergency-break token returns — the SPENT face
      * of the valve prints it, so the state the user is in and when
      * it ends are both stated, never hidden.
      */
     fun nextWeekAnchorMillis(nowMillis: Long, zone: ZoneId = ZoneId.systemDefault()): Long {
-        val date = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()
-        val nextMonday = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).plusWeeks(1)
-        return nextMonday.atStartOfDay(zone).toInstant().toEpochMilli()
+        val nextMonday = DrawerDay.filingDate(nowMillis, zone)
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)).plusWeeks(1)
+        return nextMonday.atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
     }
 }
 

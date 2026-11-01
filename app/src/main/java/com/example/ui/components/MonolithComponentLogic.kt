@@ -390,3 +390,73 @@ internal fun provingSentenceFor(phase: ArmPhase): RefusalSentence? {
         action = null
     )
 }
+
+/** The wedge (Shield Rethink 2, Step 1): Shield edits are lawful
+ *  only while NO session is in hold — with one carve-out, the
+ *  session's own grace window (its first seconds, where aborting
+ *  is free and the law may still be corrected by the hand that is
+ *  about to be bound by it). Extracted from ShieldMatrixScreen so
+ *  the gate itself is pinned by a table test: a future refactor
+ *  that quietly re-opens an edit door mid-hold fails CI, not the
+ *  user. The ViewModel's one-way ratchet and tierBypassGuard are
+ *  the session machinery's own latches, not edit doors, and are
+ *  not governed by this print-side gate. */
+internal fun shieldControlsLocked(isSessionActive: Boolean, isGracePeriod: Boolean): Boolean =
+    isSessionActive && !isGracePeriod
+
+/** The receipt (Shield Rethink 2, Step 1): the ONLY wording in
+ *  which enforcement may be stated, generated from the beat's
+ *  published proof — never from a stored denial, never from the
+ *  setting of a switch. Six permitted forms (the paper's §3 set;
+ *  form (5) is (4)'s sibling for a door proven down):
+ *   1 SEALED — law written [HH:MM] · not yet held
+ *   2 HELD — verified [HH:MM]
+ *   3 HELD (apps) — verified [HH:MM] · guards unverified
+ *   4 NOT VERIFIED — last held [HH:MM]
+ *   5 NOT HELD — [door] down · last held [HH:MM]
+ *   6 OPEN — no block now
+ *  Form (2) requires a SIGHTED beat no older than
+ *  [SHIELD_RECEIPT_FRESH_MS] and the guards verified on their own
+ *  proof (the warrant, LIVE); sighted with unverified guards is
+ *  (3) — the partial form is mandatory when partial, never
+ *  rounded up. A blind beat (no access) names its door in (5);
+ *  any other failure to verify is (4). "never held" replaces the
+ *  time when no beat has ever verified under this session.
+ *  Pure: every input is a fact read elsewhere; the table test is
+ *  the wording's contract. */
+internal const val SHIELD_RECEIPT_FRESH_MS: Long = 10_000L
+
+internal fun shieldReceiptLine(
+    sessionActive: Boolean,
+    lawWrittenWallMillis: Long?,
+    sight: com.example.data.SightState,
+    beatWallMillis: Long?,
+    lastVerifiedWallMillis: Long?,
+    guardsVerified: Boolean,
+    nowWallMillis: Long
+): String {
+    if (!sessionActive) return "OPEN — no block now"
+    val timeFmt = SimpleDateFormat("HH:mm", Locale.US)
+    fun at(wall: Long): String = timeFmt.format(Date(wall))
+    val lastHeld = lastVerifiedWallMillis?.let { "last held ${at(it)}" } ?: "never held"
+    val beatAge = beatWallMillis?.let { nowWallMillis - it } ?: Long.MAX_VALUE
+    // Form (5) is a LIVE report: the loop is beating now and its
+    // probe says the usage door is down. A stale beat under the
+    // same sight is not a door report — the loop itself is
+    // unproven, which is form (4)'s fact, below.
+    if (sight == com.example.data.SightState.BLIND_NO_ACCESS && beatAge <= SHIELD_RECEIPT_FRESH_MS) {
+        return "NOT HELD — USAGE ACCESS down · $lastHeld"
+    }
+    if (lastVerifiedWallMillis == null) {
+        val written = lawWrittenWallMillis?.let { "law written ${at(it)}" } ?: "law written"
+        return "SEALED — $written · not yet held"
+    }
+    if (sight != com.example.data.SightState.SIGHTED || beatAge > SHIELD_RECEIPT_FRESH_MS) {
+        return "NOT VERIFIED — $lastHeld"
+    }
+    return if (guardsVerified) {
+        "HELD — verified ${at(lastVerifiedWallMillis)}"
+    } else {
+        "HELD (apps) — verified ${at(lastVerifiedWallMillis)} · guards unverified"
+    }
+}

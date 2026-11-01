@@ -1,7 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Issue #155 (F1): updatePeriodMillis is the platform minimum
-     (30 min); the shield service also pushes an update on session
-     start/stop, so the glance is fresh at the moments that matter. -->
+<!-- Issue #155 (F1) + WING-F SMALL-3 manifest audit (issue #155 R3b):
+     updatePeriodMillis is the platform minimum (30 min); explicit
+     triggers (MonolithWidgetProvider.requestUpdate — shield lifecycle
+     in MonolithShieldService, routine/session funnels in
+     MonolithRepository on PR #540) push an update at the moments
+     that matter. HONESTY NOTE: the period is still LOAD-BEARING,
+     not a backstop nicety. It is the ONLY saver when (a) the shield
+     dies abnormally while the widget prints SEALED — PR #540's
+     WidgetSealTruth re-judges the beat only when a read happens, so
+     a dead shield's false SEALED can stand for up to one period
+     (30 min) before the period tick re-reads and downgrades it;
+     (b) the clock/timezone changes — MonolithBootReceiver hears
+     TIME_SET/TIMEZONE_CHANGED and ticks the heartbeat but never
+     requests a widget update, so the HH:mm strings stand wrong
+     until the period tick; (c) a printed NEXT SEAL time passes
+     without a session starting. Lowering the period is impossible
+     (platform minimum); closing (b) needs a code funnel, filed as a
+     consult on PR #540 by SMALL-3.
+     previewLayout: the picker preview is the widget's real initial
+     layout — the user sees the actual glance, not the app icon. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:minWidth="180dp"
     android:minHeight="60dp"
@@ -9,6 +26,7 @@
     android:targetCellHeight="1"
     android:updatePeriodMillis="1800000"
     android:initialLayout="@layout/widget_monolith"
+    android:previewLayout="@layout/widget_monolith"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
-    android:description="@string/app_name" />
+    android:description="@string/widget_description" />

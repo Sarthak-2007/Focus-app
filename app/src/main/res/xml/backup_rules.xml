@@ -9,8 +9,21 @@
   device-protected storage (MonolithDatabase uses
   createDeviceProtectedStorageContext for Direct Boot), and the platform
   maps device_* domains to that separate tree, so the five
-  credential-encrypted domains alone never covered it: all ten domains
+  credential-encrypted domains alone never covered it: all nine valid domains
   are excluded here.
+  FullBackupContent cure (#166): an earlier draft also listed a
+  "device_external" exclude. That domain does not exist - Android's
+  documented set (developer.android.com/identity/data/autobackup,
+  "Syntax for include and exclude elements") is exactly nine:
+  root, file, database, sharedpref, external, device_root,
+  device_file, device_database, device_sharedpref. The device_*
+  counterparts exist only for root, file, database and sharedpref;
+  external (getExternalFilesDir()) has no device-protected
+  counterpart, so device-protected external storage cannot be
+  excluded through this mechanism - the invalid line was removed,
+  not renamed. The app never writes external storage at all (no
+  getExternalFilesDir use anywhere in the tree), and every root it
+  does use stays excluded below.
 -->
 <full-backup-content>
     <exclude domain="root" path="." />
@@ -22,5 +35,4 @@
     <exclude domain="device_file" path="." />
     <exclude domain="device_database" path="." />
     <exclude domain="device_sharedpref" path="." />
-    <exclude domain="device_external" path="." />
 </full-backup-content>

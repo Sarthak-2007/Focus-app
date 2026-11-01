@@ -29,6 +29,18 @@ object ForegroundSelection {
         }
         return usageStatsFallback()?.takeIf { it in blockedPackages }
     }
+
+    /**
+     * Issue #520 (5-D): the shield selection's call-owner
+     * exemption — the package the accessibility door has locked
+     * as the live call's owner is never selected for intercept,
+     * so the fallback door cannot contradict the a11y door
+     * mid-call and yank the call screen into the Airlock. A null
+     * owner (no call standing, or the a11y service unbound)
+     * exempts nothing.
+     */
+    fun isCallOwnerExempt(packageName: String, callOwnerPackage: String?): Boolean =
+        callOwnerPackage != null && packageName == callOwnerPackage
 }
 
 /**

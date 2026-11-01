@@ -62,6 +62,12 @@ class TasksUndoBannerRenderTest {
                     onDismissUndoBanner = {},
                     onReopenTask = {},
                     onToggleSubStep = { _, _ -> },
+                    // Composed at the train merge (K8): the train's
+                    // sequencer screen requires the sub-step callback
+                    // (the identical test predates it on both trees);
+                    // stubbed like every other callback here — the
+                    // undo banner under test never touches it.
+                    onAddSubStep = { _, _ -> },
                     onAutoSplitTask = {},
                     onNavigateToDeck = {}
                 )

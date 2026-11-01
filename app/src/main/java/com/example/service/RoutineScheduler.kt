@@ -34,6 +34,10 @@ object RoutineScheduler {
     fun rearmChain(context: Context, routines: List<RoutineEntity>, nowMillis: Long) {
         val boundary = RoutineDerive.nextBoundaryMillis(routines, nowMillis)
         if (boundary == null) cancelChain(context) else rearmChain(context, boundary)
+        // Audit R6 #341 F17: the redundant WorkManager path arms
+        // at the SAME boundary from the SAME derivation — two
+        // roads, one instant, one idempotent tick at the end.
+        BoundaryWakeScheduler.armNext(context, routines, nowMillis)
     }
 
     /** Cancel-then-set: exactly one chain alarm exists at any time.
@@ -64,6 +68,8 @@ object RoutineScheduler {
     fun cancelChain(context: Context) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         chainPendingIntent(context, PendingIntent.FLAG_UPDATE_CURRENT)?.let { alarmManager.cancel(it) }
+        // Audit R6 #341 F17: the worker path cancels with the chain.
+        BoundaryWakeScheduler.cancel(context)
     }
 
     /** True while a chain alarm is armed (FLAG_NO_CREATE probe — the

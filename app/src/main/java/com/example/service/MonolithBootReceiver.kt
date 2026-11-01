@@ -6,6 +6,7 @@ import android.content.Intent
 import android.os.PowerManager
 import android.util.Log
 import com.example.data.UndoDeleteStore
+import com.example.widget.MonolithWidgetProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +80,29 @@ class MonolithBootReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            Intent.ACTION_USER_UNLOCKED,
+            "android.intent.action.REBOOT" -> {
+                // Audit R6 #340 F53: unlock-moment resurrection.
+                // Deliberately the CHEAP path only — read the
+                // active-session snapshot and re-raise the shield
+                // if one is live. No reconcile, no heartbeat: the
+                // unlock is not the place for slow work, and a
+                // session-less unlock costs one snapshot read.
+                val pendingResult = goAsync()
+                scope.launch {
+                    try {
+                        runGuardedBootAction {
+                            val dao = com.example.AppContainer.dao(appContext) /* ISSUE-67: single construction point */
+                            val active = dao.getActiveSessionSnapshot()
+                            if (active != null && active.isActive) {
+                                MonolithShieldService.startShield(appContext)
+                            }
+                        }
+                    } finally {
+                        pendingResult.finish()
+                    }
+                }
+            }
             Intent.ACTION_TIME_CHANGED,
             Intent.ACTION_TIMEZONE_CHANGED -> {
                 val pendingResult = goAsync()
@@ -89,6 +113,12 @@ class MonolithBootReceiver : BroadcastReceiver() {
                                 appContext, RoutineHeartbeat.Source.TIME_CHANGED, force = true
                             )
                         }
+                        // Issue #155 (F1): every HH:mm the widget
+                        // prints is a wall-clock render — a moved
+                        // clock or zone makes the standing snapshot
+                        // wrong even when no state moved. Re-render
+                        // the glance off the reconciled state.
+                        refreshGlanceAfterReconcile(appContext, action)
                     } finally {
                         pendingResult.finish()
                     }
@@ -182,6 +212,21 @@ class MonolithBootReceiver : BroadcastReceiver() {
                 MonolithShieldService.startShield(appContext)
             }
         }
+
+        // Group 5 — issue #155 (F1): the home-screen glance owes a
+        // re-render off the reconciled state. The reconcile above
+        // can finalise a session that ended while the phone was off
+        // or the build was being replaced, and can materialise one
+        // that came due — while the launcher still shows the
+        // pre-boot / pre-update snapshot (a SEALED line for a
+        // session that no longer exists, or a NEXT SEAL instant
+        // that has already passed). When a live session survives,
+        // the shield's protecting flip also refreshes; this group
+        // is the only refresh door for the idle and ended cases.
+        // (The IQ-4 edges 3/4/5 boot refresh rides this same door:
+        // refreshGlanceAfterReconcile issues the requestUpdate for
+        // every boot-class action, guarded like every group.)
+        refreshGlanceAfterReconcile(appContext, action)
     }
 }
 
@@ -234,3 +279,28 @@ internal fun bootHeartbeatSource(action: String?): RoutineHeartbeat.Source =
     } else {
         RoutineHeartbeat.Source.BOOT
     }
+
+/** Pure glance-refresh rule (issue #155, F1): the actions whose
+ *  reconcile can move anything the home-screen widget prints — a
+ *  session finalised or materialised by the tick, a NEXT SEAL
+ *  derived from routines, or every printed HH:mm re-derived from a
+ *  moved clock. Battery and package-component doors change nothing
+ *  the glance prints, so they owe it no re-render. */
+internal fun bootGlanceRefreshDue(action: String?): Boolean =
+    action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+        action == Intent.ACTION_BOOT_COMPLETED ||
+        action == Intent.ACTION_MY_PACKAGE_REPLACED ||
+        action == "android.intent.action.QUICKBOOT_POWERON" ||
+        action == Intent.ACTION_TIME_CHANGED ||
+        action == Intent.ACTION_TIMEZONE_CHANGED
+
+/** The glance re-render itself, guarded like every other boot
+ *  group (issue #44): a widget host failure is contained and
+ *  logged, never a reason to fail the reconcile that called it.
+ *  No-ops for actions [bootGlanceRefreshDue] excludes. */
+internal suspend fun refreshGlanceAfterReconcile(context: Context, action: String?) {
+    if (!bootGlanceRefreshDue(action)) return
+    runGuardedBootAction("widget-refresh") {
+        MonolithWidgetProvider.requestUpdate(context)
+    }
+}

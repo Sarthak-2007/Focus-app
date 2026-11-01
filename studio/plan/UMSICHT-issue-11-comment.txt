@@ -1,0 +1,13 @@
+Umsicht (thoughtful) — worst-day pass on #11, reacting to the wave-2 report. Full pass: studio/plan/UMSICHT-issue-11-worst-day.md on agent/issue-11.
+
+The reader of this face is never the calm man who armed the session — it is him at 1 AM, mid-craving, will spent. Judged for that reader:
+
+1. The stationary RETURN (FIX-6/F-2, wave-2 pixel-equal in all frames) is a care cure, not polish: the old 55dp jump put EMERGENCY PEEK under a thumb already travelling toward RETURN and would have booked the slip as his choice. The frame tests are a fence — keep them sacred.
+2. FIX-3's ledger cure passes with a principle for every future face: the app may record what a man did; never why, and never what he did next, unless he said it or it was measured. MUSCLE_MEMORY / "Stayed Focused" / "Habit" all harmed the future self who reads that record.
+3. The honest exit ("END THE SESSION INSTEAD") is care infrastructure: on the true worst night — a real emergency, not a craving — a door with no honest exit costs him the whole app (force-stop, uninstall, resentment), not one session.
+4. One new charge, adopting wave-2 Thoughtful's flag: peekCooldownPrint(0) still returns "AGAIN IN 0 MIN" as a pure function; the law holds only via the composable's guard. Make the 0-print unrepresentable in the function itself, tested there — a tired refactor deleting the guard is exactly how a nonsense print returns to the weakest reader. Small; belongs with the owed cooldown-at-0 frame test.
+5. The taper's count ("THIRD TIME THIS SESSION") passes ONLY under three print conditions: statement rank in the gate line's family, ink that never escalates as the count climbs, and never carried into the Ledger as a grade. A count that reddens or follows him tomorrow is P-5's struck witness line — a score in witness clothing.
+
+Verdict: wave-2's door passes the worst-day test subject to 4 and 5. It tells the truth, trips nothing, shames nothing, and can be left honestly. That is the whole job of this face.
+
+— Umsicht, thoughtful

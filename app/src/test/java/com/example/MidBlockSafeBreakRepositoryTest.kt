@@ -17,6 +17,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.shadows.ShadowSystemClock
+import java.time.Duration
 import org.robolectric.annotation.Config
 
 /**
@@ -67,6 +69,17 @@ class MidBlockSafeBreakRepositoryTest {
 
     @Before
     fun setup() {
+        // AUDIT-CLOCK census seat (d) cure (#166): studyingRow
+        // fabricates its start anchor `elapsed` seconds before
+        // nowMono (up to target + 10 = 1510s in this file);
+        // unadvanced, the shadow clock starts near zero, the
+        // anchor goes negative, and the helper signs an HMAC
+        // over a row the verified path can only read through
+        // the reboot fallback — its "anchors agreeing to the
+        // second" doc was not true of the mono leg. Advance
+        // past the largest fabrication first (the ForgeLot
+        // idiom) so the signed anchors are real.
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(1800))
         db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
             .allowMainThreadQueries()
             .build()
@@ -91,14 +104,10 @@ class MidBlockSafeBreakRepositoryTest {
         val nowMono = SystemClock.elapsedRealtime()
         val startMono = nowMono - elapsed * 1000L
         val startWall = System.currentTimeMillis() - elapsed * 1000L
-        val hmac = if (forged) "forged" else CryptoIntegrityManager.signSessionState(
-            startWallTimeMillis = startWall,
-            startElapsedRealtimeMillis = startMono,
-            bootCount = 0,
-            targetDurationSeconds = target,
-            isStopwatch = stopwatch
-        )
-        return FocusSessionEntity(
+        // Issue #36 (ruling 3): the v2 signature covers the row's
+        // own time fields (elapsed and lastTick below), so the row
+        // is built first and signed over itself.
+        val unsigned = FocusSessionEntity(
             intention = "MID-BLOCK BREAK",
             profileName = "Manual",
             targetDurationSeconds = target,
@@ -107,7 +116,7 @@ class MidBlockSafeBreakRepositoryTest {
             startElapsedRealtimeMillis = startMono,
             bootCount = 0,
             lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = hmac,
+            hmacSignature = "",
             totalStudyBlocks = blocks,
             currentBlockIndex = blockIndex,
             isInSafeBreak = false,
@@ -115,6 +124,11 @@ class MidBlockSafeBreakRepositoryTest {
             isActive = true,
             completedSuccessfully = false
         )
+        return if (forged) {
+            unsigned.copy(hmacSignature = "forged")
+        } else {
+            unsigned.copy(hmacSignature = CryptoIntegrityManager.signSessionState(unsigned))
+        }
     }
 
     @Test

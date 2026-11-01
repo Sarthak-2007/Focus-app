@@ -1,5 +1,7 @@
 package com.example
 
+import android.content.Context
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -14,6 +16,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
+import androidx.test.core.app.ApplicationProvider
 import com.example.data.FinishKind
 import com.example.data.ReceiptDeflection
 import com.example.data.ReceiptState
@@ -25,6 +28,7 @@ import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,6 +55,28 @@ class ReceiptSheetTruthTest {
 
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @Before
+    fun stageA24HourDevice() {
+        // Rig contract (#166, floor lane): since #88 the app's
+        // clocks speak the DEVICE's language — ClockText reads
+        // the system 12/24-hour setting, never a pinned format
+        // (ClockText.kt: "the system 12/24-hour setting and the
+        // device locale — never a pinned Locale.US HH:mm"). This
+        // class's ARMED/ENDED assertions are written in the
+        // 24-hour forms, so the rig states its device setting the
+        // way a 24-hour phone presents it. Unstaged, the rig's
+        // unset setting resolves by default locale to 12-hour and
+        // the slip prints "ARMED 9:00 AM" — a device this class
+        // never claimed to test — while every format-free line
+        // (RAN / PLANNED / HELD, all longSpan) kept passing.
+        // Production is untouched: on a 12-hour phone the slip
+        // still prints 12-hour, exactly as #88 ruled.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Settings.System.putString(
+            context.contentResolver, Settings.System.TIME_12_24, "24"
+        )
+    }
 
     // ---- pure formatters -------------------------------------
 

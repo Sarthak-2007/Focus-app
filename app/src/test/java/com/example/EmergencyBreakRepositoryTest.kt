@@ -24,6 +24,8 @@ import org.robolectric.annotation.Config
 import java.util.TimeZone
 
 /**
+ * PIN scope: PLUMBING.
+ *
  * TOKEN-SPEC §8 tests 3 + 4 + the restart property of 7, at the
  * repository — the enforcement layer. Runs against the app's real
  * (device-protected) database file in the Robolectric sandbox, because
@@ -92,7 +94,7 @@ class EmergencyBreakRepositoryTest {
         // Boundary-proof anchor (#91): production stamps the spend
         // with the anchor of the COMPLETION instant, re-reading the
         // clock inside completeEmergencyBreak(). An anchor captured
-        // once here goes stale if Monday 00:00 passes mid-test, so
+        // once here goes stale if the week seam (Monday 03:30) passes mid-test, so
         // this var is re-derived from the spend row's own instant
         // right after the real completion (see below) and every
         // later assertion reads the week the spend actually booked.
@@ -135,7 +137,7 @@ class EmergencyBreakRepositoryTest {
         // Re-anchor from the spend's own instant — the single
         // instant production itself stamped — so the assertions
         // below read the week of the spend even when the test
-        // straddled Monday 00:00 since anchorNow was captured.
+        // straddled the week seam since anchorNow was captured.
         val spendRow = dao.getAllSpendsSnapshot().single { it.sessionId == sessionId }
         anchorNow = MonolithWeek.weekAnchorMillis(spendRow.spentAtWallMillis)
         nextAnchorNow = MonolithWeek.nextWeekAnchorMillis(spendRow.spentAtWallMillis)

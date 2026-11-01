@@ -662,7 +662,7 @@ nowhere. A never-measured line prints its NAME ONLY (absence,
   HOLD: 60 SECONDS, BANKED EVERY 15 · ONE BREAK A WEEK /
   PEEK: 2 MINUTES, THEN SHUT AGAIN / COLOUR IS A VERB:
   ORANGE = COMMIT · INK = SHUT · GREY = PEEK · PORCELAIN =
-  OPEN / ROUTINES: SET BY HAND ON SHIELD · FIRED AS SET /
+  OPEN / ROUTINES: SET BY HAND ON SHIELD · ~~FIRED AS SET~~ (STRUCK — Hale W-11, marked by the issue-9 cell under Critic C-10: returns only when Wache F1–F5 land in the same build AND a live fire is re-verified) /
   SITES: KEPT WITH APPS ON SHIELD · DATA: ON THIS PHONE ONLY /
   STUDY RECORD: IN YPT / SOUND: FLOAT-PCM, 4 PARTIALS ·
   POWER: YOUR PHONE. Byte-identical text is an acceptance

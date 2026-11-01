@@ -59,6 +59,21 @@ internal fun looksLikeLoadedUrl(text: String): Boolean {
 }
 
 /** The blocked domain a loaded-URL text carries, or null. */
+/**
+ * Audit R6 #341 F52: the loaded-URL door with the exclusion
+ * carve-out — a text whose host is excluded never matches, the
+ * same law the URL-bar door follows.
+ */
+internal fun matchBlockedDomainInLoadedUrlExcluding(
+    text: String,
+    domains: List<String>,
+    excludedHosts: List<String>
+): String? {
+    val host = extractUrlHost(text.trim().lowercase())
+    if (com.example.data.hostExcluded(host, excludedHosts)) return null
+    return matchBlockedDomainInLoadedUrl(text, domains)
+}
+
 internal fun matchBlockedDomainInLoadedUrl(text: String, domains: List<String>): String? {
     if (!looksLikeLoadedUrl(text)) return null
     return matchBlockedDomain(text.trim().lowercase(), domains)

@@ -16,9 +16,11 @@ import org.junit.Test
  * shield's beat is fresh against the monotonic-implied now (the
  * session start advanced by the VERIFIED elapsed — never the raw
  * wall clock, so clock travel can neither forge nor launder a
- * gap). The reference never sits before the current build landed
- * (update downtime is not a gap), and a beat of 0 is a pre-v10
- * row: the beat test alone cannot convict it; only the latch can.
+ * gap). Issue #524 struck #95's install-time term out of the
+ * reference: update downtime past the 10 s threshold books the
+ * gap; under the threshold the threshold itself is the exemption.
+ * A beat of 0 is a pre-v10 row: the beat test alone cannot
+ * convict it; only the latch can.
  */
 class SessionOutcomeClassifierTest {
 
@@ -46,7 +48,6 @@ class SessionOutcomeClassifierTest {
         completed: Boolean = true,
         routine: Boolean = false,
         verifiedElapsedSeconds: Long = 150L,
-        appLastUpdateMillis: Long = 0L,
         usageStatsPermissionHeld: Boolean = true,
         openExposureSeen: Boolean = false
     ) = classifyElapsedOutcome(
@@ -54,7 +55,6 @@ class SessionOutcomeClassifierTest {
         allBlocksCompleted = completed,
         isRoutineSession = routine,
         verifiedElapsedSeconds = verifiedElapsedSeconds,
-        appLastUpdateMillis = appLastUpdateMillis,
         usageStatsPermissionHeld = usageStatsPermissionHeld,
         openExposureSeen = openExposureSeen
     )
@@ -123,19 +123,22 @@ class SessionOutcomeClassifierTest {
     }
 
     @Test
-    fun completed_updateDowntime_isNotAGap() {
-        // #95: the reference includes the current build's install
-        // time — a beat that predates the update is measured from
-        // the update, not from the beat itself.
+    fun completed_updateDowntimePastThreshold_isAGap() {
+        // #524 struck #95's blanket exemption (this test's old
+        // form pinned it): the reference no longer includes the
+        // build's install time, so a beat that predates an update
+        // is measured from the beat itself — here 130 s stale
+        // against the implied now (start + 150 s) — and minutes
+        // of install downtime book the gap.
         val start = 1_000_000L
         val s = session(startWall = start, beatWall = start + 20_000L)
-        assertEquals(
-            SessionOutcome.ELAPSED_CLEAN,
-            classify(s, appLastUpdateMillis = start + 140_000L)
-        )
-        // Same facts without the update term: the beat is 130s
-        // stale against the implied now and the gap books.
         assertEquals(SessionOutcome.ELAPSED_SHIELD_GAP, classify(s))
+        // What survives of #95's intent: downtime UNDER the 10 s
+        // threshold stays exempt — by the threshold itself, not
+        // by an install-time term. A beat 5 s behind the implied
+        // now (the shape a brief install leaves) stays clean.
+        val brief = session(startWall = start, beatWall = start + 145_000L)
+        assertEquals(SessionOutcome.ELAPSED_CLEAN, classify(brief))
     }
 
     @Test

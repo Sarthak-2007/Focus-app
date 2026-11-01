@@ -65,7 +65,53 @@ object OemPolicy {
      * half IS known.)
      */
     fun batteryGrantedIsProved(gate: AutostartGate): Boolean =
-        gate == AutostartGate.NONE
+        batteryGrantedIsProved(gate, attested = false)
+
+    /**
+     * Audit R6 #341 F28 (the remainder #94 left): on Xiaomi the
+     * per-app BATTERY SAVER is a third, separate gate — MIUI's
+     * PowerKeeper holds Monolith at "Battery saver (recommended)"
+     * unless the user sets "No restrictions", and no API reads it
+     * back. The proof rule therefore gains the user's ATTESTATION
+     * (Blockit's shape): with the AOSP exemption granted and the
+     * user's own word on record that the Xiaomi steps are set,
+     * the battery fact is proved; without the attestation it
+     * stays UNPROVED — never GRANTED on the AOSP read alone.
+     * Other gating skins keep the #94 rule unchanged (their
+     * attestation step is not built here and is not implied).
+     */
+    fun batteryGrantedIsProved(gate: AutostartGate, attested: Boolean): Boolean =
+        when (gate) {
+            AutostartGate.NONE -> true
+            AutostartGate.XIAOMI -> attested
+            else -> false
+        }
+
+    /**
+     * The explicit Xiaomi battery step (F28): MIUI PowerKeeper's
+     * per-app battery list, where Monolith must be set to "No
+     * restrictions". Vendor components are guesses that may not
+     * exist on a given build — callers try/catch each and fall
+     * through (this file's standing doctrine).
+     */
+    fun miuiBatterySaverIntents(packageName: String): List<Intent> {
+        val list = Intent().apply {
+            component = ComponentName(
+                "com.miui.powerkeeper",
+                "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra("packageName", packageName)
+        }
+        val keeper = Intent().apply {
+            component = ComponentName(
+                "com.miui.powerkeeper",
+                "com.miui.powerkeeper.ui.PowerKeeperMainActivity"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return listOf(list, keeper)
+    }
 
     /**
      * The OEM autostart panes for [gate], most specific first. Every one

@@ -1,0 +1,72 @@
+diff --git a/app/src/main/java/com/example/ui/components/GuardLine.kt b/app/src/main/java/com/example/ui/components/GuardLine.kt
+index 4b70b36..1274f55 100644
+--- a/app/src/main/java/com/example/ui/components/GuardLine.kt
++++ b/app/src/main/java/com/example/ui/components/GuardLine.kt
+@@ -17,10 +17,14 @@ import com.example.service.WatchStore
+  *                order, printed BARE when missing and with
+  *                ` STALE` appended when stale. One lack is named;
+  *                a second rides unnamed in the count.
+- *  - UNMEASURED: the line prints NOTHING. There is no default and
+- *                no assumption — the seeded all-false guard status
+- *                that used to print a day-one 0/4 is exactly the
+- *                claim this state exists to prevent.
++ *  - UNMEASURED: the line prints `GUARD — NOT CHECKED` (issue #9,
++ *                AUDIT-park P-6). It never prints a count and never
++ *                prints nothing: blank read as "fine" to a tired
++ *                reader, and the seeded all-false guard status that
++ *                used to print a day-one 0/4 is exactly the claim
++ *                this state exists to prevent. NOT CHECKED is the
++ *                honest default — a statement about the measurement,
++ *                not about the grants.
+  *
+  * Pure: a function of (snapshot, now) and nothing else — no clock
+  * reads beyond the passed instant, no Android, no state. The same
+@@ -31,10 +35,13 @@ import com.example.service.WatchStore
+  */
+ data class GuardLinePrint(val text: String)
+ 
++/** The cold-open / unmeasured print (issue #9, P-6): never blank. */
++val GUARD_NOT_CHECKED = GuardLinePrint("GUARD — NOT CHECKED")
++
+ fun guardLineFor(snapshot: WatchSnapshot?, nowMono: Long): GuardLinePrint? {
+-    if (snapshot == null) return null
++    if (snapshot == null) return GUARD_NOT_CHECKED
+     val prints = WatchItemId.COUNTED.map { it to WatchStore.permPrintAt(snapshot, it, nowMono) }
+-    if (prints.any { it.second == PermPrint.UNMEASURED }) return null
++    if (prints.any { it.second == PermPrint.UNMEASURED }) return GUARD_NOT_CHECKED
+     val warranted = prints.count { it.second == PermPrint.GRANTED }
+     if (warranted == WatchItemId.COUNTED.size) return GuardLinePrint("GUARD 4/4")
+     val firstLack = prints.first { it.second != PermPrint.GRANTED }
+diff --git a/app/src/test/java/com/example/ChromeWaveUnitTest.kt b/app/src/test/java/com/example/ChromeWaveUnitTest.kt
+index b697e99..17be666 100644
+--- a/app/src/test/java/com/example/ChromeWaveUnitTest.kt
++++ b/app/src/test/java/com/example/ChromeWaveUnitTest.kt
+@@ -13,7 +13,6 @@ import com.example.ui.evaluateTheme
+ import com.example.ui.views.RailGeometry
+ import java.util.Calendar
+ import org.junit.Assert.assertEquals
+-import org.junit.Assert.assertNull
+ import org.junit.Assert.assertTrue
+ import org.junit.Test
+ 
+@@ -145,14 +144,16 @@ class ChromeWaveUnitTest {
+     }
+ 
+     @Test
+-    fun guardLine_unmeasuredPrintsNothing() {
++    fun guardLine_unmeasuredPrintsNotChecked() {
++        // Issue #9 (AUDIT-park P-6): the cold-open line is never
++        // blank — unmeasured prints NOT CHECKED, never a count.
+         val snap = countedSnap(
+             PermState.GRANTED, PermState.GRANTED, PermState.GRANTED, PermState.GRANTED
+         )
+         val partial = snap.copy(items = snap.items - WatchItemId.DEVICE_ADMIN)
+-        assertNull(guardLineFor(partial, nowMono = 20_000L))
+-        assertNull(guardLineFor(null, nowMono = 20_000L))
+-        assertNull(guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L))
++        assertEquals("GUARD — NOT CHECKED", guardLineFor(partial, nowMono = 20_000L)?.text)
++        assertEquals("GUARD — NOT CHECKED", guardLineFor(null, nowMono = 20_000L)?.text)
++        assertEquals("GUARD — NOT CHECKED", guardLineFor(WatchSnapshot.EMPTY, nowMono = 20_000L)?.text)
+     }
+ 
+     // ------------------------------------------------------------------

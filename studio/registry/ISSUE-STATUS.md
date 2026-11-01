@@ -1,6 +1,8 @@
 # ISSUE STATUS — every issue, worked-on or not
 
 As of: **2026-10-30 06:44 IST** · Source: live gh (issue list, branch list, run list, PR list) + git ancestry vs origin/main (0a00e95).
+
+> Record correction (2026-10-31, SMALL-4 · WING-F, #155-neighbourhood reconciliation vs live GitHub): rows **58 / 110 / 146** state flipped open → CLOSED (all three are closed live); row **155** branch cell now names its live vehicle (PR #540). No other row touched; all other rows remain the Oct-30 census above.
 Totals: **165 issues · 16 closed · 149 open** · branches on GitHub: 56 · PRs merged: 6 · PRs open: 3.
 
 **Why closed (16) ≠ PR merges (6):** closures happen on branch-level CI proof (close-when-fixed law); merging is a separate act. Of 16 closed: **6 code-merged-to-main** (#2, #3, #35, #47, #61, #62 — only 4 via PR), **7 code-on-branch-awaiting-train** (#12, #13, #26, #56, #59, #66, #71), **1 verdict-or-strike** (#5), **2 decision-only** (#19, #20). The other 2 merged PRs are not closures: #167 design-revamp, #173 issue-17 evidence (#17 itself still open).
@@ -65,7 +67,7 @@ Merged = branch tip is an ancestor of main, or a merged PR exists for the branch
 | 55 | Audit R1 · airlock-overlays — 5 findings (worst: CRITICAL) | open | W3 C8 Rampe | agent/issue-55 (cfa1096) | run 40974687791: failure | no | — |
 | 56 | Audit R1 · park-drawer — 5 findings (worst: HIGH) | CLOSED | W3 C8 Rampe | agent/issue-56 (b9245c9) | run 40979226816: failure | no | code-on-branch-awaiting-train |
 | 57 | Audit R1 · receipt-sheet — 5 findings (worst: HIGH) | open | W3 C8 Rampe | agent/issue-57 (f316eca) | run 40974267409: failure | no | — |
-| 58 | Audit R1 · shield-cap-guardline — 6 findings (worst: HIGH) | open | W3 C8 Rampe | agent/issue-58 (a91f327) | run 40975880848: failure | no | — |
+| 58 | Audit R1 · shield-cap-guardline — 6 findings (worst: HIGH) | CLOSED | W3 C8 Rampe | agent/issue-58 (a91f327) | run 40975880848: failure | no | — |
 | 59 | Audit R1 · blockit-core-views — 5 findings (worst: CRITICAL) | CLOSED | W3 C8 Rampe | agent/issue-59 (568eed2) | run 40979823158: failure | no · PR #174 OPEN | code-on-branch-awaiting-train (PR #174 open) |
 | 60 | Audit R1 · blockit-suitcase-views — 5 findings (worst: CRITICAL) | open | W3 C9 Nachlass | agent/issue-60 (5e584a0) | run 40974004876: failure | no | — |
 | 61 | Audit R1 · blockit-tower-views — 5 findings (worst: CRITICAL) | CLOSED | W3 C9 Nachlass | agent/issue-61 (0254539) | run 40974335104: failure | YES | code-merged-to-main (PR #168) |
@@ -117,7 +119,7 @@ Merged = branch tip is an ancestor of main, or a merged PR exists for the branch
 | 107 | Audit R3 · shield-setup-lived — 5 findings (worst: HIGH) | open | W3B Reise | — | — | — | — |
 | 108 | Audit R3 · routines-lived — 5 findings (worst: CRITICAL) | open | W3B Reise | — | — | — | — |
 | 109 | Audit R3 · park-guard-lived — 5 findings (worst: CRITICAL) | open | W3B Reise | — | — | — | — |
-| 110 | Audit R3 · vault-history-lived — 5 findings (worst: HIGH) | open | W3B Reise | — | — | — | — |
+| 110 | Audit R3 · vault-history-lived — 5 findings (worst: HIGH) | CLOSED | W3B Reise | — | — | — | — |
 | 111 | Audit R3 · desk-clock-lived — 5 findings (worst: HIGH) | open | W3B Karte | — | — | — | — |
 | 112 | Audit R3 · sound-haptics-lived — 5 findings (worst: HIGH) | open | W3B Karte | — | — | — | — |
 | 113 | Audit R3 · things-go-wrong-lived — 5 findings (worst: CRITICAL) | open | W3B Karte | — | — | — | — |
@@ -153,7 +155,7 @@ Merged = branch tip is an ancestor of main, or a merged PR exists for the branch
 | 143 | Audit R3b · night-flip-mid-session — 6 findings (worst: HIGH) | open | W3B Echo | — | — | — | — |
 | 144 | Audit R3b · tower-as-motivation — 4 findings (worst: HIGH) | open | W3B Echo | — | — | — | — |
 | 145 | Audit R3b · curio-reward-moment — 5 findings (worst: HIGH) | open | W3B Umriss | — | — | — | — |
-| 146 | Audit R3b · break-away-from-phone — 5 findings (worst: CRITICAL) | open | W3B Umriss | — | — | — | — |
+| 146 | Audit R3b · break-away-from-phone — 5 findings (worst: CRITICAL) | CLOSED | W3B Umriss | — | — | — | — |
 | 147 | Audit R3b · stopwatch-vs-timed-confusion — 5 findings (worst: CR | open | W3B Umriss | — | — | — | — |
 | 148 | Audit R3b · multi-block-surprises — 5 findings (worst: HIGH) | open | W3B Umriss | — | — | — | — |
 | 149 | Audit R3b · false-start-grace — 5 findings (worst: CRITICAL) | open | W3B Umriss | — | — | — | — |
@@ -162,7 +164,7 @@ Merged = branch tip is an ancestor of main, or a merged PR exists for the branch
 | 152 | Audit R3b · honest-travel-day — 4 findings (worst: HIGH) | open | W3B Profil | — | — | — | — |
 | 153 | Audit R3b · change-of-plans-day — 5 findings (worst: CRITICAL) | open | W3B Profil | — | — | — | — |
 | 154 | Audit R3b · need-one-app-legit — 5 findings (worst: HIGH) | open | W3B Profil | — | — | — | — |
-| 155 | Audit R3b · no-widget-glance-cost — 5 findings (worst: HIGH) | open | W3B Wesen | — | — | — | — |
+| 155 | Audit R3b · no-widget-glance-cost — 5 findings (worst: HIGH) | open | W3B Wesen | PR #540 OPEN · agent/issue-155-cure (acfa599c) | — | — | — |
 | 156 | Audit R3b · park-first-run-autopen — 5 findings (worst: HIGH) | open | W3B Wesen | — | — | — | — |
 | 157 | Audit R3b · receipt-dismissed-forever — 5 findings (worst: CRITI | open | W3B Wesen | — | — | — | — |
 | 158 | Audit R3b · month-in-review — 5 findings (worst: HIGH) | open | W3B Wesen | — | — | — | — |

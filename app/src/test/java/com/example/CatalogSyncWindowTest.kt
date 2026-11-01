@@ -58,6 +58,16 @@ class CatalogSyncWindowTest {
         repository = MonolithRepository(context, db.monolithDao())
         context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
             .edit().clear().commit()
+        // Settled-world stamp (issue #7 rulings landing, BUILDER-7):
+        // after the clear above, mark the one-time LEGACY OPEN
+        // reset (Ren ruling 00:34 IST Oct 31) as already run — it
+        // fires at the end of the first seed-sync over a legacy
+        // catalogue and would close this class's staged OPEN rows
+        // mid-test. The reset is not this class's subject (its own
+        // pin is LegacyOpenResetRepositoryTest); no assertion in
+        // this class changes.
+        context.getSharedPreferences(MonolithRepository.APP_LIST_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(MonolithRepository.LEGACY_OPEN_RESET_DONE_KEY, true).commit()
     }
 
     @After
@@ -144,9 +154,12 @@ class CatalogSyncWindowTest {
     @Test
     fun twoSyncsBeyondWindow_pruneTrulyGoneApp_tombstoneFiledAndRestores() = runBlocking {
         val dao = db.monolithDao()
+        // The ghost is UNRULED (OPEN): since issue #142 F2's union
+        // law a ruled row never prunes, so the prune + tombstone
+        // mechanics are staged on the row class they still govern.
         dao.insertApps(
             listOf(
-                storedRow("com.ghost.app", "Ghost", AppBlockTier.LOCKED),
+                storedRow("com.ghost.app", "Ghost", AppBlockTier.OPEN),
                 storedRow("com.keeper.app", "Keeper", AppBlockTier.LOCKED)
             )
         )
@@ -160,7 +173,7 @@ class CatalogSyncWindowTest {
         assertNull(repository.pendingPruneNote())
 
         // Second genuine look, beyond the window: the ghost is
-        // truly gone, so it is pruned — with its ruling filed.
+        // truly gone, so it is pruned — with its stored state filed.
         backdateLastSyncBeyondWindow()
         repository.ensureSeededAndSyncPackages()
         assertEquals(
@@ -168,10 +181,10 @@ class CatalogSyncWindowTest {
             dao.getAllAppsSnapshot().map { it.packageName }.toSet()
         )
         assertEquals(
-            PruneNote(appsRemoved = 1, rulesRemoved = true),
+            PruneNote(appsRemoved = 1, rulesRemoved = false),
             repository.pendingPruneNote()
         )
-        assertTrue(tombstones().contains("com.ghost.app|LOCKED|30"))
+        assertTrue(tombstones().contains("com.ghost.app|OPEN|30"))
 
         // The ghost returns on a later look: the tombstone, not a
         // factory/category default, decides its rebirth.
@@ -180,7 +193,7 @@ class CatalogSyncWindowTest {
         repository.ensureSeededAndSyncPackages()
         val reborn = dao.getAllAppsSnapshot()
             .first { it.packageName == "com.ghost.app" }
-        assertEquals(AppBlockTier.LOCKED, reborn.resolvedTier)
+        assertEquals(AppBlockTier.OPEN, reborn.resolvedTier)
         assertEquals(30, reborn.dailyLimitMinutes)
     }
 }

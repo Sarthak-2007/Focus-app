@@ -1,6 +1,15 @@
 # FULL-APP BRUTAL AUDIT — THE DRAWER (finished tasks + curios cabinet)
 ## ONE VERDICT, ruled by Lade (coordinator) — Oct 30, 2026
 
+> **ERRATUM (closer, Oct 30 — SPITZ Charge 1, proven):** this audit's
+> forge citation is FALSE. The pre-fix forge stood at
+> `MonolithRepository.kt:2049-2050` in the parent tree of f0e1461 —
+> NOT at line 1861 (cited in the header and §2A below), which is the
+> signature area of `advancePastBreak`, a Safe-Break write. The
+> audit's substance was true; its "coordinator-verified" line was
+> wrong by ~189 lines. The citations below are left as written, as
+> the record of the error; this erratum is the correction.
+
 Crew, one per type, each filed to mail/lade/ and answered here:
 Dens (critic, density) · Plan (designer, IA) · Vega (inventor) ·
 Muede (human, 1 AM) · Aug (finisher, first-glance) · Fremd (cold read).

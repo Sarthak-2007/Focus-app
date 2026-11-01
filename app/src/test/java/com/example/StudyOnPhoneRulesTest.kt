@@ -40,12 +40,20 @@ class StudyOnPhoneRulesTest {
 
     @Test
     fun study_chromeHostedClasses_areOpen() {
+        // #133 F1's pin, one half re-pinned under the #129/#133
+        // reconciliation ruling (Review, on #129; filed on #166
+        // at 6543839617): Chrome BY NAME stays OPEN (it carries
+        // his classes); Firefox — a browser, but not a named
+        // class carrier — no longer rides the category claim and
+        // takes #129 F4's peek corridor, like every other
+        // unnamed browser. The test's name stands from F1; its
+        // Firefox half is the re-pin the ruling ordered.
         assertEquals(
             AppBlockTier.OPEN,
             tier(SmartLoadout.STUDY, "com.android.chrome", "Chrome", AppCategory.BROWSERS)
         )
         assertEquals(
-            AppBlockTier.OPEN,
+            AppBlockTier.PEEK_2M,
             tier(SmartLoadout.STUDY, "org.mozilla.firefox", "Firefox", AppCategory.BROWSERS)
         )
     }
