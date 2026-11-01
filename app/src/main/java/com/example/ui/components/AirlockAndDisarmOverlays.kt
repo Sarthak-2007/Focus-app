@@ -601,7 +601,7 @@ fun AlwaysOnDeskClockOverlay(
             // off, not the block-bar tone. Its alpha is A-4's
             // ground animation.
             .background(Color.Black.copy(alpha = groundAlpha.value))
-            .clickable(onClick = onDismiss)
+            .pointerInput(Unit) { detectTapGestures(onLongPress = { onDismiss() }) }
             .padding(24.dp)
             .testTag("always_on_desk_clock_overlay"),
         contentAlignment = Alignment.Center
@@ -621,7 +621,7 @@ fun AlwaysOnDeskClockOverlay(
             // no conditional (§C-2's line, unamended per E-4);
             // ENDS lives only in the sub-line (§C-1's seat).
             Text(
-                text = stringResource(R.string.overlay_tap_anywhere_exit),
+                text = deskClockEyebrow(sealed = activeSession?.isActive == true, inBreak = activeSession?.isInSafeBreak == true),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,
@@ -641,7 +641,7 @@ fun AlwaysOnDeskClockOverlay(
                 // printed the label only when idle, so a running
                 // hero was an unlabelled number all night.
                 Text(
-                    text = deskClockHeroLabel(activeSession),
+                    text = deskClockModeLabel(activeSession),
                     fontFamily = AnonymousProFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.sp,
@@ -795,11 +795,7 @@ fun AlwaysOnDeskClockOverlay(
                 // when the banner IS the break line, the banner
                 // carries the break line's tag — both parents'
                 // DeskClockLivedTest reads the announcement by it.
-                val breakLine = deskClockBreakLine(
-                    isInSafeBreak = activeSession?.isInSafeBreak == true,
-                    safeBreakSecondsRemaining = activeSession?.safeBreakSecondsRemaining ?: 0,
-                    nowWallMillis = faceNowMillis
-                )
+                val breakLine = deskClockBreakLine(activeSession)
                 var bannerLine = breakLine
                 // Finisher cure (Kante K-4): on the SLEEP span the
                 // banner IS "SLEEP" (DESIGN §1.7 — the routine
