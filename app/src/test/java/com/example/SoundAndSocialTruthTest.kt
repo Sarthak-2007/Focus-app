@@ -14,7 +14,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.InterceptorState
-import com.example.service.PermPrint
 import com.example.service.SessionSealTransitions
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
@@ -463,30 +462,22 @@ class SoundAndSocialTruthTest {
             val repository = MonolithRepository(context, db.monolithDao())
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
 
-            // Parents granted by a full sweep (the sweep's query
-            // decides per item). The VM's own init sweep may land
-            // real (ungranted) prints first — re-sweep until the
-            // granted set holds and the word derives RUNNING.
-            awaitTrue("granted parents + fact ON derive RUNNING") {
-                val snap = WatchStore.snapshots.value
-                val nowMono = SystemClock.elapsedRealtime()
-                if (WatchStore.permPrintAt(snap, WatchItemId.ACCESSIBILITY, nowMono) !=
-                    PermPrint.GRANTED ||
-                    WatchStore.permPrintAt(snap, WatchItemId.USAGE_ACCESS, nowMono) !=
-                    PermPrint.GRANTED
-                ) {
-                    WatchStore.runSweep { true }
-                }
-                WatchStore.snapshots.value
-                    .measurement(WatchItemId.SOCIAL_SITES)
-                    ?.interceptor == InterceptorState.RUNNING
-            }
-
-            // Same settle gate as the rendered case: the tap
-            // below reads the published print through the toggle,
-            // so the init seed assignment must have landed and
-            // the print must rest on the stored fact before it.
+            // PARCEL (DIAG-S12-NEWFLAKE §2.2, step 1): the settle
+            // gate stands ABOVE the RUNNING gate — moved here from
+            // below it, the later duplicate deleted. The VM's init
+            // seed assignment is spent and its combine collector
+            // has pushed sitesOn = true into the derivation inputs
+            // before any derivation is awaited, so the setting
+            // input is a settled fact, not a race participant. (The
+            // tap below also reads the published print through the
+            // toggle — the same reason the rendered case gates on
+            // it.)
             awaitPublishedFactSettled(vm, repository, db.monolithDao())
+
+            // PARCEL steps 2–4: one generation-keyed dispatch,
+            // coverage premise pinned, pure wait on the completing
+            // snapshot (see the helper).
+            awaitGrantedSweepDerivesRunning()
 
             setParkContent(vm)
             settlePark()
@@ -616,6 +607,73 @@ class SoundAndSocialTruthTest {
                 name in texts && word in texts
             }
         }
+
+    /** PARCEL (DIAG-S12-NEWFLAKE §2.2, steps 2–4) — F-01-local:
+     *  the wait-restructure for SocialBoardWordFollowsTheToggle's
+     *  first gate, replacing the old side-effecting poll (which
+     *  re-dispatched a sweep on nearly every 25 ms poll, orphaning
+     *  the in-flight generation it was waiting for, and sampled
+     *  the transient RUNNING across two different snapshots — the
+     *  pair's delivered freshness-window miss).
+     *
+     *  Step 2 — pin the coverage premise: this case's world is a
+     *  phone with a supported browser installed (without one,
+     *  SOCIAL SITES lawfully derives OFF and RUNNING is
+     *  unmeetable). resetForTest() does not clear
+     *  supportedBrowserInstalled, so a false measured by any
+     *  earlier case in the JVM would otherwise leak in and veto
+     *  RUNNING regardless of sweeps; the pin declares the premise,
+     *  the same status as the { true } grant query.
+     *
+     *  Step 3 — dispatch ONCE, capture the generation, and wait on
+     *  a pure condition: the snapshot whose lastCompletedSweepGen
+     *  is THIS generation is the very emission whose derivation
+     *  was computed at the completing publish from this
+     *  generation's fresh, coexisting stamps — reading RUNNING off
+     *  it cannot miss the freshness window, because the window's
+     *  satisfaction is that snapshot's own completion condition.
+     *  One snapshot read per poll; no dispatch, no clock read in
+     *  the condition proper.
+     *
+     *  Step 4 — bounded re-arm for an abandoned set only: if the
+     *  dispatched set is abandoned (publish() clears the pending
+     *  generation without completing it once its stamps' span
+     *  exceeds the stale window), lastCompletedSweepGen never
+     *  reaches the captured generation. If 10 s pass from a
+     *  dispatch without completion, dispatch once more and adopt
+     *  the new generation — at most two re-arms inside the
+     *  unchanged 30 s awaitTrue budget (total dispatches ≤ 3,
+     *  versus one per poll before). The 30 s deadline does not
+     *  move. */
+    private fun awaitGrantedSweepDerivesRunning() {
+        var sweepGen = -1
+        var dispatchWallMs = 0L
+        var reArms = 0
+        fun dispatch() {
+            WatchStore.onBrowserCoverage(true)
+            WatchStore.runSweep { true }
+            sweepGen = WatchStore.currentSweepGen()
+            dispatchWallMs = System.currentTimeMillis()
+        }
+        dispatch()
+        awaitTrue("granted parents + fact ON derive RUNNING") {
+            val snap = WatchStore.snapshots.value
+            if (snap.lastCompletedSweepGen == sweepGen &&
+                snap.measurement(WatchItemId.SOCIAL_SITES)?.interceptor ==
+                InterceptorState.RUNNING
+            ) {
+                true
+            } else {
+                if (reArms < 2 &&
+                    System.currentTimeMillis() - dispatchWallMs >= 10_000L
+                ) {
+                    reArms++
+                    dispatch()
+                }
+                false
+            }
+        }
+    }
 
     /** DIAG-D3 §c2(iii) — the seed-settle gate, landed for the
      *  two rendered social cases. The VM's init launch assigns
