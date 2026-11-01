@@ -15,6 +15,19 @@ import org.junit.Test
  * counted set is measured. These tests pin all four prints.
  * DECLARED — written in the issue-9 cell, uncompiled (nobody
  * compiles in a cell); the suite's verdict belongs to Ren's build.
+ *
+ * SUPERSESSION (Floor Gate kill queue 1–3; diagnosis
+ * ascent/floor-gate/convergence-s12/diag-guard.md): issue #109 F4
+ * moved the line's denominator from the four COUNTED doors to all
+ * six PERMISSIONS, and this class — like ShieldCapGuardLineWave3Test
+ * before its #166 cure — was never re-based, so its four-item
+ * fixtures left OVERLAY and BATTERY UNMEASURED and the line lawfully
+ * printed NOT CHECKED against every counted expectation. The
+ * fixtures below now build the whole six-permission set and the
+ * expectations are re-pointed at the audited six-count prints
+ * (GUARD 6/6 · GUARD 5/6 — USAGE ACCESS · GUARD 5/6 — ACCESSIBILITY
+ * STALE). Every protective intent and every exact-string assertion
+ * shape is unchanged; only the ruled denominator moved.
  */
 class GuardLinePrintTest {
 
@@ -40,7 +53,7 @@ class GuardLinePrintTest {
     }
 
     private fun wholeSet(): Map<WatchItemId, PermState> =
-        WatchItemId.COUNTED.associateWith { PermState.GRANTED }
+        WatchItemId.PERMISSIONS.associateWith { PermState.GRANTED }
 
     @Test
     fun nullSnapshot_printsNotChecked() {
@@ -49,8 +62,8 @@ class GuardLinePrintTest {
 
     @Test
     fun unmeasuredCountedItem_printsNotChecked() {
-        // Three counted doors measured, the fourth never measured:
-        // no count may print — the set is not measured.
+        // Five of the six permissions measured, the sixth never
+        // measured: no count may print — the set is not measured.
         val snap = snapshot(wholeSet() - WatchItemId.NOTIFICATION_LISTENER)
         assertEquals("GUARD — NOT CHECKED", guardLineFor(snap, 10_000L).text)
     }
@@ -58,19 +71,19 @@ class GuardLinePrintTest {
     @Test
     fun wholeSet_printsFourOfFour() {
         val snap = snapshot(wholeSet())
-        assertEquals("GUARD 4/4", guardLineFor(snap, 10_000L).text)
+        assertEquals("GUARD 6/6", guardLineFor(snap, 10_000L).text)
     }
 
     @Test
     fun missingDoor_printsCountAndBareName() {
         val snap = snapshot(wholeSet() + (WatchItemId.USAGE_ACCESS to PermState.MISSING))
-        assertEquals("GUARD 3/4 — USAGE ACCESS", guardLineFor(snap, 10_000L).text)
+        assertEquals("GUARD 5/6 — USAGE ACCESS", guardLineFor(snap, 10_000L).text)
     }
 
     @Test
     fun staleDoor_printsCountAndStaleName() {
         // The ACCESSIBILITY door was measured at mono 10_000; the
-        // other three at 50_000. Read at 56_000: accessibility's
+        // other five at 50_000. Read at 56_000: accessibility's
         // measurement is 46s old — past the 45s stale threshold,
         // so ITS grant no longer counts — while the others (6s
         // old) still stand.
@@ -86,7 +99,7 @@ class GuardLinePrintTest {
                 accessibility.copy(measuredMono = 10_000L))
         )
         assertEquals(
-            "GUARD 3/4 — ACCESSIBILITY STALE",
+            "GUARD 5/6 — ACCESSIBILITY STALE",
             guardLineFor(snap, 56_000L).text
         )
     }
