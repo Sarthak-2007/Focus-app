@@ -1701,7 +1701,13 @@ private fun DayHeading(
             // SPITZ Charge 10c (closer): the audit's shelf-break cure —
             // day groups separate by an 18dp break above the heading,
             // not the 6dp that stood at HEAD.
-            modifier = Modifier.padding(top = 18.dp)
+            modifier = Modifier
+                .padding(top = 18.dp)
+                // Test-only tag (DIAG-S12-NEWFLAKE §1.6): the past-day
+                // harness probes the HEADING, never the toggle — under
+                // seal the toggle is absent by design, so its absence
+                // proves nothing about whether the heading composed.
+                .testTag("drawer_day_heading_${DrawerDay.dateIso(group.date)}")
         )
         if (today != null && group.date < today && !isSealed) {
             Text(
