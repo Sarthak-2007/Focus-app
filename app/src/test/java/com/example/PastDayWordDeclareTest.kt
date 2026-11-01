@@ -20,6 +20,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowLooper
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -69,6 +70,32 @@ class PastDayWordDeclareTest {
     private fun toggleTag(date: LocalDate) =
         "declare_past_word_toggle_${DrawerDay.dateIso(date)}"
 
+    private fun headingTag(date: LocalDate) =
+        "drawer_day_heading_${DrawerDay.dateIso(date)}"
+
+    /**
+     * Poll-with-looper-idle until the node with [tag] exists (the
+     * suite's own awaitTrue idiom, SoundAndSocialTruthTest: looper
+     * idle + waitForIdle + 25 ms, bounded at the class-standard
+     * 30 s). Single-shot idles are not evidence a LazyColumn item
+     * has composed — DIAG-S12-NEWFLAKE §1.3, Defect 2.
+     */
+    private fun awaitNodeExists(tag: String, what: String) {
+        val deadline = System.currentTimeMillis() + 30_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (composeRule.onNodeWithTag(tag).fetchSemanticsNode() != null) return
+            ShadowLooper.idleMainLooper()
+            try {
+                composeRule.waitForIdle()
+            } catch (t: Throwable) {
+                // A composition that never idles must not stall
+                // the poll; the looper idle above still drove it.
+            }
+            Thread.sleep(25L)
+        }
+        throw AssertionError("Timed out waiting for: $what")
+    }
+
     private fun chipTag(date: LocalDate, word: String) =
         "declare_past_word_${DrawerDay.dateIso(date)}_${word.lowercase()}"
 
@@ -77,6 +104,15 @@ class PastDayWordDeclareTest {
      * is state, and selecting a month on the shelf moves it. When
      * the past day sits in an earlier month than today, walks the
      * shelf into that month first — the same taps the man makes.
+     *
+     * DIAG-S12-NEWFLAKE §1.6 cure (queue place 11, N-01): the walk
+     * decision is month arithmetic ALONE — never the old toggle
+     * probe, which is definitionally absent under seal (DayHeading
+     * composes the toggle only when !isSealed), so its null result
+     * carried no information about the heading and spuriously
+     * forced the walk on every month-boundary filing date. The
+     * walk is awaited in both directions with the poll idiom, and
+     * what is probed is the past day's HEADING tag.
      */
     private fun renderDrawer(
         dayWords: Map<String, String>,
@@ -109,15 +145,25 @@ class PastDayWordDeclareTest {
                 )
             }
         }
-        composeRule.waitForIdle()
         val pastIsEarlierMonth = past.year < today.year ||
             (past.year == today.year && past.monthValue < today.monthValue)
-        if (pastIsEarlierMonth &&
-            composeRule.onNodeWithTag(toggleTag(past)).fetchSemanticsNode() == null
-        ) {
+        if (pastIsEarlierMonth) {
+            awaitNodeExists(
+                "drawer_month_${past.year}_${past.monthValue}",
+                "the past month's shelf row"
+            )
             composeRule.onNodeWithTag("drawer_month_${past.year}_${past.monthValue}")
                 .performClick()
             composeRule.waitForIdle()
+            awaitNodeExists(
+                headingTag(past),
+                "the past day heading on the MONTH view"
+            )
+        } else {
+            awaitNodeExists(
+                headingTag(past),
+                "the past day heading on the landing"
+            )
         }
     }
 
@@ -170,6 +216,11 @@ class PastDayWordDeclareTest {
             declared = declared
         )
 
+        // The heading IS composed (print) — asserted, not assumed:
+        // as written before the §1.6 cure this case never checked
+        // the heading exists at all, so a sealed drawer that
+        // printed nothing would have passed it.
+        composeRule.onNodeWithTag(headingTag(past)).assertExists()
         composeRule.onNodeWithTag(toggleTag(past)).assertDoesNotExist()
         assertEquals(emptyList<Pair<LocalDate, String?>>(), declared)
     }
