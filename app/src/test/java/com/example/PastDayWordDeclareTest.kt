@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import com.example.data.DrawerDay
@@ -79,11 +80,22 @@ class PastDayWordDeclareTest {
      * idle + waitForIdle + 25 ms, bounded at the class-standard
      * 30 s). Single-shot idles are not evidence a LazyColumn item
      * has composed — DIAG-S12-NEWFLAKE §1.3, Defect 2.
+     *
+     * The poll reads the COLLECTION form on purpose
+     * (READER-S12-N01 §1.2, on the stamped artifact's stack): in
+     * this suite's Compose version a single-node
+     * fetchSemanticsNode() routes through fetchOneOrThrow and
+     * THROWS assertExists on absence — that throw at the old
+     * toggle probe (renderDrawer:116) is the stamped N-01 failure
+     * itself. A poll built on it would die at its first fetch
+     * instead of polling. onAllNodesWithTag(...).
+     * fetchSemanticsNodes() returns an empty list on absence —
+     * the same form SoundAndSocialTruthTest's awaits use.
      */
     private fun awaitNodeExists(tag: String, what: String) {
         val deadline = System.currentTimeMillis() + 30_000L
         while (System.currentTimeMillis() < deadline) {
-            if (composeRule.onNodeWithTag(tag).fetchSemanticsNode() != null) return
+            if (composeRule.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()) return
             ShadowLooper.idleMainLooper()
             try {
                 composeRule.waitForIdle()
