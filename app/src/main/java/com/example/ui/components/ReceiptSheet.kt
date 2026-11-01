@@ -333,8 +333,30 @@ fun ReceiptSheet(
                         armedPrint
                     }
                 )
+                // A2 + audit item 7 (wave-2's outcomeSegment,
+                // lost by merge overwrite — restored whole):
+                // the outcome slot prints ONLY when it adds a
+                // fact. Plain ENDED repeats the line it stands
+                // on (tautology) — suppressed. The shield-gap
+                // compound double-prints the gap (the THE SHIELD
+                // WAS OFF… line below carries it alone) —
+                // suppressed. A legacy SLEPT THROUGH (stamped
+                // before the cure) normalises to STOOD DOWN
+                // here, so a rehydrated slip never re-prints the
+                // old word; new slips are stamped STOOD DOWN at
+                // the source
+                // (MonolithRepository.receiptOutcomeWord).
+                val outcomeSegment = when (receipt.outcomeWord) {
+                    "ENDED", "ENDED · SHIELD GAP" -> null
+                    "SLEPT THROUGH" -> "STOOD DOWN"
+                    else -> receipt.outcomeWord
+                }
                 ReceiptMonoLine(
-                    text = stringResource(R.string.receipt_ended_outcome, endedPrint, receipt.outcomeWord)
+                    text = if (outcomeSegment != null) {
+                        stringResource(R.string.receipt_ended_outcome, endedPrint, outcomeSegment)
+                    } else {
+                        endedPrint
+                    }
                 )
                 // #57: the slip's total — the sealed elapsed,
                 // carried in state since Slice E and printed
