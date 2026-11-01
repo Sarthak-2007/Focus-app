@@ -2,10 +2,12 @@ package com.example
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
@@ -273,6 +275,8 @@ class ShieldSetupTruthRenderTest {
             filtered = emptyList(),
             query = "banking"
         )
+        composeRule.onNodeWithTag("shield_matrix_screen")
+            .performScrollToNode(hasTestTag("shield_no_match_line"))
         composeRule.onNodeWithTag("shield_no_match_line").assertIsDisplayed()
         composeRule.onNodeWithText("NO MATCH FOR THAT SEARCH", substring = true).assertExists()
         composeRule.onNodeWithText("NO APP BY THAT NAME ON THIS PHONE", substring = true)
