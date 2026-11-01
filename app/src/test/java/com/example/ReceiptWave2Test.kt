@@ -1,5 +1,7 @@
 package com.example
 
+import android.content.Context
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -9,20 +11,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.test.core.app.ApplicationProvider
 import com.example.data.FinishKind
 import com.example.data.ReceiptState
 import com.example.ui.components.ReceiptSheet
+import com.example.ui.components.dayLabel
 import com.example.ui.theme.MyApplicationTheme
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 /**
  * Issue #10 WAVE-2 (receipt audit Group A) — declared, uncompiled.
@@ -43,6 +45,28 @@ class ReceiptWave2Test {
 
     @get:Rule
     val composeRule = createAndroidComposeRule<ComponentActivity>()
+
+    @Before
+    fun stageA24HourDevice() {
+        // Rig contract (#166, floor lane): since #88 the app's
+        // clocks speak the DEVICE's language — ClockText reads
+        // the system 12/24-hour setting, never a pinned format
+        // (ClockText.kt: "the system 12/24-hour setting and the
+        // device locale — never a pinned Locale.US HH:mm"). This
+        // class's ARMED/ENDED assertions are written in the
+        // 24-hour forms, so the rig states its device setting the
+        // way a 24-hour phone presents it. Unstaged, the rig's
+        // unset setting resolves by default locale to 12-hour and
+        // the slip prints "ARMED 9:00 AM" — a device this class
+        // never claimed to test — while every format-free line
+        // (RAN / PLANNED / HELD, all longSpan) kept passing.
+        // Production is untouched: on a 12-hour phone the slip
+        // still prints 12-hour, exactly as #88 ruled.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        Settings.System.putString(
+            context.contentResolver, Settings.System.TIME_12_24, "24"
+        )
+    }
 
     private fun receipt(
         outcomeWord: String,
@@ -131,8 +155,7 @@ class ReceiptWave2Test {
     fun crossMidnight_armedLineCarriesItsDate() {
         val arm = wall(23, 50, dayOffset = -1)
         show(receipt("ENDED", arm, wall(0, 10)))
-        val day = SimpleDateFormat("EEE d MMM", Locale.US)
-            .format(Date(arm)).uppercase(Locale.US)
-        composeRule.onNodeWithText("ARMED $day 23:50", substring = true).assertIsDisplayed()
+        composeRule.onNodeWithText("ARMED ${dayLabel(arm)} 23:50", substring = true)
+            .assertIsDisplayed()
     }
 }
