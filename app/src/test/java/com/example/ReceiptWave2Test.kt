@@ -35,7 +35,12 @@ import java.util.Calendar
  *     the shield-gap compound never double-prints the gap.
  *  2. Item 10 — BREAK BANKED never prints, whatever the state
  *     carries as record.
- *  3. A3/W-43 — the footer carries HOURS, never RECORD.
+ *  3. A3/W-43, as superseded by BELEG (2eb57dfd) — the footer
+ *     carries the standing plain-words sentence; the RECORD
+ *     sentence never prints. (Item 13's YPT sentence was the
+ *     law when this class was written; BELEG replaced it in
+ *     writing and nobody swept this class — corrected in the
+ *     queue-place-7 PR, convergence-s12.)
  *  4. A11 — a cross-midnight span puts a date on the ARMED line.
  */
 @RunWith(RobolectricTestRunner::class)
@@ -131,8 +136,17 @@ class ReceiptWave2Test {
         show(receipt("ENDED", wall(9, 0), wall(9, 50), bankedBreakSeconds = 3600))
         composeRule.onNodeWithText("BREAK BANKED", substring = true).assertDoesNotExist()
         composeRule.onNodeWithText("ENDED · ENDED", substring = true).assertDoesNotExist()
-        composeRule.onNodeWithText("YOUR STUDY HOURS LIVE IN YPT", substring = true)
-            .assertIsDisplayed()
+        // Footer limb, corrected to the standing law: BELEG's
+        // W-43 sentence (strings.xml receipt_footer_log) is what
+        // the slip prints — the YPT sentence this assertion once
+        // hunted was superseded in writing by 2eb57dfd and lives
+        // on only as the Reception boundary line, a different
+        // surface. The RECORD half of item 13 was never
+        // superseded and stands as filed.
+        composeRule.onNodeWithText(
+            "THIS APP KEEPS ITS OWN LOG · STUDY TIME IS IN THE STUDY TIMER",
+            substring = true
+        ).assertIsDisplayed()
         composeRule.onNodeWithText("YOUR STUDY RECORD LIVES IN YPT", substring = true)
             .assertDoesNotExist()
     }
