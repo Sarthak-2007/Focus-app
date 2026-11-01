@@ -61,6 +61,26 @@ import java.util.Calendar
  *
  * UNVERIFIED-BY-CI until this PR's own head run compiles and
  * executes this class — the job log is the only proof.
+ *
+ * RE-VERIFIED vs main a179f7ad (Nov 1, last-four disposition, under
+ * Sarthak's fix authority): the head gate (run 41214897978) failed
+ * 8 of 19 — every failure a pin aimed at a form main has since
+ * deliberately replaced, none a silent un-landing. Four re-pins,
+ * each to the current documented truth, assertions at full strength:
+ * (1) the idle derivation is now refusal-aware
+ * (nextStartMillisRefusalAware — excused dates + tombstones, T9
+ * re-close bench) and prints NEXT ROUTINE, not NEXT SEAL;
+ * (2) the protecting-flip condition grew the accessibility/sight
+ * gates beside usageGranted — the refresh inside it stands;
+ * (3) the badge number's source was amended by issue #100's CUT
+ * (BUILDER-100): the listener's in-memory snoozedCount, the DAO
+ * snapshot store being gone — the held count still, and still
+ * never the urges count (IQ-2 M-5);
+ * (4) the shield-card tap now routes through GlanceRouting to the
+ * DECK (the seal law vetoes SHIELD mid-session; SHIELD was the
+ * #312 route) — the extra is still consumed and routed by name.
+ * The reflective builder seam grew main's two appended parameters
+ * (inSafeBreak, chronometerStartMillis), passed at their defaults.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -174,7 +194,7 @@ class Issue155GlanceOnMainTest {
     }
 
     @Test
-    fun widgetIdleSelection_printsNextSealThenOpenAndFailsClosed() {
+    fun widgetIdleSelection_printsNextRoutineThenOpenAndFailsClosed() {
         val body = funBody(widgetSource(), "private suspend fun readStatusLine")
         assertTrue(
             "idle search must read the active row first",
@@ -184,10 +204,10 @@ class Issue155GlanceOnMainTest {
             "idle candidates must pass the live filter",
             body.contains(".filter { RoutineSchedule.isLive(it) }")
         )
-        val nextIdx = body.indexOf("RoutineSchedule.effectiveNextStartMillis(routine, now)")
-        assertTrue("idle line must derive from effectiveNextStartMillis", nextIdx >= 0)
-        val sealIdx = body.indexOf("\"OPEN \\u2022 NEXT SEAL", nextIdx)
-        assertTrue("next-seal line must print from that derivation", sealIdx > nextIdx)
+        val nextIdx = body.indexOf("RoutineSchedule.nextStartMillisRefusalAware(")
+        assertTrue("idle line must derive from the refusal-aware next start", nextIdx >= 0)
+        val sealIdx = body.indexOf("\"OPEN \\u2022 NEXT ROUTINE", nextIdx)
+        assertTrue("next-routine line must print from that derivation", sealIdx > nextIdx)
         val openIdx = body.indexOf("\"OPEN\"", sealIdx)
         assertTrue("no live next start must fall through to plain OPEN", openIdx > sealIdx)
         assertTrue(
@@ -210,7 +230,7 @@ class Issue155GlanceOnMainTest {
     @Test
     fun shieldRefreshesTheWidgetAtFlipCompletionAndStop() {
         val source = shieldSource()
-        val flipIdx = source.indexOf("if (!protecting && usageGranted) {")
+        val flipIdx = source.indexOf("if (!protecting && usageGranted && accessibilityStanding && sightState == SightState.SIGHTED) {")
         assertTrue("protecting flip block missing", flipIdx >= 0)
         val flipWindow = source.substring(flipIdx, minOf(flipIdx + 1200, source.length))
         assertTrue(
@@ -280,16 +300,23 @@ class Issue155GlanceOnMainTest {
     }
 
     @Test
-    fun badgeNumberIsTheHeldCountWithTheUrgesFallback() {
-        // F4: the badge's one number is the held (captured) count —
-        // the same number the Deck's HELD chip prints — falling
-        // back to this session's urges stopped if the read fails.
+    fun badgeNumberIsTheHeldCountFromTheListenerCount() {
+        // F4, as amended by issue #100's CUT (BUILDER-100, Oct 31):
+        // the badge's one number is the held count — now the
+        // notification listener's in-memory snooze count, the only
+        // held count that exists since notification-content storage
+        // was cut. It is the held count itself, never the urges
+        // count (IQ-2 M-5: the two are never swapped).
         val source = shieldSource()
         val heldIdx = source.indexOf("val heldCount")
         assertTrue("held-count read missing", heldIdx >= 0)
         val window = source.substring(heldIdx, minOf(heldIdx + 700, source.length))
-        assertTrue(window.contains("dao.getCapturedNotificationsSnapshot().size"))
-        assertTrue(window.contains("heldCount ?: updated.phantomReachesBlocked"))
+        assertTrue(window.contains("MonolithNotificationListener.snoozedCount"))
+        assertTrue(window.contains("val badgeNumber = heldCount"))
+        assertFalse(
+            "the badge number must never be the urges count",
+            window.contains("badgeNumber = updated.phantomReachesBlocked")
+        )
     }
 
     @Test
@@ -306,15 +333,24 @@ class Issue155GlanceOnMainTest {
     }
 
     @Test
-    fun shieldCardTapRoutesToTheShieldDestination() {
-        // F5 routing, the MainActivity half: a launch carrying the
-        // shield extra (and no intercept extra) lands on SHIELD,
-        // not the default Deck.
+    fun shieldCardTapRoutesThroughGlanceRoutingToTheDeck() {
+        // F5 routing, the MainActivity half, as composed on main:
+        // a launch carrying the shield extra (and no intercept
+        // extra) is consumed and routed through GlanceRouting —
+        // the legacy tap is inferred by session state and lands on
+        // the DECK (SHIELD was the #312 route; the seal law vetoes
+        // SHIELD while a session is live, so the Deck is the sealed
+        // session surface the tap can honestly promise).
         val main = sourceOf("java/com/example/MainActivity.kt")
         val extraIdx = main.indexOf("MonolithShieldService.EXTRA_FROM_SHIELD_NOTIFICATION, false")
         assertTrue("MainActivity must read the shield routing extra", extraIdx >= 0)
-        val window = main.substring(extraIdx, minOf(extraIdx + 900, main.length))
-        assertTrue(window.contains("navigateTo(MonolithDestination.SHIELD)"))
+        val window = main.substring(extraIdx, minOf(extraIdx + 1600, main.length))
+        assertTrue(window.contains("GlanceRouting.aboutForLegacyShieldTap("))
+        assertTrue(window.contains("GlanceRouting.destinationFor(about)?.let { viewModel.navigateTo(it) }"))
+        val routing = sourceOf("java/com/example/ui/GlanceRouting.kt")
+        assertTrue(routing.contains("GlanceAbout.COMPLETION -> MonolithDestination.DECK"))
+        assertTrue(routing.contains("GlanceAbout.LIVE_SESSION,"))
+        assertTrue(routing.contains("if (sessionActive) GlanceAbout.LIVE_SESSION else GlanceAbout.COMPLETION"))
     }
 
     // ------------------------------------------------------------
@@ -332,6 +368,9 @@ class Issue155GlanceOnMainTest {
     ): Notification {
         val service = Robolectric.buildService(MonolithShieldService::class.java)
             .create().get()
+        // Main appended two defaulted parameters (inSafeBreak,
+        // chronometerStartMillis) after badgeNumber; the seam
+        // passes them at their defaults, assertions unchanged.
         val method = MonolithShieldService::class.java.getDeclaredMethod(
             "buildNotification",
             String::class.java,
@@ -341,12 +380,15 @@ class Issue155GlanceOnMainTest {
             Long::class.javaPrimitiveType,
             String::class.java,
             Long::class.javaObjectType,
-            Int::class.javaObjectType
+            Int::class.javaObjectType,
+            Boolean::class.javaPrimitiveType,
+            Long::class.javaObjectType
         )
         method.isAccessible = true
         return method.invoke(
             service, "Monolith", "Standing card",
-            ongoing, autoCancel, timeoutAfterMs, bigText, chronometerEndMillis, badgeNumber
+            ongoing, autoCancel, timeoutAfterMs, bigText, chronometerEndMillis, badgeNumber,
+            false, null
         ) as Notification
     }
 
