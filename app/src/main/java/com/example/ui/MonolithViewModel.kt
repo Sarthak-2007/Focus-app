@@ -2751,7 +2751,7 @@ class MonolithViewModel(
                         // scheduled form): the wave-2 flag led
                         // the deadline by a full ticker grain
                         // (1 s) because a 520 ms window tested
-                        // on a 1 s ticker is a coin flip. Now
+                        // on a 1 s ticker is pure chance. Now
                         // the ticker only DISCOVERS the window:
                         // on the first beat at or after
                         // deadline − 520 ms it sets the fade and
@@ -5703,8 +5703,8 @@ class MonolithViewModel(
             peekCooldownEndsAtMono = entity?.let {
                 repository.peekCooldownEndsAtElapsedRealtime(it)
             } ?: 0L,
-            // The wall already ran on this visit in the only coin
-            // that matters — the cooldown itself. A resolved offer
+            // The wall already ran on this visit, and what it spent
+            // was the cooldown itself. A resolved offer
             // stands immediately; it does not queue behind a
             // second wall (designer §5.5).
             wallEndsAtMono = if (canPeek) SystemClock.elapsedRealtime() else state.wallEndsAtMono
