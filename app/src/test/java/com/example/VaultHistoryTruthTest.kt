@@ -248,28 +248,26 @@ class VaultHistoryTruthTest {
         ShadowSystemClock.advanceBy(Duration.ofSeconds(330))
         val fiveMinsAgoMono = (SystemClock.elapsedRealtime() - 300_000L).coerceAtLeast(1L)
         val fiveMinsAgoWall = System.currentTimeMillis() - 300_000L
+        // Seat (b) cure, completed in the fourteenth sitting:
+        // startSession signed this row over its birth state; the
+        // fabrication below rewrites its anchors and elapsed, so
+        // the row is re-signed over the state it now claims.
+        // Without the re-sign the signature leg convicts the row
+        // however honest the clocks are (the identical assertion
+        // failed on PR #752's first gate attempt for this reason);
+        // blanking the signature instead would route around the
+        // HMAC leg entirely — weaker, rejected. Issue #36
+        // (ruling 3): the re-sign is over the fabricated row
+        // itself, whose covered fields now include the rewritten
+        // elapsed.
+        val fabricated = session.copy(
+            startWallTimeMillis = fiveMinsAgoWall,
+            startElapsedRealtimeMillis = fiveMinsAgoMono,
+            elapsedSeconds = 300
+        )
         db.monolithDao().updateSession(
-            session.copy(
-                startWallTimeMillis = fiveMinsAgoWall,
-                startElapsedRealtimeMillis = fiveMinsAgoMono,
-                elapsedSeconds = 300,
-                // Seat (b) cure, completed in the fourteenth sitting:
-                // startSession signed this row over its birth
-                // anchors; the fabrication above rewrites them, so
-                // the row is re-signed over the anchors it now
-                // claims. Without the re-sign the signature leg
-                // convicts the row however honest the clocks are
-                // (the identical assertion failed on PR #752's
-                // first gate attempt for this reason); blanking
-                // the signature instead would route around the
-                // HMAC leg entirely — weaker, rejected.
-                hmacSignature = CryptoIntegrityManager.signSessionState(
-                    startWallTimeMillis = fiveMinsAgoWall,
-                    startElapsedRealtimeMillis = fiveMinsAgoMono,
-                    bootCount = session.bootCount,
-                    targetDurationSeconds = session.targetDurationSeconds,
-                    isStopwatch = session.isStopwatchMode
-                )
+            fabricated.copy(
+                hmacSignature = CryptoIntegrityManager.signSessionState(fabricated)
             )
         )
 

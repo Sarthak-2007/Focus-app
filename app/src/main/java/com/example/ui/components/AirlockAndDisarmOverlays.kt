@@ -621,7 +621,7 @@ fun AlwaysOnDeskClockOverlay(
             // no conditional (§C-2's line, unamended per E-4);
             // ENDS lives only in the sub-line (§C-1's seat).
             Text(
-                text = "TAP ANYWHERE TO EXIT",
+                text = stringResource(R.string.overlay_tap_anywhere_exit),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,
@@ -1823,7 +1823,7 @@ fun AirlockInterceptOverlay(
                 // no longer a silently fabricated MUSCLE_MEMORY default
                 // (it remains only the visibly pre-selected first chip).
                 Text(
-                    text = "WHY DID YOU OPEN IT?",
+                    text = stringResource(R.string.overlay_why_opened),
                     fontFamily = AtkinsonHyperlegibleFamily,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
@@ -1863,7 +1863,7 @@ fun AirlockInterceptOverlay(
                 // valve, not a new exit.
                 if (state.interceptPath == InterceptPath.UNINSTALL_GUARD) {
                     Text(
-                        text = "TO REMOVE MONOLITH: END THE BLOCK FIRST — THE EMERGENCY BREAK ON THE DECK IS THE LAWFUL DOOR.",
+                        text = stringResource(R.string.overlay_remove_monolith),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 12.5.sp,
                         color = NightColorPrimary.copy(alpha = 0.8f)
@@ -1893,7 +1893,7 @@ fun AirlockInterceptOverlay(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "END THE SESSION INSTEAD",
+                        text = stringResource(R.string.overlay_end_session_instead),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.5.sp,
@@ -2043,7 +2043,7 @@ fun AirlockInterceptOverlay(
                             // own state line for a LOCKED tier, naming
                             // the tier and where tiers are set.
                             PeekWithheld.TIER_LOCKED -> Text(
-                                text = "LOCKED TIER — NO PEEK EXISTS HERE · PEEK APPS ARE SET IN THE SHIELD",
+                                text = stringResource(R.string.overlay_locked_tier),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 12.5.sp,
                                 color = NightColorPrimary.copy(alpha = 0.8f)
@@ -2327,9 +2327,7 @@ fun DisarmChallengeOverlay(
                     val floorMinutes =
                         (state.remainingFloorSeconds + 59) / 60
                     Text(
-                        text = "Or wait: this is a stopwatch session with a " +
-                            "20-minute floor. $floorMinutes more minutes and " +
-                            "stopping is free — no break spent.",
+                        text = stringResource(R.string.overlay_stopwatch_wait, floorMinutes),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = NightColorPrimary
@@ -2443,7 +2441,7 @@ fun DisarmChallengeOverlay(
                         // Issue #55 (fresh-eyes): the seconds are the
                         // valve's own requiredHoldSeconds, not a
                         // hardcoded 60 that only agreed by accident.
-                        text = "Hold to fill ${state.requiredHoldSeconds} seconds. Every 15 seconds banks. If your hand slips, what isn't banked drains away. The banked part stays.",
+                        text = stringResource(R.string.overlay_hold_to_fill, state.requiredHoldSeconds),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontSize = 13.sp,
                         color = NightColorPrimary
@@ -2469,7 +2467,7 @@ fun DisarmChallengeOverlay(
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "VALVE SPENT — THIS WEEK'S BREAK IS USED",
+                            text = stringResource(R.string.overlay_valve_spent),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,

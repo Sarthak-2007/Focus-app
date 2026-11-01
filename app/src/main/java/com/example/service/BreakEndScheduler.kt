@@ -85,6 +85,31 @@ object BreakEndScheduler {
     fun shouldNotifyBreakEnd(lastNotifiedMillis: Long, scheduledMillis: Long): Boolean =
         scheduledMillis > 0L && lastNotifiedMillis != scheduledMillis
 
+    /**
+     * Issue #155 (WING-F lifecycle edges): the session gate, pure.
+     *
+     * The alarm is disarmed at every break EXIT
+     * (advancePastBreak / resumeBlockFromMidBreak cancel it), but
+     * a session that ENDS mid-break — user stop, emergency valve,
+     * routine finalise, supersede by a new session — never
+     * cancelled it, and the receiver posted "Break's over / Back
+     * to your session" for a session that no longer existed.
+     * [EXTRA_SESSION_ID] was written at schedule time and read
+     * nowhere; this gate is its reader.
+     *
+     * The gate deliberately does NOT require the row to still be
+     * in a break: at a legitimate expiry the shield tick may
+     * already have flipped the break off before the alarm's
+     * delivery runs, and that delivery must still land. It
+     * requires only that the session the break belonged to is
+     * still THE live session. A scheduled id of 0 (an alarm armed
+     * before the extra existed) is allowed — legacy deliveries
+     * keep the pre-gate behaviour rather than being swallowed.
+     */
+    fun sessionGateAllows(scheduledSessionId: Int, activeSessionId: Int?): Boolean =
+        scheduledSessionId <= 0 || activeSessionId == scheduledSessionId
+
+
     fun lastNotified(context: Context): Long =
         context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

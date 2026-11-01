@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
@@ -381,152 +382,11 @@ fun DrawerScreen(
     }
 
     if (detail != null) {
-        // DRW-03 (Truth Car 2): the detail's date-line derives
-        // from the finish's own instant — its true calendar date
-        // beside its true clock time, a single moment that
-        // actually happened. The old line composed the FILING
-        // date with the true clock: every finish between 00:00
-        // and 03:29 printed a date-time pair that never occurred.
-        // The filing date still governs the shelves (the list
-        // headings); a shelf label and a timestamp are different
-        // facts, and only the timestamp was lying.
-        val finishDate = java.time.Instant.ofEpochMilli(detail.completedAtMillis)
-            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        val dateLine = if (finishDate.year == LocalDate.now().year) {
-            "${headingLabel(finishDate, withYear = false)} · ${clockTime(detail.completedAtMillis)}"
-        } else {
-            "${headingLabel(finishDate, withYear = true)} · ${clockTime(detail.completedAtMillis)}"
-        }
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.background)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("drawer_screen"),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "STORED",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "BACK",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { selectedTaskId = -1 }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .testTag("drawer_detail_back")
-                    )
-                }
-            }
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = detail.title,
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
-                        color = scheme.onBackground
-                    )
-                    Text(
-                        text = dateLine,
-                        fontFamily = AnonymousProFamily,
-                        fontSize = 12.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    // Provenance block (AUDIT-drawer §2, wave-2):
-                    // category and ESTIMATE stand together as what
-                    // the task WAS; SPENT stands alone after a
-                    // spacer as what it COST — the subtraction
-                    // column the stacked pair formed is broken.
-                    // Estimate and actual remain two separate plain
-                    // facts — never a delta, never a percentage. The
-                    // estimate prints only where one was actually
-                    // given (MINUTES DIE): never "ESTIMATE 0 MIN".
-                    // Issue #270: a tag prints only when one exists —
-                    // a blank tag is nameless by the user's ruling,
-                    // never an empty line or a dangling separator
-                    // standing for a category. The estimate keeps its
-                    // own law above: it prints only where given.
-                    if (detail.categoryTag.isNotBlank() || detail.estimatedMinutes > 0) {
-                        Text(
-                            text = when {
-                                detail.categoryTag.isNotBlank() && detail.estimatedMinutes > 0 ->
-                                    "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
-                                detail.categoryTag.isNotBlank() -> detail.categoryTag
-                                else -> "ESTIMATE ${detail.estimatedMinutes} MIN"
-                            },
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        // Issue #110, finding 2 (main's form,
-                        // restored at the composition, K8): SPENT
-                        // IN TOTAL — the detail's spent is the
-                        // task's lifetime accrual, same law as the
-                        // row's TOTAL print.
-                        text = "SPENT IN TOTAL ${spentLabel(detail.actualSecondsSpent)}",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onBackground
-                    )
-                }
-            }
-            if (detail.subSteps.isNotEmpty()) {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        detail.subSteps.forEachIndexed { stepIdx, step ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 14.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // AUDIT-drawer §2 (wave-2): ONE voice
-                                // for every substep — strike-through
-                                // is a working surface's verb imported
-                                // into the archive, and it made
-                                // finished work read unfinished. The
-                                // two-digit number (DRW-08) leads.
-                                Text(
-                                    text = com.example.data.twoDigitCount(stepIdx + 1),
-                                    fontFamily = AnonymousProFamily,
-                                    fontSize = 10.5.sp,
-                                    color = scheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(end = 10.dp)
-                                )
-                                Text(
-                                    text = step.title,
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 12.5.sp,
-                                    color = scheme.onBackground,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        DrawerDetailView(
+            scheme = scheme,
+            detail = detail,
+            onBack = { selectedTaskId = -1 }
+        )
         return
     }
 
@@ -544,69 +404,13 @@ fun DrawerScreen(
         return
     }
 
-    // ------------------------------------------------------------------
-    // RECEIPTS — the index of claimed slips (issue #157). Ruled
-    // rows like everything else in the Drawer. A row prints its
-    // №, its date, its outcome word — and, where the session's
-    // own record proves it, the warning the slip carried, in
-    // Drawer type: the warnings live in the furniture now, so
-    // they survive the slip. Tapping a row re-presents the slip.
-    // ------------------------------------------------------------------
     if (view == DrawerView.RECEIPTS) {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(scheme.background)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .testTag("drawer_receipts"),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            contentPadding = PaddingValues(bottom = 100.dp)
-        ) {
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "RECEIPTS",
-                        fontFamily = AnonymousProFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        letterSpacing = 2.sp,
-                        color = scheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = stringResource(R.string.label_back),
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { viewName = DrawerView.LANDING.name }
-                            .testTag("receipts_back")
-                    )
-                }
-            }
-            if (receipts.isEmpty()) {
-                item {
-                    Text(
-                        text = "NO RECEIPTS YET",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 24.dp)
-                    )
-                }
-            } else {
-                items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
-                    ReceiptIndexRow(
-                        entry = entry,
-                        onClick = { onReceiptClick(entry.sessionId) }
-                    )
-                }
-            }
-        }
+        DrawerReceiptsView(
+            scheme = scheme,
+            receipts = receipts,
+            onReceiptClick = onReceiptClick,
+            onBackToLanding = { viewName = DrawerView.LANDING.name }
+        )
         return
     }
 
@@ -635,9 +439,7 @@ fun DrawerScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "REPLACE THE DAY WORD ${pendingDayWordConfirm.existingWord} " +
-                            "WITH ${pendingDayWordConfirm.word}? THE WORD IS THE DAY'S " +
-                            "PERMANENT EXPLANATION — THE CHANGE IS ITSELF RECORDED.",
+                        text = stringResource(R.string.drawer_replace_day_word, pendingDayWordConfirm.existingWord, pendingDayWordConfirm.word),
                         fontFamily = AnonymousProFamily,
                         fontSize = 12.sp,
                         color = scheme.onBackground
@@ -661,7 +463,7 @@ fun DrawerScreen(
         }
         item {
             Text(
-                text = "STORED",
+                text = stringResource(R.string.drawer_stored_word),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
@@ -689,7 +491,7 @@ fun DrawerScreen(
                 ) {
                     if (drawerQuery.isEmpty()) {
                         Text(
-                            text = "TYPE TO FIND A TASK",
+                            text = stringResource(R.string.drawer_type_to_find),
                             fontFamily = AnonymousProFamily,
                             fontSize = 12.sp,
                             letterSpacing = 1.sp,
@@ -745,97 +547,16 @@ fun DrawerScreen(
         }
 
         if (searching) {
-            // ---------- SEARCH RESULTS (all years, paged) ----------
-            item(key = "search-back") {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // SEARCH gains the house BACK (AUDIT-drawer §2):
-                    // a mode you leave only by erasing your own
-                    // typing is a trap — BACK clears the query.
-                    Text(
-                        text = "BACK",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = scheme.onBackground,
-                        modifier = Modifier
-                            .clickable { onQueryChange("") }
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                            .testTag("drawer_search_back")
-                    )
-                }
-            }
-            if (drawerResults.isEmpty()) {
-                item {
-                    // Re-scoped (AUDIT-drawer §2): the promise and
-                    // the territory match — this search looks at
-                    // stored TASKS only, and now says so.
-                    Text(
-                        text = "NO STORED TASK UNDER “$drawerQuery”",
-                        fontFamily = AtkinsonHyperlegibleFamily,
-                        fontSize = 13.sp,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 24.dp)
-                    )
-                }
-            } else {
-                val groups = buildDayGroups(
-                    rows = drawerResults,
-                    dayWords = emptyMap(),
-                    scopeMonth = null,
-                    includeTodayGroup = false,
-                    today = today
-                )
-                groups.forEach { group ->
-                    item(key = "search-head-${group.date}") {
-                        // SPITZ Charge 10a (closer): the search day
-                        // headings share the DayHeading constant —
-                        // 10.5sp meta voice, not a surviving 11sp.
-                        Text(
-                            text = headingLabel(group.date, withYear = true),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 10.5.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                    items(group.rows, key = { "search-${it.id}" }) { task ->
-                        // A hit must show its reason (AUDIT-drawer
-                        // §2): when the match lives in a substep —
-                        // not the title or category — the row prints
-                        // that step as a second line. A result that
-                        // cannot show why it matched is a small
-                        // false print.
-                        val q = drawerQuery.trim()
-                        val matchedStep = if (
-                            q.isNotEmpty() &&
-                            !task.title.contains(q, ignoreCase = true) &&
-                            !task.categoryTag.contains(q, ignoreCase = true)
-                        ) {
-                            task.subSteps.firstOrNull {
-                                it.title.contains(q, ignoreCase = true)
-                            }?.title
-                        } else {
-                            null
-                        }
-                        StoredRow(
-                            task = task,
-                            matchedStepTitle = matchedStep,
-                            onClick = { selectedTaskId = task.id }
-                        )
-                    }
-                }
-                if (drawerSearchHasEarlier) {
-                    item {
-                        EarlierRow(onClick = onLoadEarlierSearch)
-                    }
-                }
-            }
+            drawerSearchResults(
+                scheme = scheme,
+                drawerQuery = drawerQuery,
+                drawerResults = drawerResults,
+                today = today,
+                drawerSearchHasEarlier = drawerSearchHasEarlier,
+                onLoadEarlierSearch = onLoadEarlierSearch,
+                onQueryChange = onQueryChange,
+                onSelectTask = { selectedTaskId = it }
+            )
         } else when (view) {
             // Unreachable: the CABINET and RECEIPTS pages return
             // early above, before this column exists. Present for
@@ -844,295 +565,59 @@ fun DrawerScreen(
                 item { Spacer(Modifier.height(0.dp)) }
             }
             DrawerView.INDEX -> {
-                // ---------- ALL MONTHS ----------
-                item {
-                    DrawerNavRow(
-                        label = "BACK",
-                        onClick = { viewName = DrawerView.LANDING.name }
-                    )
-                }
-                items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                role = androidx.compose.ui.semantics.Role.Button
-                            ) {
-                                onSelectMonth(month.year, month.month)
-                                monthEnteredFromName = DrawerView.INDEX.name
-                                viewName = DrawerView.MONTH.name
-                            }
-                            .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 10.dp)
-                            .testTag("drawer_month_${month.year}_${month.month}"),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = monthLabel(month.year, month.month),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 14.sp,
-                            color = scheme.onBackground
-                        )
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
+                drawerMonthIndex(
+                    scheme = scheme,
+                    storedMonths = storedMonths,
+                    onSelectMonth = onSelectMonth,
+                    onBackToLanding = { viewName = DrawerView.LANDING.name },
+                    onEnteredFromIndex = { monthEnteredFromName = DrawerView.INDEX.name },
+                    onNavigateToMonth = { viewName = DrawerView.MONTH.name }
+                )
             }
 
             DrawerView.MONTH -> {
-                // ---------- ONE MONTH ----------
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = monthLabel(drawerMonth.first, drawerMonth.second),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onSurfaceVariant
-                        )
-                        // BACK — one costume, true parent (AUDIT-
-                        // drawer §2): the parent is LANDING, and
-                        // going back no longer silently resets the
-                        // VM's month — the landing re-derives its
-                        // own current month; the viewed month is
-                        // simply left, not rewritten.
-                        Text(
-                            text = "BACK",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = scheme.onBackground,
-                            modifier = Modifier
-                                .clickable { viewName = DrawerView.LANDING.name }
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                                .testTag("drawer_month_back")
-                        )
-                    }
-                }
-                val groups = buildDayGroups(
-                    rows = drawerRows,
+                drawerOneMonth(
+                    scheme = scheme,
+                    drawerMonth = drawerMonth,
+                    drawerRows = drawerRows,
                     dayWords = dayWords,
-                    scopeMonth = drawerMonth,
-                    includeTodayGroup = !isSealed &&
-                        drawerMonth == currentYearMonth,
-                    today = today
+                    currentYearMonth = currentYearMonth,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord,
+                    drawerHasEarlier = drawerHasEarlier,
+                    onLoadEarlier = onLoadEarlier,
+                    onBackToLanding = { viewName = DrawerView.LANDING.name },
+                    onSelectTask = { selectedTaskId = it }
                 )
-                groups.forEach { group ->
-                    item(key = "month-head-${group.date}") {
-                        DayHeading(
-                            group = group,
-                            today = today,
-                            isSealed = isSealed,
-                            onDeclareDayWord = onDeclareDayWord
-                        )
-                    }
-                    items(group.rows, key = { "month-${it.id}" }) { task ->
-                        StoredRow(task = task, onClick = { selectedTaskId = task.id })
-                    }
-                }
-                if (drawerHasEarlier) {
-                    item { EarlierRow(onClick = onLoadEarlier) }
-                }
             }
 
             DrawerView.LANDING -> {
-                // ---------- LANDING: current month + MONTHS shelf ----------
-                if (globallyEmpty) {
-                    item {
-                        Text(
-                            text = "NOTHING STORED YET",
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 13.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        )
-                    }
-                    // The day-word capture exists even here — in
-                    // the FILING ZONE above, not on a heading: a
-                    // sick day in the first week, before anything
-                    // was ever finished, is exactly when a word
-                    // needs declaring (Selbst × Neu; AUDIT-drawer
-                    // §2 wave-2: the ask lives in the zone only).
-                } else {
-                    // The current month, newest first. An empty current
-                    // month renders in SILENCE above the MONTHS shelf —
-                    // no absence line greets a month that has barely begun.
-                    // (The filing zone stands above, outside this branch,
-                    // so a first-week sick day is fileable even here.)
-                    val groups = buildDayGroups(
-                        rows = drawerRows,
-                        dayWords = dayWords,
-                        scopeMonth = currentYearMonth,
-                        includeTodayGroup = !isSealed,
-                        today = today
-                    )
-                    groups.forEach { group ->
-                        item(key = "land-head-${group.date}") {
-                            DayHeading(
-                                group = group,
-                                today = today,
-                                isSealed = isSealed,
-                                onDeclareDayWord = onDeclareDayWord
-                            )
-                        }
-                        items(group.rows, key = { "land-${it.id}" }) { task ->
-                            StoredRow(task = task, onClick = { selectedTaskId = task.id })
-                        }
-                    }
-                    if (drawerHasEarlier) {
-                        item { EarlierRow(onClick = onLoadEarlier) }
-                    }
-                    // MONTHS shelf (AUDIT-drawer §2): the INDEX
-                    // corridor is dead. Earlier stored months stand
-                    // inline on the landing itself — one ruled row
-                    // per month (name incl. year, NO counts), each
-                    // opening MONTH exactly as the index row did.
-                    // The current month is the landing's own body
-                    // above, never a shelf row. A word-only month is
-                    // still an address and still shelves.
-                    // Shelf membership is STRICTLY BEFORE the
-                    // current month (Regal's G7 ruling, closer-built):
-                    // the old filterNot(current) also shelved a
-                    // FUTURE month — file tomorrow's word on the
-                    // 31st and next month stood at the top of the
-                    // "earlier months" shelf tonight, a future month
-                    // presented as the nearest past. The repository
-                    // union keeps returning the future word-month
-                    // (the filing zone needs it); the shelf is the
-                    // wrong consumer, so the shelf is what changes.
-                    val earlierMonths = storedMonths.filter {
-                        it.year < currentYearMonth.first ||
-                            (it.year == currentYearMonth.first &&
-                                it.month < currentYearMonth.second)
-                    }
-                    if (earlierMonths.isNotEmpty()) {
-                        item {
-                            Text(
-                                text = "MONTHS",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 6.dp)
-                            )
-                        }
-                        items(
-                            earlierMonths,
-                            key = { "shelf-${it.year}-${it.month}" }
-                        ) { month ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSelectMonth(month.year, month.month)
-                                        viewName = DrawerView.MONTH.name
-                                    }
-                                    .padding(vertical = 10.dp)
-                                    .testTag("drawer_month_${month.year}_${month.month}"),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = monthLabel(month.year, month.month),
-                                    fontFamily = AtkinsonHyperlegibleFamily,
-                                    fontWeight = FontWeight.Medium,
-                                    fontSize = 14.sp,
-                                    color = scheme.onBackground
-                                )
-                            }
-                            HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                        }
-                    }
-                }
-                // The drawers doors (main, C10 — restored at
-                // the composition, K8): the composed landing had
-                // kept the train shelf but lost every entry row,
-                // stranding the CABINET / RECEIPTS / INDEX views
-                // the sections above implement. ALL MONTHS keeps
-                // main's case split (populated landings only).
-                if (!globallyEmpty) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                role = androidx.compose.ui.semantics.Role.Button
-                            ) { viewName = DrawerView.INDEX.name }
-                            .sizeIn(minHeight = 48.dp)
-                            .padding(vertical = 6.dp)
-                            .testTag("drawer_all_months"),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.drawer_all_months),
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground
-                        )
-                        androidx.compose.material3.Icon(
-                            imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
-                            contentDescription = null,
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                }
-                // The cabinet's door: ONE furniture row under
-                // ALL MONTHS (chrome C10).
-                item {
-                    DrawerNavRow(
-                        label = "CABINET",
-                        onClick = { viewName = DrawerView.CABINET.name },
-                        modifier = Modifier.testTag("drawer_curios_row")
-                    )
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                // The receipts index's door: ONE furniture row
-                // under CABINET (issue #157) — this destination
-                // is named "Receipts"; the receipts are here.
-                item {
-                    DrawerNavRow(
-                        label = "RECEIPTS",
-                        onClick = { viewName = DrawerView.RECEIPTS.name },
-                        modifier = Modifier.testTag("drawer_receipts_row")
-                    )
-                    HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
-                }
-                // Issue #253 line 39: the history leaves the app —
-                // one furniture door under RECEIPTS, standing only
-                // when the host supplies the export provider.
-                exportProvider?.let { provider ->
-                    item {
-                        DrawerNavRow(
-                            label = "EXPORT HISTORY (CSV)",
-                            onClick = {
-                                exportScope.launch {
-                                    val csv = runCatching { provider() }
-                                        .getOrNull()
-                                    if (csv != null) {
-                                        pendingExportCsv = csv
-                                        exportLauncher.launch(HistoryCsv.FILE_NAME)
-                                    }
-                                }
-                            },
-                            modifier = Modifier.testTag("drawer_export_history")
-                        )
-                        HorizontalDivider(
-                            thickness = 1.dp,
-                            color = scheme.outlineVariant
-                        )
-                    }
-                }
+                drawerLandingBody(
+                    scheme = scheme,
+                    globallyEmpty = globallyEmpty,
+                    drawerRows = drawerRows,
+                    dayWords = dayWords,
+                    currentYearMonth = currentYearMonth,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord,
+                    drawerHasEarlier = drawerHasEarlier,
+                    onLoadEarlier = onLoadEarlier,
+                    storedMonths = storedMonths,
+                    onSelectMonth = onSelectMonth,
+                    onNavigateToMonth = { viewName = DrawerView.MONTH.name },
+                    onSelectTask = { selectedTaskId = it }
+                )
+                drawerLandingDoors(
+                    scheme = scheme,
+                    globallyEmpty = globallyEmpty,
+                    exportProvider = exportProvider,
+                    exportScope = exportScope,
+                    exportLauncher = exportLauncher,
+                    onPendingExportCsv = { pendingExportCsv = it },
+                    onNavigate = { viewName = it.name }
+                )
             }
         }
     }
@@ -1297,7 +782,7 @@ private fun DrawerCabinetView(
                         )
                     } else {
                         Text(
-                            text = "NOT YET FORGED",
+                            text = stringResource(R.string.drawer_not_yet_forged),
                             fontFamily = AnonymousProFamily,
                             fontSize = 10.5.sp,
                             letterSpacing = 1.sp,
@@ -1442,7 +927,7 @@ private fun DrawerCabinetView(
                         // outcome-only test marked nothing.
                         val gapMark = curioForgeGapMark(record)
                         Text(
-                            text = "$forgeDay · ${record.intention}$gapMark",
+                            text = stringResource(R.string.drawer_forge_day_line, forgeDay, record.intention, gapMark),
                             fontFamily = AnonymousProFamily,
                             fontSize = 10.5.sp,
                             color = scheme.onSurfaceVariant
@@ -1455,6 +940,739 @@ private fun DrawerCabinetView(
                     // detail now ends at the record.
                 }
             }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the RECEIPTS view — extracted
+ * out of DrawerScreen's body as its own composable, in the pattern
+ * of DrawerCabinetView. Behaviour-identical: same rows, same keys,
+ * same testTags; the host's captures are explicit parameters and
+ * the back-to-landing state write rides a callback to the host's
+ * saveable state holder.
+ */
+@Composable
+private fun DrawerReceiptsView(
+    scheme: androidx.compose.material3.ColorScheme,
+    receipts: List<ReceiptIndexEntry>,
+    onReceiptClick: (Int) -> Unit,
+    onBackToLanding: () -> Unit
+) {
+    // ------------------------------------------------------------------
+    // RECEIPTS — the index of claimed slips (issue #157). Ruled
+    // rows like everything else in the Drawer. A row prints its
+    // №, its date, its outcome word — and, where the session's
+    // own record proves it, the warning the slip carried, in
+    // Drawer type: the warnings live in the furniture now, so
+    // they survive the slip. Tapping a row re-presents the slip.
+    // ------------------------------------------------------------------
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(scheme.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .testTag("drawer_receipts"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.drawer_receipts),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.label_back),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable { onBackToLanding() }
+                        .testTag("receipts_back")
+                )
+            }
+        }
+        if (receipts.isEmpty()) {
+            item {
+                Text(
+                    text = stringResource(R.string.drawer_no_receipts_yet),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 13.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 24.dp)
+                )
+            }
+        } else {
+            items(receipts, key = { "receipt-${it.sessionId}" }) { entry ->
+                ReceiptIndexRow(
+                    entry = entry,
+                    onClick = { onReceiptClick(entry.sessionId) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the DETAIL view — extracted
+ * out of DrawerScreen's body as its own composable, in the pattern
+ * of DrawerCabinetView. Behaviour-identical: same rows, same keys,
+ * same testTags; the host's captures are explicit parameters and
+ * the back state write rides a callback to the host's saveable
+ * state holder. The section header and the M1 BackHandler stay in
+ * the host — they serve the dispatch, not the view.
+ */
+@Composable
+private fun DrawerDetailView(
+    scheme: androidx.compose.material3.ColorScheme,
+    detail: FocusTaskEntity,
+    onBack: () -> Unit
+) {
+    // DRW-03 (Truth Car 2): the detail's date-line derives
+    // from the finish's own instant — its true calendar date
+    // beside its true clock time, a single moment that
+    // actually happened. The old line composed the FILING
+    // date with the true clock: every finish between 00:00
+    // and 03:29 printed a date-time pair that never occurred.
+    // The filing date still governs the shelves (the list
+    // headings); a shelf label and a timestamp are different
+    // facts, and only the timestamp was lying.
+    val finishDate = java.time.Instant.ofEpochMilli(detail.completedAtMillis)
+        .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+    val dateLine = if (finishDate.year == LocalDate.now().year) {
+        "${headingLabel(finishDate, withYear = false)} · ${clockTime(detail.completedAtMillis)}"
+    } else {
+        "${headingLabel(finishDate, withYear = true)} · ${clockTime(detail.completedAtMillis)}"
+    }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(scheme.background)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .testTag("drawer_screen"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 100.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.drawer_stored_word),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    letterSpacing = 2.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                Text(
+                    text = stringResource(R.string.drawer_back),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable { onBack() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .testTag("drawer_detail_back")
+                )
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = detail.title,
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp,
+                    color = scheme.onBackground
+                )
+                Text(
+                    text = dateLine,
+                    fontFamily = AnonymousProFamily,
+                    fontSize = 12.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                // Provenance block (AUDIT-drawer §2, wave-2):
+                // category and ESTIMATE stand together as what
+                // the task WAS; SPENT stands alone after a
+                // spacer as what it COST — the subtraction
+                // column the stacked pair formed is broken.
+                // Estimate and actual remain two separate plain
+                // facts — never a delta, never a percentage. The
+                // estimate prints only where one was actually
+                // given (MINUTES DIE): never "ESTIMATE 0 MIN".
+                // Issue #270: a tag prints only when one exists —
+                // a blank tag is nameless by the user's ruling,
+                // never an empty line or a dangling separator
+                // standing for a category. The estimate keeps its
+                // own law above: it prints only where given.
+                if (detail.categoryTag.isNotBlank() || detail.estimatedMinutes > 0) {
+                    Text(
+                        text = when {
+                            detail.categoryTag.isNotBlank() && detail.estimatedMinutes > 0 ->
+                                "${detail.categoryTag} · ESTIMATE ${detail.estimatedMinutes} MIN"
+                            detail.categoryTag.isNotBlank() -> detail.categoryTag
+                            else -> "ESTIMATE ${detail.estimatedMinutes} MIN"
+                        },
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    // Issue #110, finding 2 (main's form,
+                    // restored at the composition, K8): SPENT
+                    // IN TOTAL — the detail's spent is the
+                    // task's lifetime accrual, same law as the
+                    // row's TOTAL print.
+                    text = stringResource(R.string.drawer_spent_in_total, spentLabel(detail.actualSecondsSpent)),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontSize = 13.sp,
+                    color = scheme.onBackground
+                )
+            }
+        }
+        if (detail.subSteps.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    detail.subSteps.forEachIndexed { stepIdx, step ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // AUDIT-drawer §2 (wave-2): ONE voice
+                            // for every substep — strike-through
+                            // is a working surface's verb imported
+                            // into the archive, and it made
+                            // finished work read unfinished. The
+                            // two-digit number (DRW-08) leads.
+                            Text(
+                                text = com.example.data.twoDigitCount(stepIdx + 1),
+                                fontFamily = AnonymousProFamily,
+                                fontSize = 10.5.sp,
+                                color = scheme.onSurfaceVariant,
+                                modifier = Modifier.padding(end = 10.dp)
+                            )
+                            Text(
+                                text = step.title,
+                                fontFamily = AtkinsonHyperlegibleFamily,
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 12.5.sp,
+                                color = scheme.onBackground,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the SEARCH RESULTS block of
+ * the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of F4's standingOrdersSlip.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the row-tap state
+ * write rides a callback to the host's saveable state holder.
+ */
+private fun LazyListScope.drawerSearchResults(
+    scheme: androidx.compose.material3.ColorScheme,
+    drawerQuery: String,
+    drawerResults: List<FocusTaskEntity>,
+    today: LocalDate,
+    drawerSearchHasEarlier: Boolean,
+    onLoadEarlierSearch: () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onSelectTask: (Int) -> Unit
+) {
+    // ---------- SEARCH RESULTS (all years, paged) ----------
+    item(key = "search-back") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // SEARCH gains the house BACK (AUDIT-drawer §2):
+            // a mode you leave only by erasing your own
+            // typing is a trap — BACK clears the query.
+            Text(
+                text = stringResource(R.string.drawer_back),
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = scheme.onBackground,
+                modifier = Modifier
+                    .clickable { onQueryChange("") }
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+                    .testTag("drawer_search_back")
+            )
+        }
+    }
+    if (drawerResults.isEmpty()) {
+        item {
+            // Re-scoped (AUDIT-drawer §2): the promise and
+            // the territory match — this search looks at
+            // stored TASKS only, and now says so.
+            Text(
+                text = stringResource(R.string.drawer_no_stored_task_under, drawerQuery),
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 13.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 24.dp)
+            )
+        }
+    } else {
+        val groups = buildDayGroups(
+            rows = drawerResults,
+            dayWords = emptyMap(),
+            scopeMonth = null,
+            includeTodayGroup = false,
+            today = today
+        )
+        groups.forEach { group ->
+            item(key = "search-head-${group.date}") {
+                // SPITZ Charge 10a (closer): the search day
+                // headings share the DayHeading constant —
+                // 10.5sp meta voice, not a surviving 11sp.
+                Text(
+                    text = headingLabel(group.date, withYear = true),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.5.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            items(group.rows, key = { "search-${it.id}" }) { task ->
+                // A hit must show its reason (AUDIT-drawer
+                // §2): when the match lives in a substep —
+                // not the title or category — the row prints
+                // that step as a second line. A result that
+                // cannot show why it matched is a small
+                // false print.
+                val q = drawerQuery.trim()
+                val matchedStep = if (
+                    q.isNotEmpty() &&
+                    !task.title.contains(q, ignoreCase = true) &&
+                    !task.categoryTag.contains(q, ignoreCase = true)
+                ) {
+                    task.subSteps.firstOrNull {
+                        it.title.contains(q, ignoreCase = true)
+                    }?.title
+                } else {
+                    null
+                }
+                StoredRow(
+                    task = task,
+                    matchedStepTitle = matchedStep,
+                    onClick = { onSelectTask(task.id) }
+                )
+            }
+        }
+        if (drawerSearchHasEarlier) {
+            item {
+                EarlierRow(onClick = onLoadEarlierSearch)
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the INDEX arm (all months) of
+ * the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of drawerSearchResults.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the arm's state
+ * writes (back-to-landing, entered-from record, month
+ * navigation) ride callbacks to the host's saveable holders, in
+ * the arm's standing order.
+ */
+private fun LazyListScope.drawerMonthIndex(
+    scheme: androidx.compose.material3.ColorScheme,
+    storedMonths: List<StoredMonth>,
+    onSelectMonth: (Int, Int) -> Unit,
+    onBackToLanding: () -> Unit,
+    onEnteredFromIndex: () -> Unit,
+    onNavigateToMonth: () -> Unit
+) {
+        // ---------- ALL MONTHS ----------
+        item {
+            DrawerNavRow(
+                label = "BACK",
+                onClick = { onBackToLanding() }
+            )
+        }
+        items(storedMonths, key = { "month-${it.year}-${it.month}" }) { month ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(
+                        role = androidx.compose.ui.semantics.Role.Button
+                    ) {
+                        onSelectMonth(month.year, month.month)
+                        onEnteredFromIndex()
+                        onNavigateToMonth()
+                    }
+                    .sizeIn(minHeight = 48.dp)
+                    .padding(vertical = 10.dp)
+                    .testTag("drawer_month_${month.year}_${month.month}"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = monthLabel(month.year, month.month),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.sp,
+                    color = scheme.onBackground
+                )
+            }
+            HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+        }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the MONTH arm (one month) of
+ * the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of drawerSearchResults.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the arm's state
+ * writes (back-to-landing, row selection) ride callbacks to the
+ * host's saveable state holders.
+ */
+private fun LazyListScope.drawerOneMonth(
+    scheme: androidx.compose.material3.ColorScheme,
+    drawerMonth: Pair<Int, Int>,
+    drawerRows: List<FocusTaskEntity>,
+    dayWords: Map<String, String>,
+    currentYearMonth: Pair<Int, Int>,
+    today: LocalDate,
+    isSealed: Boolean,
+    onDeclareDayWord: (LocalDate, String?) -> Unit,
+    drawerHasEarlier: Boolean,
+    onLoadEarlier: () -> Unit,
+    onBackToLanding: () -> Unit,
+    onSelectTask: (Int) -> Unit
+) {
+        // ---------- ONE MONTH ----------
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = monthLabel(drawerMonth.first, drawerMonth.second),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant
+                )
+                // BACK — one costume, true parent (AUDIT-
+                // drawer §2): the parent is LANDING, and
+                // going back no longer silently resets the
+                // VM's month — the landing re-derives its
+                // own current month; the viewed month is
+                // simply left, not rewritten.
+                Text(
+                    text = stringResource(R.string.drawer_back),
+                    fontFamily = AtkinsonHyperlegibleFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    color = scheme.onBackground,
+                    modifier = Modifier
+                        .clickable { onBackToLanding() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                        .testTag("drawer_month_back")
+                )
+            }
+        }
+        val groups = buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = drawerMonth,
+            includeTodayGroup = !isSealed &&
+                drawerMonth == currentYearMonth,
+            today = today
+        )
+        groups.forEach { group ->
+            item(key = "month-head-${group.date}") {
+                DayHeading(
+                    group = group,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord
+                )
+            }
+            items(group.rows, key = { "month-${it.id}" }) { task ->
+                StoredRow(task = task, onClick = { onSelectTask(task.id) })
+            }
+        }
+        if (drawerHasEarlier) {
+            item { EarlierRow(onClick = onLoadEarlier) }
+        }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the LANDING arm's stored-work
+ * body (empty print / current-month day groups / MONTHS shelf)
+ * of the Drawer's list column — extracted as a LazyListScope
+ * extension, in the pattern of drawerSearchResults. The arm's
+ * doors block stays in the host for its own slice.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters and the body's state
+ * writes (shelf navigation, row selection) ride callbacks to the
+ * host's saveable state holders.
+ */
+private fun LazyListScope.drawerLandingBody(
+    scheme: androidx.compose.material3.ColorScheme,
+    globallyEmpty: Boolean,
+    drawerRows: List<FocusTaskEntity>,
+    dayWords: Map<String, String>,
+    currentYearMonth: Pair<Int, Int>,
+    today: LocalDate,
+    isSealed: Boolean,
+    onDeclareDayWord: (LocalDate, String?) -> Unit,
+    drawerHasEarlier: Boolean,
+    onLoadEarlier: () -> Unit,
+    storedMonths: List<StoredMonth>,
+    onSelectMonth: (Int, Int) -> Unit,
+    onNavigateToMonth: () -> Unit,
+    onSelectTask: (Int) -> Unit
+) {
+    // ---------- LANDING: current month + MONTHS shelf ----------
+    if (globallyEmpty) {
+        item {
+            Text(
+                text = stringResource(R.string.drawer_nothing_stored_yet),
+                fontFamily = AtkinsonHyperlegibleFamily,
+                fontSize = 13.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 24.dp)
+            )
+        }
+        // The day-word capture exists even here — in
+        // the FILING ZONE above, not on a heading: a
+        // sick day in the first week, before anything
+        // was ever finished, is exactly when a word
+        // needs declaring (Selbst × Neu; AUDIT-drawer
+        // §2 wave-2: the ask lives in the zone only).
+    } else {
+        // The current month, newest first. An empty current
+        // month renders in SILENCE above the MONTHS shelf —
+        // no absence line greets a month that has barely begun.
+        // (The filing zone stands above, outside this branch,
+        // so a first-week sick day is fileable even here.)
+        val groups = buildDayGroups(
+            rows = drawerRows,
+            dayWords = dayWords,
+            scopeMonth = currentYearMonth,
+            includeTodayGroup = !isSealed,
+            today = today
+        )
+        groups.forEach { group ->
+            item(key = "land-head-${group.date}") {
+                DayHeading(
+                    group = group,
+                    today = today,
+                    isSealed = isSealed,
+                    onDeclareDayWord = onDeclareDayWord
+                )
+            }
+            items(group.rows, key = { "land-${it.id}" }) { task ->
+                StoredRow(task = task, onClick = { onSelectTask(task.id) })
+            }
+        }
+        if (drawerHasEarlier) {
+            item { EarlierRow(onClick = onLoadEarlier) }
+        }
+        // MONTHS shelf (AUDIT-drawer §2): the INDEX
+        // corridor is dead. Earlier stored months stand
+        // inline on the landing itself — one ruled row
+        // per month (name incl. year, NO counts), each
+        // opening MONTH exactly as the index row did.
+        // The current month is the landing's own body
+        // above, never a shelf row. A word-only month is
+        // still an address and still shelves.
+        // Shelf membership is STRICTLY BEFORE the
+        // current month (Regal's G7 ruling, closer-built):
+        // the old filterNot(current) also shelved a
+        // FUTURE month — file tomorrow's word on the
+        // 31st and next month stood at the top of the
+        // "earlier months" shelf tonight, a future month
+        // presented as the nearest past. The repository
+        // union keeps returning the future word-month
+        // (the filing zone needs it); the shelf is the
+        // wrong consumer, so the shelf is what changes.
+        val earlierMonths = storedMonths.filter {
+            it.year < currentYearMonth.first ||
+                (it.year == currentYearMonth.first &&
+                    it.month < currentYearMonth.second)
+        }
+        if (earlierMonths.isNotEmpty()) {
+            item {
+                Text(
+                    text = stringResource(R.string.drawer_months),
+                    fontFamily = AnonymousProFamily,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    letterSpacing = 1.sp,
+                    color = scheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
+            items(
+                earlierMonths,
+                key = { "shelf-${it.year}-${it.month}" }
+            ) { month ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            onSelectMonth(month.year, month.month)
+                            onNavigateToMonth()
+                        }
+                        .padding(vertical = 10.dp)
+                        .testTag("drawer_month_${month.year}_${month.month}"),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = monthLabel(month.year, month.month),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 14.sp,
+                        color = scheme.onBackground
+                    )
+                }
+                HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+            }
+        }
+    }
+}
+
+/**
+ * Issue #90 (complexity F2 slice): the LANDING arm's doors block
+ * (ALL MONTHS / CABINET / RECEIPTS / EXPORT doors) of the
+ * Drawer's list column — extracted as a LazyListScope extension,
+ * in the pattern of drawerSearchResults. With this slice the F2
+ * list-view extractions are complete.
+ * Behaviour-identical: same items, same keys, same testTags; the
+ * host's captures are explicit parameters (the export machinery
+ * included) and the block's state writes (three navigations, the
+ * pending-export hand-off) ride callbacks to the host's holders,
+ * in the block's standing order.
+ */
+private fun LazyListScope.drawerLandingDoors(
+    scheme: androidx.compose.material3.ColorScheme,
+    globallyEmpty: Boolean,
+    exportProvider: (suspend () -> String)?,
+    exportScope: kotlinx.coroutines.CoroutineScope,
+    exportLauncher: androidx.activity.result.ActivityResultLauncher<String>,
+    onPendingExportCsv: (String) -> Unit,
+    onNavigate: (DrawerView) -> Unit
+) {
+    // The drawers doors (main, C10 — restored at
+    // the composition, K8): the composed landing had
+    // kept the train shelf but lost every entry row,
+    // stranding the CABINET / RECEIPTS / INDEX views
+    // the sections above implement. ALL MONTHS keeps
+    // main's case split (populated landings only).
+    if (!globallyEmpty) {
+    item {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    role = androidx.compose.ui.semantics.Role.Button
+                ) { onNavigate(DrawerView.INDEX) }
+                .sizeIn(minHeight = 48.dp)
+                .padding(vertical = 6.dp)
+                .testTag("drawer_all_months"),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.drawer_all_months),
+                fontFamily = AnonymousProFamily,
+                fontWeight = FontWeight.Bold,
+                fontSize = 11.sp,
+                letterSpacing = 1.sp,
+                color = scheme.onBackground
+            )
+            androidx.compose.material3.Icon(
+                imageVector = com.example.ui.theme.MonolithIcons.ChevronRight,
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+    }
+    }
+    // The cabinet's door: ONE furniture row under
+    // ALL MONTHS (chrome C10).
+    item {
+        DrawerNavRow(
+            label = "CABINET",
+            onClick = { onNavigate(DrawerView.CABINET) },
+            modifier = Modifier.testTag("drawer_curios_row")
+        )
+        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+    }
+    // The receipts index's door: ONE furniture row
+    // under CABINET (issue #157) — this destination
+    // is named "Receipts"; the receipts are here.
+    item {
+        DrawerNavRow(
+            label = "RECEIPTS",
+            onClick = { onNavigate(DrawerView.RECEIPTS) },
+            modifier = Modifier.testTag("drawer_receipts_row")
+        )
+        HorizontalDivider(thickness = 1.dp, color = scheme.outlineVariant)
+    }
+    // Issue #253 line 39: the history leaves the app —
+    // one furniture door under RECEIPTS, standing only
+    // when the host supplies the export provider.
+    exportProvider?.let { provider ->
+        item {
+            DrawerNavRow(
+                label = "EXPORT HISTORY (CSV)",
+                onClick = {
+                    exportScope.launch {
+                        val csv = runCatching { provider() }
+                            .getOrNull()
+                        if (csv != null) {
+                            onPendingExportCsv(csv)
+                            exportLauncher.launch(HistoryCsv.FILE_NAME)
+                        }
+                    }
+                },
+                modifier = Modifier.testTag("drawer_export_history")
+            )
+            HorizontalDivider(
+                thickness = 1.dp,
+                color = scheme.outlineVariant
+            )
         }
     }
 }
@@ -1551,7 +1769,7 @@ private fun FilingDayLine(
     val scheme = MaterialTheme.colorScheme
     if (word != null) {
         Text(
-            text = "${headingLabel(date, withYear = false)} · $word",
+            text = stringResource(R.string.drawer_heading_word, headingLabel(date, withYear = false), word),
             fontFamily = AnonymousProFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 10.5.sp,
@@ -1662,7 +1880,7 @@ private fun StoredRow(
                 // not time that day contained. Both parents'
                 // VaultHistoryTruthTest pins this print; the
                 // train's bare-label row contradicted its own.
-                text = "TOTAL ${spentLabel(task.actualSecondsSpent)}",
+                text = stringResource(R.string.drawer_total_spent, spentLabel(task.actualSecondsSpent)),
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.5.sp,
                 color = scheme.onSurfaceVariant
@@ -1729,7 +1947,7 @@ private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
         )
         if (entry.releaseFaultShield) {
             Text(
-                text = "SHIELD FAULT — SEE RECEIPT",
+                text = stringResource(R.string.drawer_shield_fault),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.5.sp,
@@ -1740,7 +1958,7 @@ private fun ReceiptIndexRow(entry: ReceiptIndexEntry, onClick: () -> Unit) {
         }
         if (entry.shieldWasOff) {
             Text(
-                text = "THE SHIELD WAS OFF FOR PART OF THAT SESSION",
+                text = stringResource(R.string.drawer_shield_was_off),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 10.5.sp,

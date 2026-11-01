@@ -7,6 +7,7 @@ import android.app.usage.UsageStatsManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -32,6 +33,7 @@ import com.example.service.WatchStore
 import androidx.annotation.WorkerThread
 import androidx.room.withTransaction
 import com.example.domain.FocusDomain
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -40,6 +42,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -309,8 +313,7 @@ internal data class TickFrame(
     val newAccumulated: Int,
     val newStartMono: Long,
     val newStartWall: Long,
-    val newBootCount: Int,
-    val newHmac: String
+    val newBootCount: Int
 )
 
 internal fun tickFrameFor(
@@ -437,17 +440,13 @@ internal fun tickFrameFor(
     val newStartMono = if (rebootDetected || updateDetected) nowMono else session.startElapsedRealtimeMillis
     val newStartWall = if (rebootDetected || updateDetected) nowWall else session.startWallTimeMillis
     val newBootCount = if (rebootDetected) currentBoot ?: session.bootCount else session.bootCount
-    val newHmac = if (rebootDetected || updateDetected) {
-        CryptoIntegrityManager.signSessionState(
-            newStartWall,
-            newStartMono,
-            newBootCount,
-            session.targetDurationSeconds,
-            session.isStopwatchMode
-        )
-    } else {
-        session.hmacSignature
-    }
+    // Issue #36 (ruling 3): the frame carries NO signature. The
+    // v2 payload covers the persisted elapsed, which only the
+    // writer knows (it differs per exit — coercions, the
+    // call-excluded figure, the break-entry target) — so signing
+    // is the writers' act: every exit of updateSessionProgressLocked
+    // signs the exact row it persists (see signedForPersist). The
+    // frame judges anchors, penalty and target; it mints nothing.
     return TickFrame(
         beatWall = beatWall,
         penaltyAdd = penaltyAdd,
@@ -459,10 +458,26 @@ internal fun tickFrameFor(
         newAccumulated = newAccumulated,
         newStartMono = newStartMono,
         newStartWall = newStartWall,
-        newBootCount = newBootCount,
-        newHmac = newHmac
+        newBootCount = newBootCount
     )
 }
+
+/**
+ * Issue #36 (rulings 2+3): the persist half of the signature law.
+ * Every session row this repository writes is signed over its own
+ * final fields in the same act that persists it, so the stored
+ * signature is always the signature OF the stored row — including
+ * the four trusted time fields whose mutation the v1 payload
+ * could not see. HMAC is deterministic: re-signing an unchanged
+ * row yields the identical signature, so writers sign
+ * unconditionally rather than tracking which covered field moved.
+ * Where no keystore key can be obtained, signSessionState returns
+ * blank and the row stands unsigned — rejected by verification
+ * (fail closed) until a working keystore signs it; no substitute
+ * key ever stands in.
+ */
+private fun signedForPersist(session: FocusSessionEntity): FocusSessionEntity =
+    session.copy(hmacSignature = CryptoIntegrityManager.signSessionState(session))
 
 /**
  * Issue #524: did the running build land mid-session — after
@@ -531,6 +546,16 @@ class MonolithRepository(
     // Main's provider seam, composed with the injection above:
     // the provider resolves the injected database when present,
     // else the singleton — one resolution path either way.
+    // Issue #515 F1: owns the fire-and-forget birth catalogue
+    // sync fired by startSession (see launchBirthCatalogSync).
+    // Injected so a test can hold the launch on a test
+    // dispatcher and prove the sync is NOT on the seal's
+    // birth path; production uses the IO default. Placed
+    // before databaseProvider on purpose: the provider stays
+    // the LAST parameter, so existing trailing-lambda
+    // constructions (Issue33RepositoryTest) keep binding to it.
+    private val birthSyncScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val databaseProvider: () -> MonolithDatabase = { database ?: MonolithDatabase.getInstance(context) }
 ) {
     private fun db(): MonolithDatabase = databaseProvider()
@@ -1035,491 +1060,697 @@ class MonolithRepository(
         forceCatalogSync: Boolean = false
     ) = withContext(Dispatchers.IO) {
         seedMutex.withLock {
-        recordProvenanceIfResurrected()
-
-        // Ren ruling 00:34 IST Oct 31 (#7): whether this install
-        // ALREADY had a catalogue when this sync began — the fact
-        // the one-time legacy OPEN reset at the end of this pass
-        // keys on. Captured before any seeding/reconcile below can
-        // birth rows of its own: a fresh install has nothing
-        // legacy, and its newborn rows are never a "reset".
-        val catalogueExistedAtEntry = dao.getAllAppsSnapshot().isNotEmpty()
-
-        // Audit R2 #96: seed only a store that has never carried
-        // content. Once content exists (seeded or the user's own)
-        // the seeded-ever flag is set, and a later empty store is
-        // the user's own emptying — honoured, never resurrected.
-        val seedPrefs = context.getSharedPreferences(SEED_PREFS_NAME, Context.MODE_PRIVATE)
-        val sitesNow = dao.getAllSitesSnapshot()
-        if (!seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
-            if (sitesNow.isEmpty()) {
-                dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
-            }
-            seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
-
+            val seedHead = seedStandingStateHead()
+            reconcileCatalogueLocked(forceCatalogSync)
+            runLegacyOpenResetStep(seedHead.catalogueExistedAtEntry)
+            seedStandingStateTail(seedHead.seedPrefs)
+            runPlannedEndRestoreStep()
         }
-        // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
-        // an install that ran the v1 seed before "youtube.com"
-        // joined the defaults never re-seeds, so the host rule
-        // must be DELIVERED — once, and only where the legacy
-        // factory entry proves the seed stands unedited (the pure
-        // decision above; a user's deletion is never resurrected).
-        // A fresh install reaches this line with the current
-        // defaults just seeded, so the decision adds nothing and
-        // the flag simply closes. Runs under the same seed lock.
-        if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
-            if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
-                val upgradeAdds = youtubeHostSeedUpgrade(
-                    dao.getAllSitesSnapshot().map { it.domain }
-                )
-                if (upgradeAdds.isNotEmpty()) {
-                    dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
-                }
-            }
-            seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
-        }
-        if (dao.getGuardSettingsSnapshot() == null) {
-            dao.insertGuardSettings(GuardSettingsEntity())
-        }
-        // Routines: a fresh install seeds his real day directly and is
-        // marked reseed-done (it never "migrates" and never sees the
-        // reset note); an existing install runs the version-blind
-        // reseed transform once (Sten §2).
-        if (dao.getAllRoutinesSnapshot().isEmpty()) {
-            // Audit R2 #96: the fresh seed stamps its edit horizon,
-            // exactly as the reseed path does. With the default 0,
-            // every window that ended before the install would be
-            // judged MISSED — the derive law's own rule ("before
-            // that horizon judgement is UNKNOWN, never an invented
-            // MISSED") defeated by the seed itself.
-            val seededAtMillis = System.currentTimeMillis()
-            dao.insertRoutines(
-                routineTargets().map { it.copy(scheduleEditedAtMillis = seededAtMillis) }
-            )
-            // R3b #161 (update-day): an empty routines table means
-            // this install has never seeded — a first install, a
-            // wiped phone and a new phone are indistinguishable from
-            // inside, so the seed owes the user one honest sentence
-            // at first open instead of a silent factory state.
-            InstallNoteStore(context).markFreshStart()
-            val fresh = dao.getGuardSettingsSnapshot()
-            if (fresh != null && !fresh.routineReseedV1Done) {
-                dao.insertGuardSettings(
-                    fresh.copy(routineReseedV1Done = true, routineReseedNoteDismissed = true)
-                )
-            }
-        } else {
-            reseedRoutinesV1()
-        }
-        try {
-            // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
-            // prune is only as honest as the distance between the
-            // strikes. The ViewModel's init calls this sync and
-            // then its guard refresh calls it AGAIN seconds later
-            // (PARK's open does the same) — identical
-            // PackageManager state, so one transiently-filtered
-            // cold-start query used to satisfy both strikes in a
-            // single launch and prune. A non-forced call inside
-            // the window after a completed sync therefore skips
-            // the reconcile entirely: it touches no strikes, files
-            // no tombstones, prunes nothing. The rest of this
-            // seeding pass (sites, profiles, tasks, the day-word
-            // drain) is idempotent and still runs. A forced call,
-            // and any call after the window, is a genuinely
-            // separate look and reconciles normally.
-            val collapseRepeat = AppCatalogReconcile.isEnumerationSkipped(
-                forceCatalogSync = forceCatalogSync,
-                lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
-                nowMillis = System.currentTimeMillis()
-            )
-            // Issue #69 F4 (startup half): the collapse check now
-            // gates the ENUMERATION itself, not only the reconcile
-            // after it. The ViewModel init pays this sync twice in
-            // seconds (ensureSeededAndSyncPackages, then again via
-            // refreshSystemGuard); on the old shape the repeat call
-            // still ran the full PackageManager + LauncherApps
-            // enumeration before the guard let it skip the
-            // reconcile. Inside the collapse window both
-            // enumerations are skipped, so the repeat costs no PM
-            // work at all; `installed` is empty, the reconcile
-            // below stays skipped exactly as before, and every
-            // other seeding step in this pass still runs. Data and
-            // behaviour identical — one enumeration, not two.
-            val pm = context.packageManager
-            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-            }
-            val resolvedList = if (collapseRepeat) {
-                emptyList()
-            } else {
-                pm.queryIntentActivities(mainIntent, 0)
-            }
-            // The main activity per package (its launch intent's
-            // component), resolved once per package — the reconcile's
-            // dedupe rule lets it win over shortcut activities.
-            val mainActivityByPackage = mutableMapOf<String, String?>()
-            val installedFromPm = resolvedList.mapNotNull { resolveInfo ->
-                val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
-                if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
-                    return@mapNotNull null
-                }
-                val label = resolveInfo.loadLabel(pm)?.toString()
-                    ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val mainActivity = mainActivityByPackage.getOrPut(pkg) {
-                    runCatching {
-                        pm.getLaunchIntentForPackage(pkg)?.component?.className
-                    }.getOrNull()
-                }
-                InstalledPackage(
-                    pkg, label,
-                    isMainActivity = mainActivity != null &&
-                        mainActivity == resolveInfo.activityInfo?.name
-                )
-            }
-            // Issue #80 finding 1 (partial): the PackageManager
-            // query above only sees the CALLING profile. LauncherApps
-            // additionally enumerates the other profiles this user
-            // owns (work profile, dual-app/clone user), so a package
-            // installed only there is at least DISCOVERED and not
-            // pruned from the catalog. Per-profile rules remain
-            // impossible from one install — see the #80 report.
-            val profiled = installedFromPm.map {
-                ProfiledInstalledPackage(
-                    it.packageName, it.label, Process.myUserHandle().toString()
-                )
-            }.toMutableList()
-            try {
-                val launcherApps =
-                    context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
-                // Issue #69 F4: the per-profile enumeration is
-                // gated by the same collapse check — a repeat sync
-                // inside the window enumerates nothing, anywhere.
-                if (launcherApps != null && !collapseRepeat) {
-                    for (profile in launcherApps.profiles) {
-                        val activities = try {
-                            launcherApps.getActivityList(null, profile)
-                        } catch (_: Exception) {
-                            null
-                        } ?: continue
-                        for (info in activities) {
-                            val pkg = info.componentName?.packageName ?: continue
-                            if (pkg == context.packageName ||
-                                pkg.startsWith("com.android.settings")
-                            ) {
-                                continue
-                            }
-                            val label = info.label?.toString()
-                                ?.takeIf { it.isNotBlank() } ?: continue
-                            profiled.add(
-                                ProfiledInstalledPackage(pkg, label, profile.toString())
-                            )
-                        }
-                    }
-                }
-            } catch (_: Exception) {
-                // Discovery stays exactly as complete as the old
-                // single-profile query when LauncherApps refuses.
-            }
-            // STURM3-13 port note: the calling-profile entries keep
-            // their isMainActivity flags (issue #34's dedupe rule
-            // depends on them), so the merged catalog is the PM list
-            // plus ONLY the packages other profiles add — the pure
-            // mergeProfiledInstalls view decides which those are.
-            val pmPackages = installedFromPm.map { it.packageName }.toSet()
-            val installed = installedFromPm +
-                AppCatalogReconcile.mergeProfiledInstalls(profiled)
-                    .filter { it.packageName !in pmPackages }
+    }
 
-            // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
-            // complaint Oct 29 22:40: the list carried apps he never
-            // installed). There is no blind factory seed any more:
-            // this sync reconciles the table to the installed
-            // launchable set — rows for packages absent on TWO
-            // consecutive syncs are PRUNED (with their rulings filed
-            // in the catalog memory first, issue #34), present
-            // packages are discovered without a cap, and the
-            // factory presets survive only as birth rules applied to
-            // packages that actually exist on this phone. An empty
-            // query result can only mean the query failed (the
-            // <queries> declaration in the manifest makes every
-            // launcher app visible), so an empty result skips the
-            // reconcile entirely rather than pruning his rules away.
-            if (installed.isNotEmpty() && !collapseRepeat) {
-                val existingRows = dao.getAllAppsSnapshot()
-                val plan = AppCatalogReconcile.reconcile(
-                    existing = existingRows,
-                    installed = installed,
-                    usageMinutes = queryRealTodayUsageMinutes(),
-                    categorize = ::categorizePackage,
-                    previouslyAbsent = loadAbsentOnce(),
-                    rememberedRules = loadRememberedRules()
-                )
-                if (plan.toInsert.isNotEmpty()) {
-                    dao.insertApps(plan.toInsert)
-                    // A restored package's tombstone is spent.
-                    forgetRememberedRules(plan.toInsert.map { it.packageName })
-                }
-                if (plan.unreviewedOpenPackages.isNotEmpty()) {
-                    recordUnreviewedOpen(plan.unreviewedOpenPackages)
-                }
-                plan.usageUpdates.forEach { dao.updateApp(it) }
-                if (plan.toPrune.isNotEmpty()) {
-                    // M5 (Mikro): the prune announces itself once, so
-                    // record what it took BEFORE the rows leave —
-                    // how many, and whether any stored ruling went
-                    // with them. The Shield strip prints exactly
-                    // this record, once, and nothing it can't prove.
-                    val prunedRows = existingRows.filter {
-                        it.packageName in plan.toPrune
-                    }
-                    // Issue #34: file the rulings BEFORE the rows
-                    // leave, so a returning package is reborn with
-                    // its own ruling, never a silent OPEN.
-                    rememberPrunedRules(prunedRows)
-                    recordPruneNote(
-                        appsRemoved = prunedRows.size,
-                        rulesRemoved = prunedRows.any {
-                            it.resolvedTier != AppBlockTier.OPEN
-                        }
-                    )
-                    // A pruned app can no longer be reviewed; its
-                    // unreviewed entry leaves with its row (#129 F1).
-                    clearUnreviewedOpen(plan.toPrune)
-                    dao.deleteAppsByPackage(plan.toPrune)
-                }
-                // The strike set for the next sync: only packages
-                // absent for the FIRST time here. A package absent
-                // twice has been pruned above; one present again
-                // clears itself by not being absent.
-                saveAbsentOnce(plan.pendingPrune.toSet())
-                // The sync completed: this instant anchors the
-                // collapse window (L3). Only a reconcile that
-                // actually ran earns the stamp — an empty query
-                // above is a failed look and starts no window.
-                saveLastCatalogSyncMillis(System.currentTimeMillis())
-            }
-        } catch (e: Exception) {
-            // Safe fallback if package querying is restricted — logged, not silent (#33).
-            swallow("ensureSeededAndSyncPackages catalog sync", e)
+    /** Issue #515 F1 (the split cure): the SEED half of
+     *  [ensureSeededAndSyncPackages] alone — provenance,
+     *  sites, guard settings, routines, profiles, the starter
+     *  task slate, the task dedup and the day-word drain.
+     *  Cheap Room/prefs writes, and other paths rely on them
+     *  being SETTLED rather than in flight: a seed pass landing
+     *  mid-flow can drop the starter slate into a queue its
+     *  owner has just emptied (PR #719's first cure shape —
+     *  the fully-async pass raced a wiped task queue in
+     *  IntentionFreezeRepositoryTest and a session completion
+     *  promoted a seeded task over the flow's own).
+     *  [startSession] therefore awaits this half before its
+     *  birth insert, exactly as it awaited the whole pass
+     *  before #515; only the catalogue half rides async
+     *  (see [syncBirthCatalogue]).
+     *
+     *  Composition (RULING 2, 6544113775): the head captures
+     *  the catalogue-existed-at-entry fact before any seeding
+     *  in this sequence can birth rows, and this function
+     *  RETURNS it so the caller can thread it into the
+     *  catalogue half — the legacy OPEN reset fires at that
+     *  half's end, never here. This half alone may never fire
+     *  the reset: run over an unreconciled catalogue it would
+     *  judge a stale row set and stamp its one-time done-flag. */
+    suspend fun ensureSeeded(): Boolean = withContext(Dispatchers.IO) {
+        seedMutex.withLock {
+            val seedHead = seedStandingStateHead()
+            seedStandingStateTail(seedHead.seedPrefs)
+            seedHead.catalogueExistedAtEntry
         }
+    }
 
-        val existingProfiles = dao.getAllProfilesSnapshot()
-        if (existingProfiles.isEmpty()) {
-            val defaultProfiles = listOf(
-                FocusProfileEntity(
-                    name = "Study Loadout",
-                    codeName = "Study Mode",
-                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper.",
-                    defaultMinutes = 50,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES",
-                    scheduleLabel = "09:00 – 13:00 • Weekdays",
-                    isScheduleEnabled = false,
-                    startHour = 9,
-                    startMinute = 0,
-                    endHour = 13,
-                    endMinute = 0
-                ),
-                FocusProfileEntity(
-                    name = "Exam Lockdown",
-                    codeName = "Exam Mode",
-                    description = "Full 90-minute exam shield across all feeds, games, and video apps.",
-                    defaultMinutes = 90,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,MESSAGING,BROWSERS",
-                    scheduleLabel = "14:00 – 18:00 • Exam Prep",
-                    isScheduleEnabled = false,
-                    startHour = 14,
-                    startMinute = 0,
-                    endHour = 18,
-                    endMinute = 0
-                ),
-                FocusProfileEntity(
-                    name = "Sleep Loadout",
-                    codeName = "Sleep Guard",
-                    description = "Locks every app except Phone, Clock, and Maps so you sleep on time.",
-                    defaultMinutes = 60,
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING",
-                    scheduleLabel = "22:30 – 07:00 • Nightly",
-                    isScheduleEnabled = false,
-                    startHour = 22,
-                    startMinute = 30,
-                    endHour = 7,
-                    endMinute = 0
-                ),
-                FocusProfileEntity(
-                    name = "Quick Homework",
-                    codeName = "25m Sprint",
-                    description = "Blocks short-form video while keeping messaging on 2m Peek for study groups.",
-                    defaultMinutes = 25,
-                    blockedCategoriesCsv = "SHORT_VIDEO,GAMES",
-                    scheduleLabel = "19:00 – 21:00 • Daily",
-                    isScheduleEnabled = false,
-                    startHour = 19,
-                    startMinute = 0,
-                    endHour = 21,
-                    endMinute = 0
-                )
-            )
-            dao.insertProfiles(defaultProfiles)
+    /** Issue #515 F1: the birth resync's catalogue half
+     *  alone — the collapse guard, the PackageManager
+     *  enumeration and the reconcile, and at its end the
+     *  one-time legacy OPEN reset over the reconciled
+     *  catalogue (RULING 2, 6544113775: the reset's home is
+     *  the end of the catalogue reconcile, exactly where the
+     *  monolith pass fired it). Runs under the same seed lock
+     *  as every other pass, so its strikes and stamps stay
+     *  single-writer with the ViewModel's init syncs.
+     *
+     *  [catalogueExistedAtEntry] is the fact the sequence's
+     *  seed half captured at its head, threaded in by the
+     *  caller ([startSession] via [ensureSeeded]); a
+     *  standalone entry passes null and captures the fact at
+     *  its own head, before reconciling — the flag always
+     *  describes the catalogue as the pass found it, never
+     *  as the pass made it. */
+    private suspend fun syncBirthCatalogue(
+        catalogueExistedAtEntry: Boolean? = null
+    ) = withContext(Dispatchers.IO) {
+        seedMutex.withLock {
+            val existedAtEntry = catalogueExistedAtEntry
+                ?: captureCatalogueExistedAtEntry()
+            reconcileCatalogueLocked(forceCatalogSync = false)
+            runLegacyOpenResetStep(existedAtEntry)
+            runPlannedEndRestoreStep()
         }
+    }
 
-        // Issue #139 truth patches for rows seeded by older builds:
-        // the Sleep seed forgot MESSAGING (WhatsApp stayed open under
-        // a profile that promises to lock everything but Phone,
-        // Clock and Maps), the Study seed promised YouTube a 2m
-        // Peek the category system cannot give it, and every seed
-        // claimed an enabled schedule no engine has ever read.
-        // Patches bite only on rows still carrying the exact old
-        // seed values — a hand-edited profile is never rewritten.
-        val seededNames = setOf("Study Loadout", "Exam Lockdown", "Sleep Loadout", "Quick Homework")
-        existingProfiles.forEach { profile ->
-            var patched = profile
-            if (profile.name == "Sleep Loadout" &&
-                profile.blockedCategoriesCsv == "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS"
-            ) {
-                patched = patched.copy(
-                    blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING"
-                )
-            }
-            if (profile.name == "Study Loadout" &&
-                profile.description == "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper."
-            ) {
-                patched = patched.copy(
-                    description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper."
-                )
-            }
-            if (profile.name in seededNames && profile.isScheduleEnabled) {
-                patched = patched.copy(isScheduleEnabled = false)
-            }
-            if (patched != profile) dao.updateProfile(patched)
-        }
+    /** Ren ruling 00:34 IST Oct 31 (#7): whether this install
+     *  ALREADY has a catalogue at the moment of capture — the
+     *  fact the one-time legacy OPEN reset at the end of the
+     *  catalogue reconcile keys on. Captured before any
+     *  seeding/reconcile in the sequence can birth rows of
+     *  its own: a fresh install has nothing legacy, and its
+     *  newborn rows are never a "reset". */
+    private suspend fun captureCatalogueExistedAtEntry(): Boolean =
+        dao.getAllAppsSnapshot().isNotEmpty()
 
-        // Fabricated demo history STRUCK in this lane too (Lie
-        // Register 3 F-3; caught by Ren's pre-merge S1 sweep,
-        // Oct 29): this copy of the seed block still inserted
-        // three invented sessions, invented intercept logs and
-        // invented captured notifications on first run — the
-        // frozen base predated trunk's scrub. Fresh installs
-        // now start with an empty, true history.
-
-        val existingTasks = dao.getAllTasksSnapshot()
-        // Audit R2 #96: the same seeded-ever law as the sites —
-        // an emptied queue is the user's own, never refilled.
-        if (existingTasks.isEmpty() && !seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
-            // Audit R2 #96: the starter slate is honest — QUEUED,
-            // zero seconds spent, no substep pre-done. The previous
-            // seed fabricated work history (an ACTIVE first task
-            // with 420s spent and a substep already done) that a
-            // fresh install never did.
-            val defaultTasks = listOf(
-                FocusTaskEntity(
-                    title = "Finish Chapter 4 Problem Set (#1–6)",
-                    notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                        listOf(
-                            TaskSubStep(0, "Draw free-body diagrams for problems #1–3", false),
-                            TaskSubStep(1, "Solve equilibrium equations for #1–3", false),
-                            TaskSubStep(2, "Complete problems #4–6 & verify units", false)
-                        )
-                    ),
-                    estimatedMinutes = 25,
-                    actualSecondsSpent = 0,
-                    categoryTag = "Study",
-                    queueOrder = 0,
-                    status = TaskQueueStatus.QUEUED.name
-                ),
-                FocusTaskEntity(
-                    title = "Synthesize Lecture 9 Architecture Notes",
-                    notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                        listOf(
-                            TaskSubStep(0, "Extract L1/L2 cache hierarchy diagrams", false),
-                            TaskSubStep(1, "Summarize virtual page table walkthrough", false),
-                            TaskSubStep(2, "Write 3 self-test recall prompts", false)
-                        )
-                    ),
-                    estimatedMinutes = 25,
-                    actualSecondsSpent = 0,
-                    categoryTag = "Writing",
-                    queueOrder = 1,
-                    status = TaskQueueStatus.QUEUED.name
-                ),
-                FocusTaskEntity(
-                    title = "Debug Dynamic Programming Memo Table",
-                    notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
-                        listOf(
-                            TaskSubStep(0, "Trace base case indices on paper first", false),
-                            TaskSubStep(1, "Fix off-by-one transition in memo[i][j]", false),
-                            TaskSubStep(2, "Run edge-case unit test suite", false)
-                        )
-                    ),
-                    estimatedMinutes = 45,
-                    actualSecondsSpent = 0,
-                    categoryTag = "Code",
-                    queueOrder = 2,
-                    status = TaskQueueStatus.QUEUED.name
-                )
-            )
-            dao.insertTasks(defaultTasks)
-            seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
-        } else {
-            // Content exists — seeded or the user's own. Record
-            // seeded-ever (an install predating the flag counts as
-            // seeded) so a later emptying is honoured as his own.
-            if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
-                seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
-            }
-            // Deduplicate ONLY true duplicates created by a prior
-            // double-insert race (issue #106, finding 1).
-            // PERMANENCE GUARD: a COMPLETED task is a stored record (the
-            // Drawer) — repeat-titled completions are the normal shape of
-            // a year, and this pass must never delete one. Stored rows are
-            // skipped entirely: not deleted, and not registered as a
-            // dedup key against anything.
-            // The old key was title+status alone, so two DIFFERENT user
-            // tasks that happen to share a title ("Revision", "Read
-            // Chapter 4" for two subjects — both QUEUED) silently lost
-            // the later one at every launch, with no undo. A title is
-            // not an identity. A row is only a true duplicate when
-            // EVERY field that could distinguish two tasks matches an
-            // earlier row — title, status, category, sub-steps, estimate,
-            // seconds spent, queue order and completion stamps — i.e.
-            // the same insertion written twice, never two tasks the man
-            // wrote. Anything short of that is kept, both of them.
-            val seenExactTasks = mutableSetOf<String>()
-            for (task in existingTasks.sortedBy { it.id }) {
-                if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
-                val key = listOf(
-                    task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
-                    task.notesOrSubsteps, task.estimatedMinutes.toString(),
-                    task.actualSecondsSpent.toString(), task.queueOrder.toString(),
-                    task.completedAtMillis.toString(),
-                    task.completedInSessionId.toString(),
-                    task.startedAtSessionElapsedSec?.toString() ?: "null"
-                ).joinToString("|")
-                if (!seenExactTasks.add(key)) {
-                    dao.deleteTaskById(task.id)
-                }
-            }
-            // Audit R6 #341 F04: the session dedup pass that used to
-            // live here is DELETED. Sessions are events, not catalogue
-            // rows: two sessions sharing intention + duration + task
-            // summary are two sessions (the normal shape of a daily
-            // practice), and keying deletion on user-visible content
-            // silently collapsed a history of daily sessions to one
-            // row on every cold start. No pass may delete a session
-            // for resembling another.
-        }
-        // Ren ruling 00:34 IST Oct 31 (#7): the one-time LEGACY
-        // OPEN reset runs at the end of the first seed-sync after
-        // the inversion lands, over the reconciled catalogue. A
-        // failure here must never break the sync itself — the
-        // done-flag stays unstamped and the pass retries on the
-        // next run.
+    /** The reset step of the catalogue half: the one-time
+     *  LEGACY OPEN reset runs over the reconciled catalogue,
+     *  keyed on the entry-captured fact. A failure here must
+     *  never break the sync itself — the done-flag stays
+     *  unstamped and the pass retries on the next run. */
+    private suspend fun runLegacyOpenResetStep(catalogueExistedAtEntry: Boolean) {
         try {
             runLegacyOpenResetIfNeeded(catalogueExistedAtEntry)
         } catch (e: Exception) {
             swallow("runLegacyOpenResetIfNeeded", e)
         }
-        drainDayWordsLocked()
+    }
+
+    /** The planned-end restore step of the catalogue pass
+     *  (Audit R6 #341 F05, landed by PR #781 on the monolith
+     *  pass). Composition (FINISHER-719D, on the #781
+     *  recomposition): on the monolith this step rode the
+     *  pass's tail, after the legacy reset and the day-word
+     *  drain; in the split it runs at the end of the
+     *  catalogue half — in [syncBirthCatalogue] after the
+     *  reset step, and in [ensureSeededAndSyncPackages]
+     *  after the seed tail (which ends in the drain) — under
+     *  the same discipline: a failure here must never break
+     *  the sync itself. It does not run in [ensureSeeded]
+     *  alone, exactly like the reset: it keys on the
+     *  reconciled pass, not the seed half. */
+    private suspend fun runPlannedEndRestoreStep() {
+        try {
+            restorePlannedEndIfLost()
+        } catch (e: Exception) {
+            swallow("restorePlannedEndIfLost", e)
         }
+    }
+
+    /**
+     * Audit R6 #341 F05 restore path: the live session row is
+     * overwritten every tick; the planned end is backed up twice
+     * (the row's plannedEndWallMillis column and the STARTED
+     * event's detail). If an active, non-stopwatch row ever stands
+     * with no backup column, restore it from the event log.
+     * Returns the restored end, or null when nothing was lost.
+     */
+    suspend fun restorePlannedEndIfLost(): Long? {
+        val active = dao.getActiveSessionSnapshot() ?: return null
+        if (!active.isActive || active.isStopwatchMode || active.plannedEndWallMillis != 0L) return null
+        val started = dao.getSessionEventsForSession(active.id)
+            .firstOrNull { it.kind == SessionEventKind.STARTED } ?: return null
+        val planned = started.detail.toLongOrNull() ?: return null
+        if (planned <= 0L) return null
+        dao.updateSession(active.copy(plannedEndWallMillis = planned))
+        return planned
+    }
+
+    /** Audit R6 #341 F05: append one timer event (append-only). */
+    private suspend fun appendSessionEvent(sessionId: Int, kind: String, detail: String = "") {
+        dao.insertSessionEvent(
+            SessionEventLogEntity(
+                sessionId = sessionId,
+                kind = kind,
+                atWallMillis = System.currentTimeMillis(),
+                atElapsedMillis = SystemClock.elapsedRealtime(),
+                detail = detail
+            )
+        )
+    }
+
+    /** Audit R6 #341 F01 (return side): a user-switch return while
+     *  a session is active stamps the gap onto the session's event
+     *  log — the time in the other profile is named, never silently
+     *  absorbed into the session as if it had been guarded. No
+     *  active session: nothing is recorded (no fabricated record). */
+    suspend fun recordUserSwitchGap() {
+        val active = dao.getActiveSessionSnapshot() ?: return
+        if (!active.isActive) return
+        appendSessionEvent(active.id, SessionEventKind.USER_GAP, System.currentTimeMillis().toString())
+    }
+
+    /** Audit R6 #341 F20: append one rule-change record. Writers
+     *  call this AFTER the mutation lands, so a failed mutation
+     *  writes no row. */
+    private suspend fun logRuleChange(kind: String, target: String, oldValue: String, newValue: String) {
+        dao.insertRuleChange(
+            RuleChangeLogEntity(
+                atWallMillis = System.currentTimeMillis(),
+                kind = kind, target = target, oldValue = oldValue, newValue = newValue
+            )
+        )
+    }
+
+    /** The seed head's yield: the seed prefs the tail reads
+     *  its seeded-ever flags from, and the
+     *  catalogue-existed-at-entry fact the head captured at
+     *  main's own position — after the resurrection
+     *  measurement (which births no catalogue rows), before
+     *  any seeding below it. */
+    private class SeedHead(
+        val seedPrefs: SharedPreferences,
+        val catalogueExistedAtEntry: Boolean
+    )
+
+    /** Seed half, head: the resurrection measurement, the
+     *  blocked-sites seed (and its v2 host upgrade), the
+     *  guard-settings row and the routines seed/reseed. The
+     *  caller holds [seedMutex]. Returns the head's yield —
+     *  the seed prefs, and the entry fact captured at the
+     *  position the monolith pass captured it. */
+    private suspend fun seedStandingStateHead(): SeedHead {
+    recordProvenanceIfResurrected()
+
+    // Ren ruling 00:34 IST Oct 31 (#7): whether this install
+    // ALREADY had a catalogue when this sync began — the fact
+    // the one-time legacy OPEN reset at the end of this pass
+    // keys on. Captured before any seeding/reconcile below can
+    // birth rows of its own: a fresh install has nothing
+    // legacy, and its newborn rows are never a "reset".
+    val catalogueExistedAtEntry = captureCatalogueExistedAtEntry()
+
+    // Audit R2 #96: seed only a store that has never carried
+    // content. Once content exists (seeded or the user's own)
+    // the seeded-ever flag is set, and a later empty store is
+    // the user's own emptying — honoured, never resurrected.
+    val seedPrefs = context.getSharedPreferences(SEED_PREFS_NAME, Context.MODE_PRIVATE)
+    val sitesNow = dao.getAllSitesSnapshot()
+    if (!seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+        if (sitesNow.isEmpty()) {
+            dao.insertSites(BlockedBrowserDomains.defaultDomains.map { BlockedSiteEntity(it) })
+        }
+        seedPrefs.edit().putBoolean(SEED_SITES_KEY, true).apply()
+
+    }
+    // W3 #130 F2 seed-upgrade (verifier correction, DURCH-D):
+    // an install that ran the v1 seed before "youtube.com"
+    // joined the defaults never re-seeds, so the host rule
+    // must be DELIVERED — once, and only where the legacy
+    // factory entry proves the seed stands unedited (the pure
+    // decision above; a user's deletion is never resurrected).
+    // A fresh install reaches this line with the current
+    // defaults just seeded, so the decision adds nothing and
+    // the flag simply closes. Runs under the same seed lock.
+    if (!seedPrefs.getBoolean(SEED_SITES_V2_KEY, false)) {
+        if (seedPrefs.getBoolean(SEED_SITES_KEY, false)) {
+            val upgradeAdds = youtubeHostSeedUpgrade(
+                dao.getAllSitesSnapshot().map { it.domain }
+            )
+            if (upgradeAdds.isNotEmpty()) {
+                dao.insertSites(upgradeAdds.map { BlockedSiteEntity(it) })
+            }
+        }
+        seedPrefs.edit().putBoolean(SEED_SITES_V2_KEY, true).apply()
+    }
+    if (dao.getGuardSettingsSnapshot() == null) {
+        dao.insertGuardSettings(GuardSettingsEntity())
+    }
+    // Routines: a fresh install seeds his real day directly and is
+    // marked reseed-done (it never "migrates" and never sees the
+    // reset note); an existing install runs the version-blind
+    // reseed transform once (Sten §2).
+    if (dao.getAllRoutinesSnapshot().isEmpty()) {
+        // Audit R2 #96: the fresh seed stamps its edit horizon,
+        // exactly as the reseed path does. With the default 0,
+        // every window that ended before the install would be
+        // judged MISSED — the derive law's own rule ("before
+        // that horizon judgement is UNKNOWN, never an invented
+        // MISSED") defeated by the seed itself.
+        val seededAtMillis = System.currentTimeMillis()
+        dao.insertRoutines(
+            routineTargets().map { it.copy(scheduleEditedAtMillis = seededAtMillis) }
+        )
+        // R3b #161 (update-day): an empty routines table means
+        // this install has never seeded — a first install, a
+        // wiped phone and a new phone are indistinguishable from
+        // inside, so the seed owes the user one honest sentence
+        // at first open instead of a silent factory state.
+        InstallNoteStore(context).markFreshStart()
+        val fresh = dao.getGuardSettingsSnapshot()
+        if (fresh != null && !fresh.routineReseedV1Done) {
+            dao.insertGuardSettings(
+                fresh.copy(routineReseedV1Done = true, routineReseedNoteDismissed = true)
+            )
+        }
+    } else {
+        reseedRoutinesV1()
+    }
+    return SeedHead(seedPrefs, catalogueExistedAtEntry)
+    }
+
+    /** The catalogue half: the collapse guard, the launcher
+     *  enumeration and the reconcile (inserts, usage updates,
+     *  the two-strike prune). The caller holds [seedMutex];
+     *  the body keeps its own try/catch — a restricted
+     *  package query degrades to a logged skip, never a
+     *  failed pass. */
+    private suspend fun reconcileCatalogueLocked(forceCatalogSync: Boolean) {
+    try {
+        // THE COLLAPSE GUARD (fresh-eyes L3): the two-strike
+        // prune is only as honest as the distance between the
+        // strikes. The ViewModel's init calls this sync and
+        // then its guard refresh calls it AGAIN seconds later
+        // (PARK's open does the same) — identical
+        // PackageManager state, so one transiently-filtered
+        // cold-start query used to satisfy both strikes in a
+        // single launch and prune. A non-forced call inside
+        // the window after a completed sync therefore skips
+        // the reconcile entirely: it touches no strikes, files
+        // no tombstones, prunes nothing. The rest of this
+        // seeding pass (sites, profiles, tasks, the day-word
+        // drain) is idempotent and still runs. A forced call,
+        // and any call after the window, is a genuinely
+        // separate look and reconciles normally.
+        val collapseRepeat = AppCatalogReconcile.isEnumerationSkipped(
+            forceCatalogSync = forceCatalogSync,
+            lastSuccessfulSyncMillis = loadLastCatalogSyncMillis(),
+            nowMillis = System.currentTimeMillis()
+        )
+        // Issue #69 F4 (startup half): the collapse check now
+        // gates the ENUMERATION itself, not only the reconcile
+        // after it. The ViewModel init pays this sync twice in
+        // seconds (ensureSeededAndSyncPackages, then again via
+        // refreshSystemGuard); on the old shape the repeat call
+        // still ran the full PackageManager + LauncherApps
+        // enumeration before the guard let it skip the
+        // reconcile. Inside the collapse window both
+        // enumerations are skipped, so the repeat costs no PM
+        // work at all; `installed` is empty, the reconcile
+        // below stays skipped exactly as before, and every
+        // other seeding step in this pass still runs. Data and
+        // behaviour identical — one enumeration, not two.
+        val pm = context.packageManager
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val resolvedList = if (collapseRepeat) {
+            emptyList()
+        } else {
+            pm.queryIntentActivities(mainIntent, 0)
+        }
+        // The main activity per package (its launch intent's
+        // component), resolved once per package — the reconcile's
+        // dedupe rule lets it win over shortcut activities.
+        val mainActivityByPackage = mutableMapOf<String, String?>()
+        val installedFromPm = resolvedList.mapNotNull { resolveInfo ->
+            val pkg = resolveInfo.activityInfo?.packageName ?: return@mapNotNull null
+            if (pkg == context.packageName || pkg.startsWith("com.android.settings")) {
+                return@mapNotNull null
+            }
+            val label = resolveInfo.loadLabel(pm)?.toString()
+                ?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val mainActivity = mainActivityByPackage.getOrPut(pkg) {
+                runCatching {
+                    pm.getLaunchIntentForPackage(pkg)?.component?.className
+                }.getOrNull()
+            }
+            InstalledPackage(
+                pkg, label,
+                isMainActivity = mainActivity != null &&
+                    mainActivity == resolveInfo.activityInfo?.name
+            )
+        }
+        // Issue #80 finding 1 (partial): the PackageManager
+        // query above only sees the CALLING profile. LauncherApps
+        // additionally enumerates the other profiles this user
+        // owns (work profile, dual-app/clone user), so a package
+        // installed only there is at least DISCOVERED and not
+        // pruned from the catalog. Per-profile rules remain
+        // impossible from one install — see the #80 report.
+        val profiled = installedFromPm.map {
+            ProfiledInstalledPackage(
+                it.packageName, it.label, Process.myUserHandle().toString()
+            )
+        }.toMutableList()
+        try {
+            val launcherApps =
+                context.getSystemService(Context.LAUNCHER_APPS_SERVICE) as? LauncherApps
+            // Issue #69 F4: the per-profile enumeration is
+            // gated by the same collapse check — a repeat sync
+            // inside the window enumerates nothing, anywhere.
+            if (launcherApps != null && !collapseRepeat) {
+                for (profile in launcherApps.profiles) {
+                    val activities = try {
+                        launcherApps.getActivityList(null, profile)
+                    } catch (_: Exception) {
+                        null
+                    } ?: continue
+                    for (info in activities) {
+                        val pkg = info.componentName?.packageName ?: continue
+                        if (pkg == context.packageName ||
+                            pkg.startsWith("com.android.settings")
+                        ) {
+                            continue
+                        }
+                        val label = info.label?.toString()
+                            ?.takeIf { it.isNotBlank() } ?: continue
+                        profiled.add(
+                            ProfiledInstalledPackage(pkg, label, profile.toString())
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Discovery stays exactly as complete as the old
+            // single-profile query when LauncherApps refuses.
+        }
+        // STURM3-13 port note: the calling-profile entries keep
+        // their isMainActivity flags (issue #34's dedupe rule
+        // depends on them), so the merged catalog is the PM list
+        // plus ONLY the packages other profiles add — the pure
+        // mergeProfiledInstalls view decides which those are.
+        val pmPackages = installedFromPm.map { it.packageName }.toSet()
+        val installed = installedFromPm +
+            AppCatalogReconcile.mergeProfiledInstalls(profiled)
+                .filter { it.packageName !in pmPackages }
+
+        // THE CATALOG IS THE PHONE'S TRUTH (Ordner lane, Sarthak's
+        // complaint Oct 29 22:40: the list carried apps he never
+        // installed). There is no blind factory seed any more:
+        // this sync reconciles the table to the installed
+        // launchable set — rows for packages absent on TWO
+        // consecutive syncs are PRUNED (with their rulings filed
+        // in the catalog memory first, issue #34), present
+        // packages are discovered without a cap, and the
+        // factory presets survive only as birth rules applied to
+        // packages that actually exist on this phone. An empty
+        // query result can only mean the query failed (the
+        // <queries> declaration in the manifest makes every
+        // launcher app visible), so an empty result skips the
+        // reconcile entirely rather than pruning his rules away.
+        if (installed.isNotEmpty() && !collapseRepeat) {
+            val existingRows = dao.getAllAppsSnapshot()
+            val plan = AppCatalogReconcile.reconcile(
+                existing = existingRows,
+                installed = installed,
+                usageMinutes = queryRealTodayUsageMinutes(),
+                categorize = ::categorizePackage,
+                previouslyAbsent = loadAbsentOnce(),
+                rememberedRules = loadRememberedRules()
+            )
+            if (plan.toInsert.isNotEmpty()) {
+                dao.insertApps(plan.toInsert)
+                // A restored package's tombstone is spent.
+                forgetRememberedRules(plan.toInsert.map { it.packageName })
+            }
+            if (plan.unreviewedOpenPackages.isNotEmpty()) {
+                recordUnreviewedOpen(plan.unreviewedOpenPackages)
+            }
+            plan.usageUpdates.forEach { dao.updateApp(it) }
+            if (plan.toPrune.isNotEmpty()) {
+                // M5 (Mikro): the prune announces itself once, so
+                // record what it took BEFORE the rows leave —
+                // how many, and whether any stored ruling went
+                // with them. The Shield strip prints exactly
+                // this record, once, and nothing it can't prove.
+                val prunedRows = existingRows.filter {
+                    it.packageName in plan.toPrune
+                }
+                // Issue #34: file the rulings BEFORE the rows
+                // leave, so a returning package is reborn with
+                // its own ruling, never a silent OPEN.
+                rememberPrunedRules(prunedRows)
+                recordPruneNote(
+                    appsRemoved = prunedRows.size,
+                    rulesRemoved = prunedRows.any {
+                        it.resolvedTier != AppBlockTier.OPEN
+                    }
+                )
+                // A pruned app can no longer be reviewed; its
+                // unreviewed entry leaves with its row (#129 F1).
+                clearUnreviewedOpen(plan.toPrune)
+                dao.deleteAppsByPackage(plan.toPrune)
+            }
+            // The strike set for the next sync: only packages
+            // absent for the FIRST time here. A package absent
+            // twice has been pruned above; one present again
+            // clears itself by not being absent.
+            saveAbsentOnce(plan.pendingPrune.toSet())
+            // The sync completed: this instant anchors the
+            // collapse window (L3). Only a reconcile that
+            // actually ran earns the stamp — an empty query
+            // above is a failed look and starts no window.
+            saveLastCatalogSyncMillis(System.currentTimeMillis())
+        }
+    } catch (e: Exception) {
+        // Safe fallback if package querying is restricted — logged, not silent (#33).
+        swallow("ensureSeededAndSyncPackages catalog sync", e)
+    }
+    }
+
+    /** Seed half, tail: the profile seed and its standing
+     *  patches, the starter task slate under the seeded-ever
+     *  law, the exact-duplicate task dedup and the day-word
+     *  drain. The caller holds [seedMutex]. The legacy OPEN
+     *  reset is NOT here: it belongs to the catalogue half
+     *  (RULING 2, 6544113775) and never fires from the seed
+     *  tail. */
+    private suspend fun seedStandingStateTail(seedPrefs: SharedPreferences) {
+    val existingProfiles = dao.getAllProfilesSnapshot()
+    if (existingProfiles.isEmpty()) {
+        val defaultProfiles = listOf(
+            FocusProfileEntity(
+                name = "Study Loadout",
+                codeName = "Study Mode",
+                description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper.",
+                defaultMinutes = 50,
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES",
+                scheduleLabel = "09:00 – 13:00 • Weekdays",
+                isScheduleEnabled = false,
+                startHour = 9,
+                startMinute = 0,
+                endHour = 13,
+                endMinute = 0
+            ),
+            FocusProfileEntity(
+                name = "Exam Lockdown",
+                codeName = "Exam Mode",
+                description = "Full 90-minute exam shield across all feeds, games, and video apps.",
+                defaultMinutes = 90,
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,MESSAGING,BROWSERS",
+                scheduleLabel = "14:00 – 18:00 • Exam Prep",
+                isScheduleEnabled = false,
+                startHour = 14,
+                startMinute = 0,
+                endHour = 18,
+                endMinute = 0
+            ),
+            FocusProfileEntity(
+                name = "Sleep Loadout",
+                codeName = "Sleep Guard",
+                description = "Locks every app except Phone, Clock, and Maps so you sleep on time.",
+                defaultMinutes = 60,
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING",
+                scheduleLabel = "22:30 – 07:00 • Nightly",
+                isScheduleEnabled = false,
+                startHour = 22,
+                startMinute = 30,
+                endHour = 7,
+                endMinute = 0
+            ),
+            FocusProfileEntity(
+                name = "Quick Homework",
+                codeName = "25m Sprint",
+                description = "Blocks short-form video while keeping messaging on 2m Peek for study groups.",
+                defaultMinutes = 25,
+                blockedCategoriesCsv = "SHORT_VIDEO,GAMES",
+                scheduleLabel = "19:00 – 21:00 • Daily",
+                isScheduleEnabled = false,
+                startHour = 19,
+                startMinute = 0,
+                endHour = 21,
+                endMinute = 0
+            )
+        )
+        dao.insertProfiles(defaultProfiles)
+    }
+
+    // Issue #139 truth patches for rows seeded by older builds:
+    // the Sleep seed forgot MESSAGING (WhatsApp stayed open under
+    // a profile that promises to lock everything but Phone,
+    // Clock and Maps), the Study seed promised YouTube a 2m
+    // Peek the category system cannot give it, and every seed
+    // claimed an enabled schedule no engine has ever read.
+    // Patches bite only on rows still carrying the exact old
+    // seed values — a hand-edited profile is never rewritten.
+    val seededNames = setOf("Study Loadout", "Exam Lockdown", "Sleep Loadout", "Quick Homework")
+    existingProfiles.forEach { profile ->
+        var patched = profile
+        if (profile.name == "Sleep Loadout" &&
+            profile.blockedCategoriesCsv == "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS"
+        ) {
+            patched = patched.copy(
+                blockedCategoriesCsv = "SHORT_VIDEO,SOCIAL,GAMES,SHOPPING,BROWSERS,MESSAGING"
+            )
+        }
+        if (profile.name == "Study Loadout" &&
+            profile.description == "Locks Social & Games, sets YouTube & Messaging to 2m Peek, arms Shorts Sniper."
+        ) {
+            patched = patched.copy(
+                description = "Locks Social, Games & short video (YouTube included), sets Messaging to 2m Peek, arms Shorts Sniper."
+            )
+        }
+        if (profile.name in seededNames && profile.isScheduleEnabled) {
+            patched = patched.copy(isScheduleEnabled = false)
+        }
+        if (patched != profile) dao.updateProfile(patched)
+    }
+
+    // Fabricated demo history STRUCK in this lane too (Lie
+    // Register 3 F-3; caught by Ren's pre-merge S1 sweep,
+    // Oct 29): this copy of the seed block still inserted
+    // three invented sessions, invented intercept logs and
+    // invented captured notifications on first run — the
+    // frozen base predated trunk's scrub. Fresh installs
+    // now start with an empty, true history.
+
+    val existingTasks = dao.getAllTasksSnapshot()
+    // Audit R2 #96: the same seeded-ever law as the sites —
+    // an emptied queue is the user's own, never refilled.
+    if (existingTasks.isEmpty() && !seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
+        // Audit R2 #96: the starter slate is honest — QUEUED,
+        // zero seconds spent, no substep pre-done. The previous
+        // seed fabricated work history (an ACTIVE first task
+        // with 420s spent and a substep already done) that a
+        // fresh install never did.
+        val defaultTasks = listOf(
+            FocusTaskEntity(
+                title = "Finish Chapter 4 Problem Set (#1–6)",
+                notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                    listOf(
+                        TaskSubStep(0, "Draw free-body diagrams for problems #1–3", false),
+                        TaskSubStep(1, "Solve equilibrium equations for #1–3", false),
+                        TaskSubStep(2, "Complete problems #4–6 & verify units", false)
+                    )
+                ),
+                estimatedMinutes = 25,
+                actualSecondsSpent = 0,
+                categoryTag = "Study",
+                queueOrder = 0,
+                status = TaskQueueStatus.QUEUED.name
+            ),
+            FocusTaskEntity(
+                title = "Synthesize Lecture 9 Architecture Notes",
+                notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                    listOf(
+                        TaskSubStep(0, "Extract L1/L2 cache hierarchy diagrams", false),
+                        TaskSubStep(1, "Summarize virtual page table walkthrough", false),
+                        TaskSubStep(2, "Write 3 self-test recall prompts", false)
+                    )
+                ),
+                estimatedMinutes = 25,
+                actualSecondsSpent = 0,
+                categoryTag = "Writing",
+                queueOrder = 1,
+                status = TaskQueueStatus.QUEUED.name
+            ),
+            FocusTaskEntity(
+                title = "Debug Dynamic Programming Memo Table",
+                notesOrSubsteps = FocusTaskEntity.serializeSubSteps(
+                    listOf(
+                        TaskSubStep(0, "Trace base case indices on paper first", false),
+                        TaskSubStep(1, "Fix off-by-one transition in memo[i][j]", false),
+                        TaskSubStep(2, "Run edge-case unit test suite", false)
+                    )
+                ),
+                estimatedMinutes = 45,
+                actualSecondsSpent = 0,
+                categoryTag = "Code",
+                queueOrder = 2,
+                status = TaskQueueStatus.QUEUED.name
+            )
+        )
+        dao.insertTasks(defaultTasks)
+        seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
+    } else {
+        // Content exists — seeded or the user's own. Record
+        // seeded-ever (an install predating the flag counts as
+        // seeded) so a later emptying is honoured as his own.
+        if (!seedPrefs.getBoolean(SEED_TASKS_KEY, false)) {
+            seedPrefs.edit().putBoolean(SEED_TASKS_KEY, true).apply()
+        }
+        // Deduplicate ONLY true duplicates created by a prior
+        // double-insert race (issue #106, finding 1).
+        // PERMANENCE GUARD: a COMPLETED task is a stored record (the
+        // Drawer) — repeat-titled completions are the normal shape of
+        // a year, and this pass must never delete one. Stored rows are
+        // skipped entirely: not deleted, and not registered as a
+        // dedup key against anything.
+        // The old key was title+status alone, so two DIFFERENT user
+        // tasks that happen to share a title ("Revision", "Read
+        // Chapter 4" for two subjects — both QUEUED) silently lost
+        // the later one at every launch, with no undo. A title is
+        // not an identity. A row is only a true duplicate when
+        // EVERY field that could distinguish two tasks matches an
+        // earlier row — title, status, category, sub-steps, estimate,
+        // seconds spent, queue order and completion stamps — i.e.
+        // the same insertion written twice, never two tasks the man
+        // wrote. Anything short of that is kept, both of them.
+        val seenExactTasks = mutableSetOf<String>()
+        for (task in existingTasks.sortedBy { it.id }) {
+            if (task.resolvedStatus == TaskQueueStatus.COMPLETED) continue
+            val key = listOf(
+                task.title.lowercase(java.util.Locale.ROOT), task.status, task.categoryTag,
+                task.notesOrSubsteps, task.estimatedMinutes.toString(),
+                task.actualSecondsSpent.toString(), task.queueOrder.toString(),
+                task.completedAtMillis.toString(),
+                task.completedInSessionId.toString(),
+                task.startedAtSessionElapsedSec?.toString() ?: "null"
+            ).joinToString("|")
+            if (!seenExactTasks.add(key)) {
+                dao.deleteTaskById(task.id)
+            }
+        }
+        // Issue #36 (ruling 1): the unsigned-row migration runs at
+        // the same tail — every standing blank-signature row is
+        // signed over its standing fields, once, so fail-closed
+        // verification never convicts a row the old semantics left
+        // unsigned. Idempotent (the blank-row query empties
+        // itself) and failure-safe: an un-signable row stays blank
+        // and the pass retries on the next sync.
+        try {
+            migrateUnsignedSessionSignatures()
+        } catch (e: Exception) {
+            swallow("migrateUnsignedSessionSignatures", e)
+        }
+        // Audit R6 #341 F04: the session dedup pass that used to
+        // live here is DELETED. Sessions are events, not catalogue
+        // rows: two sessions sharing intention + duration + task
+        // summary are two sessions (the normal shape of a daily
+        // practice), and keying deletion on user-visible content
+        // silently collapsed a history of daily sessions to one
+        // row on every cold start. No pass may delete a session
+        // for resembling another.
+    }
+    drainDayWordsLocked()
+
     }
 
     /**
@@ -1653,6 +1884,35 @@ class MonolithRepository(
             prefs.edit().putInt(LEGACY_OPEN_RESET_COUNT_KEY, targets.size).apply()
         }
         prefs.edit().putBoolean(LEGACY_OPEN_RESET_DONE_KEY, true).apply()
+    }
+
+    /**
+     * Issue #36 (ruling 1 — MIGRATE, then FAIL CLOSED): sign every
+     * standing unsigned session row over its own fields, so the
+     * row the old blank-accepting semantics left behind carries a
+     * real v2 signature from this pass on. Verification itself
+     * never signs (finding 5); this sweep is a WRITE path, run at
+     * seed-sync and — per row — at the tick head and the
+     * guard-status read, so no verify-facing flow can meet an
+     * unmigrated legacy row first. A row that cannot be signed
+     * (no keystore key obtainable) stays blank and fails closed
+     * until a later pass signs it; nothing is ever force-accepted.
+     */
+    private suspend fun migrateUnsignedSessionSignatures() {
+        for (row in dao.getUnsignedSessionsSnapshot()) {
+            migrateUnsignedRow(row)
+        }
+    }
+
+    /** The per-row half of the ruling-1 migration: returns the row
+     *  to work on — signed and stamped when it stood unsigned and
+     *  a signature could be minted, the row unchanged otherwise. */
+    private suspend fun migrateUnsignedRow(row: FocusSessionEntity): FocusSessionEntity {
+        if (row.hmacSignature.isNotBlank()) return row
+        val signature = CryptoIntegrityManager.signSessionState(row)
+        if (signature.isBlank()) return row
+        dao.stampSessionSignatureIfUnsigned(row.id, signature)
+        return row.copy(hmacSignature = signature)
     }
 
     /** The pending announcement's count, or 0 when the Sheet has
@@ -1799,7 +2059,10 @@ class MonolithRepository(
         if (captured.isEmpty()) return
         val drained = captured.mapNotNull { (dateIso, value) ->
             val word = value as? String ?: return@mapNotNull null
-            if (word in DAY_WORDS) DayNoteEntity(dateIso = dateIso, word = word) else null
+            // Audit R6 #341 F58: the declaration-time witness rides
+            // the drain into the row (0 when the word predates it).
+            val declaredAt = (captured["$dateIso#time"] as? Long) ?: 0L
+            if (word in DAY_WORDS) DayNoteEntity(dateIso = dateIso, word = word, declaredAtMillis = declaredAt) else null
         }
         if (drained.isEmpty()) return
         dao.insertDayNotes(drained)
@@ -2505,7 +2768,11 @@ class MonolithRepository(
     }
 
     suspend fun getSystemGuardStatus(): SystemGuardStatus = withContext(Dispatchers.IO) {
-        val active = dao.getActiveSessionSnapshot()
+        // Issue #36 (ruling 1): the status read verifies the
+        // active row — a legacy unsigned row is migrated first,
+        // exactly as at the tick head, so the surface never
+        // reports a pre-migration row as a signature failure.
+        val active = dao.getActiveSessionSnapshot()?.let { migrateUnsignedRow(it) }
         // Issue #28: with no active session there is nothing to
         // measure against — intact stays false (unproven), never
         // a free pass printed as a fact.
@@ -2546,6 +2813,7 @@ class MonolithRepository(
     suspend fun addBlockedSite(raw: String): Boolean {
         val domain = BlockedBrowserDomains.normalizeDomain(raw) ?: return false
         dao.insertSite(BlockedSiteEntity(domain))
+        logRuleChange(RuleChangeKind.SITE_ADD, domain, "", domain)
         return true
     }
 
@@ -2556,6 +2824,7 @@ class MonolithRepository(
         // path; this closes the verb itself for every caller).
         if (dao.getActiveSessionSnapshot()?.isActive == true) return
         dao.deleteSite(domain)
+        logRuleChange(RuleChangeKind.SITE_REMOVE, domain, domain, "")
     }
 
     suspend fun setBrowserBlockerEnabled(enabled: Boolean) {
@@ -2614,7 +2883,13 @@ class MonolithRepository(
     suspend fun updateRoutine(routine: RoutineEntity) {
         // Issue #32 F2: THE routine write funnel (ViewModel's
         // persistRoutine routes here) — sanitize at the boundary.
+        val before = dao.getAllRoutinesSnapshot().firstOrNull { it.id == routine.id }
         dao.updateRoutine(routine.sanitized())
+        logRuleChange(
+            RuleChangeKind.ROUTINE_UPDATE, routine.name,
+            before?.let { "${it.startMinutes}-${it.endMinutes}/${it.daysMask}/${it.enabled}" } ?: "",
+            "${routine.startMinutes}-${routine.endMinutes}/${routine.daysMask}/${routine.enabled}"
+        )
         // Issue #155, verifier residue (3c): NEXT SEAL is read from
         // routines — an edit while idle must refresh the widget
         // now, not at the platform's 30-minute cadence.
@@ -2626,6 +2901,10 @@ class MonolithRepository(
     suspend fun addRoutine(routine: RoutineEntity) {
         val now = System.currentTimeMillis()
         dao.insertRoutines(listOf(routine.copy(scheduleEditedAtMillis = now)))
+        logRuleChange(
+            RuleChangeKind.ROUTINE_ADD, routine.name, "",
+            "${routine.startMinutes}-${routine.endMinutes}/${routine.daysMask}/${routine.enabled}"
+        )
         // Issue #155 (3c): widget NEXT SEAL refresh, as above.
         MonolithWidgetProvider.requestUpdate(context)
     }
@@ -2634,7 +2913,9 @@ class MonolithRepository(
      *  derive() finalises orphaned routine sessions by their
      *  stored window snapshot (R5). */
     suspend fun deleteRoutine(id: Int) {
+        val before = dao.getAllRoutinesSnapshot().firstOrNull { it.id == id }
         dao.deleteRoutineById(id)
+        logRuleChange(RuleChangeKind.ROUTINE_DELETE, before?.name ?: "id:$id", before?.name ?: "", "")
         // Issue #155 (3c): widget NEXT SEAL refresh, as above.
         MonolithWidgetProvider.requestUpdate(context)
     }
@@ -2902,8 +3183,11 @@ class MonolithRepository(
             attended >= yardstickSec - ATTENDANCE_FLOOR_SECONDS -> WindowJudgement.ATTENDED
             else -> WindowJudgement.PARTIAL
         }
+        // Issue #36 (ruling 3): the funnel books the attended
+        // elapsed — a covered field — so the booked row is signed
+        // over its final fields like every covered write.
         dao.updateSession(
-            session.copy(
+            signedForPersist(session.copy(
                 elapsedSeconds = attended,
                 completedSuccessfully = outcome == WindowJudgement.ATTENDED,
                 forgedArtifactId = if (outcome == WindowJudgement.ATTENDED) session.forgedArtifactId else null,
@@ -2920,7 +3204,7 @@ class MonolithRepository(
                 } else {
                     session.endWallMillis
                 }
-            )
+            ))
         )
         // #152 residue: witness the end zone at this ending write.
         captureEndZone(session.endWallMillis, nowMillis)
@@ -3037,6 +3321,7 @@ class MonolithRepository(
         }
         val isBlockedFlag = nextTier != AppBlockTier.OPEN
         dao.setAppTier(app.packageName, isBlockedFlag, nextTier.name)
+        logRuleChange(RuleChangeKind.APP_TIER, app.packageName, app.resolvedTier.name, nextTier.name)
         // Audit R6 #340 F63: a re-ruled tier voids the episode
         // claim — the terms changed under the standing episode.
         com.example.service.InterceptClaim.release(app.packageName)
@@ -3062,7 +3347,9 @@ class MonolithRepository(
         // classify the default dialler / telephony stack LOCKED.
         val effectiveTier = EssentialApps.floorTier(packageName, tier)
         val isBlockedFlag = effectiveTier != AppBlockTier.OPEN
+        val oldTier = dao.getAllAppsSnapshot().firstOrNull { it.packageName == packageName }?.resolvedTier?.name ?: ""
         dao.setAppTier(packageName, isBlockedFlag, effectiveTier.name)
+        logRuleChange(RuleChangeKind.APP_TIER, packageName, oldTier, effectiveTier.name)
         // Audit R6 #340 F63: a re-ruled tier voids the episode
         // claim — the terms changed under the standing episode.
         // (On the gate's early return above no write happened, so
@@ -3694,15 +3981,42 @@ class MonolithRepository(
         windowEndMillis: Long = 0L,
         breakMinutes: Int? = null
     ): FocusSessionEntity {
-        // Issue #129 F2: the catalogue resyncs at EVERY session
-        // birth, before the held counts are captured below. An app
-        // installed after the last Monolith launch / sync — even a
-        // factory-preset one that will be born LOCKED — previously
-        // had no row, no tier and no enforcement for the whole
-        // session, because both enforcement doors only read rows
-        // that exist. Birth is the one moment every session passes
-        // through, whichever door armed it (hand or routine).
-        ensureSeededAndSyncPackages()
+        // Issue #129 F2 (placement amended by issue #515 F1): the
+        // catalogue resyncs at EVERY session birth — an app
+        // installed after the last sync must gain its row at
+        // birth, because both enforcement doors only read rows
+        // that exist, and birth is the one moment every session
+        // passes through, whichever door armed it (hand or
+        // routine). But #515 F1 proved the resync's PLACE was
+        // wrong: run inline here, a phone-wide PackageManager +
+        // LauncherApps scan sat inside the proving budget
+        // (DWELL 210 / DEADLINE 500 / ANNUL 1500), so a cold or
+        // slow scan jammed L1 and annulled correctly performed
+        // arms. The birth now inserts from the STANDING catalogue
+        // — the rows that exist; L1 is a Room insert, not a
+        // phone-wide scan — and the CATALOGUE half of the resync
+        // fires async the moment the insert lands
+        // (launchBirthCatalogSync, below); the SEED half is
+        // awaited just below (ensureSeeded) — cheap Room/prefs
+        // writes whose settled-not-in-flight ordering other
+        // paths rely on (the split cure: this lane's first shape
+        // let a fully-async pass seed the starter task slate
+        // into a just-emptied queue mid-flow). The
+        // #129 coverage is preserved: the new row arrives seconds
+        // into the session, both doors read rows live per event
+        // so enforcement picks it up the moment it exists, and
+        // only the seal's printed held count — captured from the
+        // standing catalogue, as its single-writer law requires —
+        // predates it.
+        // Issue #515 F1 (split cure): settle the seed half
+        // before the birth — see ensureSeeded's note. The
+        // phone-wide catalogue scan is the only part of the
+        // old inline pass that stays off this path. The seed
+        // half returns the catalogue-existed-at-entry fact it
+        // captured at this sequence's head; the value rides
+        // into the birth sync below (RULING 2, 6544113775).
+        val catalogueExistedAtEntry = ensureSeeded()
+
         val isStopwatch = durationMinutes < 10
         val targetSecs = if (isStopwatch) {
             STOPWATCH_MIN_FLOOR_SECONDS
@@ -3712,15 +4026,12 @@ class MonolithRepository(
         val wallNow = System.currentTimeMillis()
         val monoNow = SystemClock.elapsedRealtime()
         val bootCount = querySystemBootCountOrNull() ?: 0
-        val hmac = CryptoIntegrityManager.signSessionState(
-            startWallTimeMillis = wallNow,
-            startElapsedRealtimeMillis = monoNow,
-            bootCount = bootCount,
-            targetDurationSeconds = targetSecs,
-            isStopwatch = isStopwatch
-        )
 
-        val session = FocusSessionEntity(
+        // Issue #36 (ruling 3): the row is built first and signed
+        // over its own final (sanitized) fields by signedForPersist
+        // below — the stored signature is the signature OF the
+        // stored row.
+        val session = signedForPersist(FocusSessionEntity(
             // Issue #124 (typing-intention): the intention is
             // frozen HERE, at birth, exactly as declared — trimmed
             // and capped, and a blank stays blank. The old ifBlank
@@ -3739,7 +4050,7 @@ class MonolithRepository(
             bootCount = bootCount,
             accumulatedBeforeRebootSeconds = 0,
             lastTickElapsedRealtimeMillis = monoNow,
-            hmacSignature = hmac,
+            hmacSignature = "",
             isStopwatchMode = isStopwatch,
             totalStudyBlocks = studyBlocksCount.coerceIn(1, 8),
             currentBlockIndex = 1,
@@ -3761,10 +4072,13 @@ class MonolithRepository(
             routineId = routineId,
             windowStartMillis = windowStartMillis,
             windowEndMillis = windowEndMillis,
+            // Audit R6 #341 F05: the end backup, written once at
+            // birth from the same facts the HMAC signs.
+            plannedEndWallMillis = if (isStopwatch) 0L else wallNow + targetSecs * 1000L,
             // E1: the window is open and his kit is on (Sten §1.6.1).
             // first/last evidence stamps stay 0 until E2/E4 land.
             evidenceMask = if (routineId != null) EVIDENCE_E1_START else 0
-        ).sanitized() // Issue #32 F2: write-boundary sanitize (startSession funnel)
+        ).sanitized()) // Issue #32 F2: write-boundary sanitize (startSession funnel)
         // Issue #152: witness the zone this arming is lived in,
         // keyed by the arm instant, so the receipt can print its
         // ARMED time truthfully after a landing. Written at this
@@ -3778,7 +4092,7 @@ class MonolithRepository(
         // itself. Exactly one writer exists for these columns
         // (this insert); no DAO update for them will ever exist.
         val database = db() // ISSUE-67: injected database, no re-fetch
-        return database.withTransaction {
+        val born = database.withTransaction {
             val snapshotApps = dao.getAllAppsSnapshot()
             val heldApps = countHeldApps(snapshotApps)
             // W-41: the tier split rides the same snapshot and
@@ -3810,6 +4124,9 @@ class MonolithRepository(
                         endWallMillis = System.currentTimeMillis()
                     )
                 )
+                // Audit R6 #341 F05: the supersede is a logged
+                // transition in the predecessor's own event log.
+                appendSessionEvent(predecessor.id, SessionEventKind.SUPERSEDED)
             }
             dao.deactivateAllSessions()
             val id = dao.insertSession(
@@ -3818,10 +4135,44 @@ class MonolithRepository(
                     heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
                 )
             ).toInt()
+            // Audit R6 #341 F05: STARTED opens the new session's
+            // append-only event log; its detail is the planned end
+            // (the restore source if the live row is ever lost).
+            appendSessionEvent(id, SessionEventKind.STARTED, session.plannedEndWallMillis.toString())
             session.copy(
                 id = id, heldAppsAtSeal = heldApps, heldSitesAtSeal = heldSites,
                 heldShutAtSeal = heldShut, heldPeekAtSeal = heldPeek
             )
+        }
+        // Issue #515 F1: the insert has landed — fire the birth
+        // resync off the proving path (see the note at this
+        // function's head). L1 resolves on the insert alone.
+        launchBirthCatalogSync(catalogueExistedAtEntry)
+        return born
+    }
+
+    /** Issue #515 F1: the birth catalogue resync, fired off the
+     *  seal's proving path. It runs the catalogue half only
+     *  (syncBirthCatalogue) — the seed half was awaited before
+     *  the insert (ensureSeeded), so nothing this launch
+     *  writes can land inside another flow's ordering.
+     *  [catalogueExistedAtEntry] is the fact the seed half
+     *  captured at the sequence's head, threaded through so
+     *  the reset at the catalogue half's end keys on the
+     *  catalogue as the sequence found it (RULING 2,
+     *  6544113775). Fire-and-forget by design: the sync
+     *  is mutex-guarded, idempotent and collapse-windowed, and
+     *  its failure is only logged — the next sync any surface
+     *  fires (ViewModel init, shield start, the next birth)
+     *  re-runs it, so a failed birth sync delays catalogue truth
+     *  by one launch at worst. It never blocks, jams or annuls
+     *  the arm that fired it. */
+    private fun launchBirthCatalogSync(catalogueExistedAtEntry: Boolean) {
+        birthSyncScope.launch {
+            runCatching { syncBirthCatalogue(catalogueExistedAtEntry) }
+                .onFailure {
+                    Log.w(TAG, "birth catalogue sync failed; a later sync re-runs it", it)
+                }
         }
     }
 
@@ -3871,19 +4222,16 @@ class MonolithRepository(
             val row = dao.getActiveSessionSnapshot() ?: return@withTransaction false
             if (row.id != sessionId || !row.isActive) return@withTransaction false
             val wallNow = System.currentTimeMillis()
-            val hmac = CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = wallNow,
-                startElapsedRealtimeMillis = t0Mono,
-                bootCount = row.bootCount,
-                targetDurationSeconds = row.targetDurationSeconds,
-                isStopwatch = row.isStopwatchMode
-            )
+            // Issue #36 (ruling 3): the re-anchored row is signed
+            // over its own final fields (anchors AND the moved
+            // lastTick), as at every re-anchor in this machine.
             dao.updateSession(
-                row.copy(
-                    startWallTimeMillis = wallNow,
-                    startElapsedRealtimeMillis = t0Mono,
-                    lastTickElapsedRealtimeMillis = t0Mono,
-                    hmacSignature = hmac
+                signedForPersist(
+                    row.copy(
+                        startWallTimeMillis = wallNow,
+                        startElapsedRealtimeMillis = t0Mono,
+                        lastTickElapsedRealtimeMillis = t0Mono
+                    )
                 )
             )
             true
@@ -4882,9 +5230,6 @@ class MonolithRepository(
         breakTakenSeconds: Int
     ): FocusSessionEntity {
         val wallNow = System.currentTimeMillis()
-        val freshHmac = CryptoIntegrityManager.signSessionState(
-            wallNow, nowMono, currentBoot, session.targetDurationSeconds, false
-        )
         // ST-03: the exit speaks here, at the flip — the one
         // point every break exit crosses exactly once, so the
         // timer's end and the hand's end sound identically,
@@ -4896,26 +5241,28 @@ class MonolithRepository(
         // alarm already fired, its ledger entry stands and the
         // cancel is a no-op.
         com.example.service.BreakEndScheduler.cancel(context)
-        return session.copy(
-            currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
-            isInSafeBreak = false,
-            midBlockSafeBreak = false,
-            safeBreakSecondsRemaining = 0,
-            breakTakenSeconds = breakTakenSeconds,
-            // W3 #134: the call ledger is per-block, like the
-            // anchors this write re-bases — the next block's
-            // verified elapsed counts from the fresh anchor, so
-            // the exclusion must restart with it or one block's
-            // call would tax the next block's clock.
-            callExcludedSeconds = 0,
-            elapsedSeconds = 0,
-            startWallTimeMillis = wallNow,
-            startElapsedRealtimeMillis = nowMono,
-            bootCount = currentBoot,
-            accumulatedBeforeRebootSeconds = 0,
-            lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = freshHmac,
-            shieldLastBeatWallMillis = beatWall
+        // Issue #36 (ruling 3): signed over the built row itself.
+        return signedForPersist(
+            session.copy(
+                currentBlockIndex = (session.currentBlockIndex + 1).coerceAtMost(session.totalStudyBlocks),
+                isInSafeBreak = false,
+                midBlockSafeBreak = false,
+                safeBreakSecondsRemaining = 0,
+                breakTakenSeconds = breakTakenSeconds,
+                // W3 #134: the call ledger is per-block, like the
+                // anchors this write re-bases — the next block's
+                // verified elapsed counts from the fresh anchor, so
+                // the exclusion must restart with it or one block's
+                // call would tax the next block's clock.
+                callExcludedSeconds = 0,
+                elapsedSeconds = 0,
+                startWallTimeMillis = wallNow,
+                startElapsedRealtimeMillis = nowMono,
+                bootCount = currentBoot,
+                accumulatedBeforeRebootSeconds = 0,
+                lastTickElapsedRealtimeMillis = nowMono,
+                shieldLastBeatWallMillis = beatWall
+            )
         )
     }
 
@@ -4945,25 +5292,24 @@ class MonolithRepository(
         breakTakenSeconds: Int
     ): FocusSessionEntity {
         val wallNow = System.currentTimeMillis()
-        val freshHmac = CryptoIntegrityManager.signSessionState(
-            wallNow, nowMono, currentBoot, session.targetDurationSeconds, false
-        )
         breakBoundaryKnock(true)
         com.example.service.BreakEndScheduler.cancel(context)
-        return session.copy(
-            isInSafeBreak = false,
-            midBlockSafeBreak = false,
-            safeBreakSecondsRemaining = 0,
-            breakTakenSeconds = breakTakenSeconds,
-            callExcludedSeconds = 0,
-            elapsedSeconds = session.elapsedSeconds,
-            accumulatedBeforeRebootSeconds = session.elapsedSeconds.coerceAtLeast(0),
-            startWallTimeMillis = wallNow,
-            startElapsedRealtimeMillis = nowMono,
-            bootCount = currentBoot,
-            lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = freshHmac,
-            shieldLastBeatWallMillis = beatWall
+        // Issue #36 (ruling 3): signed over the built row itself.
+        return signedForPersist(
+            session.copy(
+                isInSafeBreak = false,
+                midBlockSafeBreak = false,
+                safeBreakSecondsRemaining = 0,
+                breakTakenSeconds = breakTakenSeconds,
+                callExcludedSeconds = 0,
+                elapsedSeconds = session.elapsedSeconds,
+                accumulatedBeforeRebootSeconds = session.elapsedSeconds.coerceAtLeast(0),
+                startWallTimeMillis = wallNow,
+                startElapsedRealtimeMillis = nowMono,
+                bootCount = currentBoot,
+                lastTickElapsedRealtimeMillis = nowMono,
+                shieldLastBeatWallMillis = beatWall
+            )
         )
     }
 
@@ -5073,7 +5419,11 @@ class MonolithRepository(
      *  exactly as the flip's entry does (ST-03 / issue #339) —
      *  one entry shape, whoever opens the door. */
     suspend fun startSafeBreakMidBlock(sessionId: Int): FocusSessionEntity? {
-        val row = dao.getActiveSessionSnapshot() ?: return null
+        val loaded = dao.getActiveSessionSnapshot() ?: return null
+        // Issue #36 (ruling 1): this door adjudicates on the
+        // verified clock — a legacy unsigned row is migrated
+        // before the adjudication, as at the tick head.
+        val row = migrateUnsignedRow(loaded)
         if (row.id != sessionId || !row.isActive || row.isInSafeBreak ||
             row.isStopwatchMode
         ) return row
@@ -5083,13 +5433,18 @@ class MonolithRepository(
         if (focusElapsed >= row.effectiveTargetSeconds) return row
         val nowMono = SystemClock.elapsedRealtime()
         val length = breakLengthSeconds(row)
-        val entered = row.copy(
-            elapsedSeconds = focusElapsed,
-            isInSafeBreak = true,
-            midBlockSafeBreak = true,
-            safeBreakSecondsRemaining = length,
-            extraSafeBreakSeconds = row.extraSafeBreakSeconds + length,
-            lastTickElapsedRealtimeMillis = nowMono
+        // Issue #36 (ruling 3): the entry moves two covered
+        // fields (elapsed, lastTick) — the persisted row is signed
+        // over its final fields, as at every covered write.
+        val entered = signedForPersist(
+            row.copy(
+                elapsedSeconds = focusElapsed,
+                isInSafeBreak = true,
+                midBlockSafeBreak = true,
+                safeBreakSecondsRemaining = length,
+                extraSafeBreakSeconds = row.extraSafeBreakSeconds + length,
+                lastTickElapsedRealtimeMillis = nowMono
+            )
         )
         dao.updateSession(entered)
         com.example.service.BreakEndScheduler.schedule(
@@ -5133,14 +5488,11 @@ class MonolithRepository(
         val effectiveTarget = session.targetDurationSeconds + session.penaltySecondsAdded
         if (effectiveTarget - verifiedElapsed >= 3600) return false
         val newTarget = session.targetDurationSeconds + addSeconds
-        val reSigned = session.copy(
-            targetDurationSeconds = newTarget,
-            hmacSignature = CryptoIntegrityManager.signSessionState(
-                session.startWallTimeMillis,
-                session.startElapsedRealtimeMillis,
-                session.bootCount,
-                newTarget,
-                session.isStopwatchMode
+        // Issue #36 (ruling 3): re-signed over the extended row
+        // itself, in the same write.
+        val reSigned = signedForPersist(
+            session.copy(
+                targetDurationSeconds = newTarget
             )
         )
         dao.updateSession(reSigned)
@@ -5212,11 +5564,7 @@ class MonolithRepository(
                 edited = edited.copy(
                     targetDurationSeconds = newTarget,
                     hmacSignature = CryptoIntegrityManager.signSessionState(
-                        fresh.startWallTimeMillis,
-                        fresh.startElapsedRealtimeMillis,
-                        fresh.bootCount,
-                        newTarget,
-                        fresh.isStopwatchMode
+                        fresh.copy(targetDurationSeconds = newTarget)
                     )
                 )
             }
@@ -5256,7 +5604,11 @@ class MonolithRepository(
         when {
             fresh == null -> session
             !fresh.isActive -> fresh
-            else -> updateSessionProgressLocked(fresh, stampShieldBeat)
+            // Issue #36 (ruling 1): a legacy unsigned row is
+            // migrated BEFORE the tick's verification reads it, so
+            // fail-closed never convicts a row the old semantics
+            // left unsigned.
+            else -> updateSessionProgressLocked(migrateUnsignedRow(fresh), stampShieldBeat)
         }
     }
 
@@ -5297,7 +5649,6 @@ class MonolithRepository(
         val newStartMono = frame.newStartMono
         val newStartWall = frame.newStartWall
         val newBootCount = frame.newBootCount
-        val newHmac = frame.newHmac
         if (updateGapLatched) {
             dao.latchShieldGap(session.id)
         }
@@ -5337,7 +5688,7 @@ class MonolithRepository(
             SessionWallClock.wallDeadlinePassed(session, System.currentTimeMillis())
         ) {
             val plannedEnd = SessionWallClock.plannedEndWallMillis(session)!!
-            val ended = session.copy(
+            val ended = signedForPersist(session.copy(
                 isActive = false,
                 completedSuccessfully = false,
                 isInSafeBreak = false,
@@ -5346,7 +5697,6 @@ class MonolithRepository(
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
                 lastTickElapsedRealtimeMillis = nowMono,
-                hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
                 shieldGapSeen = newShieldGapSeen,
@@ -5354,8 +5704,11 @@ class MonolithRepository(
                 shieldLastBeatWallMillis = beatWall,
                 outcome = SessionOutcome.ELAPSED_SHIELD_GAP,
                 endWallMillis = if (session.endWallMillis == 0L) plannedEnd else session.endWallMillis
-            )
+            ))
             dao.updateSession(ended)
+            // Audit R6 #341 F05: this ending write appends its
+            // ENDED transition to the session's event log.
+            appendSessionEvent(session.id, SessionEventKind.ENDED, ended.outcome)
             return ended
         }
 
@@ -5389,14 +5742,25 @@ class MonolithRepository(
             // completed, end stamped once), instead of copying
             // elapsed into the row and running indefinitely until
             // the user happens to find the valve.
-            if (verifiedElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
-                val capped = session.copy(
+            // W3 #134 follow-up (verifier F2/F1 hole, DURCH-D):
+            // the cap is a FOCUS-time cap and its ending is a
+            // finish like any other — it is judged on focusElapsed
+            // and never fires underneath a live call. The pre-fix
+            // check read raw verifiedElapsed with no call guard,
+            // so a FLOW session crossing 4h mid-call finished,
+            // unsealed under the conversation, and booked the cap
+            // on the strength of call minutes. Mid-call the branch
+            // below books focusElapsed and stays active; the first
+            // post-hang-up tick whose focusElapsed reaches the cap
+            // ends it and stamps the end then — the same held-
+            // finish law as the timed path.
+            if (!callActive && focusElapsed >= STOPWATCH_MAX_CAP_SECONDS) {
+                val capped = signedForPersist(session.copy(
                     elapsedSeconds = STOPWATCH_MAX_CAP_SECONDS,
                     startElapsedRealtimeMillis = newStartMono,
                     bootCount = newBootCount,
                     accumulatedBeforeRebootSeconds = newAccumulated,
                     lastTickElapsedRealtimeMillis = nowMono,
-                    hmacSignature = newHmac,
                     penaltySecondsAdded = penaltyAdd,
                     tamperDetected = tamper,
                     shieldGapSeen = newShieldGapSeen || updateGapLatched,
@@ -5410,14 +5774,14 @@ class MonolithRepository(
                     } else {
                         session.endWallMillis
                     }
-                )
+                ))
                 dao.updateSession(capped)
                 // #152 residue: witness the end zone at this
                 // ending write (keyed by the stamped end itself).
                 captureEndZone(session.endWallMillis, capped.endWallMillis)
                 return capped
             }
-            val updated = session.copy(
+            val updated = signedForPersist(session.copy(
                 elapsedSeconds = focusElapsed,
                 callExcludedSeconds = callExcluded,
                 startWallTimeMillis = newStartWall,
@@ -5425,13 +5789,12 @@ class MonolithRepository(
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
                 lastTickElapsedRealtimeMillis = nowMono,
-                hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
                 shieldGapSeen = newShieldGapSeen || updateGapLatched,
                 rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
-            )
+            ))
             dao.updateSession(updated)
             return updated
         }
@@ -5449,9 +5812,14 @@ class MonolithRepository(
             // the drain resumes from exactly this remainder when
             // the call ends.
             if (callActive) {
-                val heldBreak = session.copy(
-                    lastTickElapsedRealtimeMillis = nowMono,
-                    shieldLastBeatWallMillis = beatWall
+                // Issue #36 (ruling 3): the hold moves lastTick, a
+                // covered field — the held row is re-signed over
+                // its final fields like every covered write.
+                val heldBreak = signedForPersist(
+                    session.copy(
+                        lastTickElapsedRealtimeMillis = nowMono,
+                        shieldLastBeatWallMillis = beatWall
+                    )
                 )
                 dao.updateSession(heldBreak)
                 return heldBreak
@@ -5513,10 +5881,15 @@ class MonolithRepository(
                 MonolithWidgetProvider.requestUpdate(context)
                 nextBlockSession
             } else {
-                val updatedBreak = session.copy(
-                    safeBreakSecondsRemaining = nextBreakRemaining,
-                    lastTickElapsedRealtimeMillis = nextBreakAnchor,
-                    shieldLastBeatWallMillis = beatWall
+                // Issue #36 (ruling 3): the countdown moves
+                // lastTick, a covered field — re-signed over its
+                // final fields like every covered write.
+                val updatedBreak = signedForPersist(
+                    session.copy(
+                        safeBreakSecondsRemaining = nextBreakRemaining,
+                        lastTickElapsedRealtimeMillis = nextBreakAnchor,
+                        shieldLastBeatWallMillis = beatWall
+                    )
                 )
                 dao.updateSession(updatedBreak)
                 updatedBreak
@@ -5555,25 +5928,27 @@ class MonolithRepository(
         // user can actually see the session change state. The
         // shield loop reads isActive and keeps protecting.
         if (callActive && blockFinished) {
-            val heldFinish = session.copy(
+            val heldFinish = signedForPersist(session.copy(
                 elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
                 callExcludedSeconds = callExcluded,
                 startElapsedRealtimeMillis = newStartMono,
                 bootCount = newBootCount,
                 accumulatedBeforeRebootSeconds = newAccumulated,
                 lastTickElapsedRealtimeMillis = nowMono,
-                hmacSignature = newHmac,
                 penaltySecondsAdded = penaltyAdd,
                 tamperDetected = tamper,
                 shieldGapSeen = newShieldGapSeen || updateGapLatched,
                 rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
-            )
+            ))
             dao.updateSession(heldFinish)
             return heldFinish
         }
         if (blockFinished && session.currentBlockIndex < session.totalStudyBlocks) {
-            val safeBreakSession = session.copy(
+            // Issue #36 (ruling 3): the flip books the block's
+            // final elapsed and penalty — covered fields — so the
+            // entry row is signed over its final fields.
+            val safeBreakSession = signedForPersist(session.copy(
                 elapsedSeconds = effectiveTarget,
                 callExcludedSeconds = callExcluded,
                 isInSafeBreak = true,
@@ -5584,7 +5959,7 @@ class MonolithRepository(
                 shieldGapSeen = newShieldGapSeen,
                 rebootGapSeconds = newRebootGapSeconds,
                 shieldLastBeatWallMillis = beatWall
-            )
+            ))
             dao.updateSession(safeBreakSession)
             // Issue #155 (IQ-4 edge 8a): the block-flip break
             // ENTRY flips the widget to its break line here too —
@@ -5696,7 +6071,7 @@ class MonolithRepository(
             openExposureSeen = exposedAtEnd.isNotEmpty()
         )
 
-        val updated = session.copy(
+        val updated = signedForPersist(session.copy(
             elapsedSeconds = focusElapsed.coerceAtMost(effectiveTarget),
             callExcludedSeconds = callExcluded,
             startWallTimeMillis = newStartWall,
@@ -5704,7 +6079,6 @@ class MonolithRepository(
             bootCount = newBootCount,
             accumulatedBeforeRebootSeconds = newAccumulated,
             lastTickElapsedRealtimeMillis = nowMono,
-            hmacSignature = newHmac,
             penaltySecondsAdded = penaltyAdd,
             isActive = !allBlocksCompleted,
             // #129 F3: an exposed session elapsed, but it did not
@@ -5737,8 +6111,14 @@ class MonolithRepository(
             } else {
                 session.endWallMillis
             }
-        )
+        ))
         dao.updateSession(updated)
+        // Audit R6 #341 F05: a completed span appends its ENDED
+        // transition (first ending write only — a re-tick of an
+        // ended row returns earlier and never reaches here).
+        if (allBlocksCompleted && session.isActive) {
+            appendSessionEvent(session.id, SessionEventKind.ENDED, outcomeStamp)
+        }
         // #152 residue: witness the end zone at this ending write
         // (a no-op unless this tick first-stamped the end).
         captureEndZone(session.endWallMillis, updated.endWallMillis)
@@ -5759,7 +6139,8 @@ class MonolithRepository(
                         outcome = EXPOSURE_LOG_OUTCOME,
                         triggerReason = exposed.packageName,
                         outcomeKind = InterceptOutcomeKind.OPEN_EXPOSURE.name,
-                        triggerKind = InterceptTriggerKind.SYSTEM.name
+                        triggerKind = InterceptTriggerKind.SYSTEM.name,
+                        stopReason = InterceptStopReason.OPEN_EXPOSURE.name
                     )
                 )
             }
@@ -5785,7 +6166,14 @@ class MonolithRepository(
         // pass false: the intercept is still logged (with its
         // truthful outcome), but neither the per-app reach count nor
         // the session's phantom-reach count is inflated by it.
-        countAsReach: Boolean = true
+        countAsReach: Boolean = true,
+        // Issue #785 (the #324 follow-on): why the wall rose,
+        // stamped by callers that hold the firing door (the
+        // Airlock verbs pass interceptStopReasonFor's verdict).
+        // A caller that passes nothing stamps what the row's own
+        // facts prove (interceptStopReasonFromLegacy) — the same
+        // derive-at-the-write law the kinds above follow.
+        stopReason: InterceptStopReason = InterceptStopReason.UNKNOWN
     ) {
         // Issue #33 (audit R1): count + log + phantom-reach increment
         // are ONE transaction — a kill between them used to leave the
@@ -5802,6 +6190,14 @@ class MonolithRepository(
         // here at the write — the peek test below reads the kind,
         // and the row persists both kinds beside the legacy words.
         val outcomeKind = InterceptOutcomeKind.fromStoredWord(outcome)
+        // Issue #785: the stop reason is likewise settled ONCE,
+        // here at the write — the caller's door stamp when it
+        // passed one, else the row's own proven facts.
+        val stopReasonStamp = if (stopReason != InterceptStopReason.UNKNOWN) {
+            stopReason
+        } else {
+            interceptStopReasonFromLegacy(packageName, outcome)
+        }
         // Issue #7 charge N2 (DURCH-PRUEF2, verified LIVE on
         // current main): the launcher-door exit is the same
         // lie in a second verb — he was LET THROUGH (the doors
@@ -5831,7 +6227,8 @@ class MonolithRepository(
                     outcome = outcome,
                     triggerReason = triggerReason,
                     outcomeKind = outcomeKind.name,
-                    triggerKind = InterceptTriggerKind.derive(triggerReason, packageName).name
+                    triggerKind = InterceptTriggerKind.derive(triggerReason, packageName).name,
+                    stopReason = stopReasonStamp.name
                 )
             )
             if (countAsBlocked) {
@@ -5848,7 +6245,12 @@ class MonolithRepository(
         appName: String,
         sessionIntention: String,
         triggerReason: String = "UNSTATED",
-        arrivedAtWallMillis: Long
+        arrivedAtWallMillis: Long,
+        // Issue #785: the arrival is the one write that holds
+        // the firing door — the caller stamps why the wall rose,
+        // and the resolution verbs later update only this row's
+        // outcome, never its reason.
+        stopReason: InterceptStopReason = InterceptStopReason.UNKNOWN
     ): Long {
         dao.incrementInterceptCount(packageName)
         return dao.insertInterceptLog(
@@ -5858,7 +6260,8 @@ class MonolithRepository(
                 appName = appName,
                 sessionIntention = sessionIntention,
                 outcome = AT_DOOR_OUTCOME,
-                triggerReason = triggerReason
+                triggerReason = triggerReason,
+                stopReason = stopReason.name
             )
         )
     }
@@ -6058,7 +6461,11 @@ class MonolithRepository(
      *   [finaliseRoutineSession] books evidence-derived seconds only.
      *   No Partial Stamp is written for a routine session, ever.
      */
-    private suspend fun disarmRoutineSessionByBreak(active: FocusSessionEntity) {
+    private suspend fun disarmRoutineSessionByBreak(activeIn: FocusSessionEntity) {
+        // Issue #36 (ruling 1): this door stamps tamper from the
+        // verified clock — a legacy unsigned row is migrated
+        // before the adjudication, as at the tick head.
+        val active = migrateUnsignedRow(activeIn)
         if (active.routineId == null) {
             val (_, tamper) = computeVerifiedSessionElapsed(active)
             // Issue #287 F5: the routine-break door stamps the
@@ -6136,16 +6543,12 @@ class MonolithRepository(
             val active = dao.getActiveSessionSnapshot() ?: return@withContext null
             if (extraMinutes <= 0 || active.isStopwatchMode) return@withContext active
             val newTarget = active.targetDurationSeconds + extraMinutes * 60
-            val hmac = CryptoIntegrityManager.signSessionState(
-                startWallTimeMillis = active.startWallTimeMillis,
-                startElapsedRealtimeMillis = active.startElapsedRealtimeMillis,
-                bootCount = active.bootCount,
-                targetDurationSeconds = newTarget,
-                isStopwatch = active.isStopwatchMode
-            )
-            val updated = active.copy(
-                targetDurationSeconds = newTarget,
-                hmacSignature = hmac
+            // Issue #36 (ruling 3): re-signed over the extended
+            // row itself, in the same write.
+            val updated = signedForPersist(
+                active.copy(
+                    targetDurationSeconds = newTarget
+                )
             )
             dao.updateSession(updated)
             // Issue #155 (3c): widget SEALED-until refresh, as above.
@@ -6170,8 +6573,12 @@ class MonolithRepository(
             true
         }
 
+    // Issue #36 (ruling 1): the disarm doors adjudicate on the
+    // verified clock — a legacy unsigned row is migrated before
+    // the adjudication, as at the tick head, so an ending write
+    // never stamps a pre-migration row tampered.
     suspend fun disarmActiveSession(completed: Boolean, outcomeReason: String): DisarmResult {
-        val active = dao.getActiveSessionSnapshot() ?: return DisarmResult.NoActiveSession
+        val active = dao.getActiveSessionSnapshot()?.let { migrateUnsignedRow(it) } ?: return DisarmResult.NoActiveSession
         val (verifiedElapsed, tamper) = computeVerifiedSessionElapsed(active)
         // Audit R3b #149: the grace-window law (30s since issue
         // #125 F1's ruling), enforced where the booking happens —
@@ -6268,7 +6675,10 @@ class MonolithRepository(
         // log commit together or not at all — a kill between them
         // used to leave a disarmed session with no log, or a log
         // for a session still standing.
-        val disarmed = active.copy(
+        // Issue #36 (ruling 3): the disarm banks the final
+        // elapsed — a covered field — so the ending row is signed
+        // over its final fields like every covered write.
+        val disarmed = signedForPersist(active.copy(
             elapsedSeconds = bankedElapsed,
             isActive = false,
             completedSuccessfully = completed,
@@ -6288,9 +6698,12 @@ class MonolithRepository(
             } else {
                 active.endWallMillis
             }
-        )
+        ))
         databaseProvider().withTransaction {
             dao.updateSession(disarmed)
+            // Audit R6 #341 F05: the disarm ending appends its
+            // ENDED transition in the same transaction.
+            appendSessionEvent(active.id, SessionEventKind.ENDED, disarmed.outcome)
             if (!completed && !isGraceCancel) {
                 dao.insertInterceptLog(
                     InterceptLogEntity(
@@ -6299,7 +6712,8 @@ class MonolithRepository(
                         sessionIntention = active.intention,
                         outcome = outcomeReason,
                         outcomeKind = InterceptOutcomeKind.SESSION_END.name,
-                        triggerKind = InterceptTriggerKind.SYSTEM.name
+                        triggerKind = InterceptTriggerKind.SYSTEM.name,
+                        stopReason = InterceptStopReason.SESSION_DISARM.name
                     )
                 )
             }
@@ -6584,7 +6998,11 @@ class MonolithRepository(
             title = newTitle.trim().ifEmpty { existing.title },
             estimatedMinutes = newEstimatedMinutes.coerceIn(5, 180),
             categoryTag = newCategoryTag.ifBlank { existing.categoryTag },
-            notesOrSubsteps = newNotes.trim()
+            // Audit R6 #341 F67: the editor's notes are the task's
+            // NOTE — they land in noteText, never again in the
+            // substeps column, where every read re-parsed them as
+            // substeps and corrupted them.
+            noteText = newNotes.trim()
         )
         dao.updateTask(updated)
         updated

@@ -393,97 +393,18 @@ fun TactileDeckScreen(
         }
     }
 
-    val isStopwatchMode = if (finishState != null) {
-        finishState.frozenIsStopwatch
-    } else if (isSessionRunning) {
-        activeSession.isStopwatchMode
-    } else {
-        // The dial alone keys flow (ESR-08, truth patch at the
-        // drawer merge, re-applied over this lane at the slide
-        // merge): the engine arms on durationMinutes (< 10 =
-        // stopwatch) and never reads the preset, so a wheel drag
-        // to 90 after tapping FLOW must sell a timed 90.
-        dialMinutes < 10
-    }
-
-    val displaySeconds = if (finishState != null) {
-        // The held frame's frozen readout (F-L2: a FLOW finish
-        // freezes its count-up total; a timed finish its last
-        // remaining count) — the ticker has stopped; nothing here
-        // re-derives from it.
-        finishState.frozenDisplaySeconds
-    } else if (isSessionRunning) {
-        when {
-            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
-            // Audit R3b #148: during a Safe Break the per-block
-            // remainder is 0 — that block HAS finished — so the
-            // hero read 00:00 for ten minutes, a break displayed
-            // as FINISH. In a break the hero counts the break
-            // itself down (the shield's own rendering of the same
-            // fact), under the BREAK eyebrow the strip already
-            // prints.
-            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
-            else -> activeSession.remainingSeconds
-        }
-    } else {
-        dialMinutes * 60
-    }
-
-    val minsPart = displaySeconds / 60
-    val secsPart = displaySeconds % 60
-    // Audit R3b #147: a running (or just-finished) stopwatch counts
-    // UP — the bare MM:SS read exactly like a countdown. The +
-    // prefix marks the direction on the hero readout; a timed
-    // session's countdown stays bare.
-    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
-        (isSessionRunning && activeSession.isStopwatchMode)
-    val primaryReadout = if (countsUp) {
-        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
-    } else {
-        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
-    }
-
-    // True session span (BEYOND W3, verified against the engine): blocks
-    // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
-    // The hero and the finish line both price from this and nowhere else;
-    // the naive product understated a 3 x 50 morning by 20 minutes.
-    val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
-
-    // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
-    // inverted, invented fraction dies): timed progress is
-    // ELAPSED / TARGET, filling, no floors — never remaining/target
-    // born full and draining, never a 3–5% that isn't true. FLOW
-    // (stopwatch) has NO bar and NO fraction: NO END means no bar,
-    // and the old /1200 denominator was invented by the mode that
-    // denies it. Idle: no session exists, so no progress exists.
-    val progressFraction = if (finishState != null) {
-        if (finishState.frozenIsStopwatch) {
-            0f
-        } else {
-            val target = finishState.frozenTargetSeconds.coerceAtLeast(1)
-            val elapsed = (target - finishState.frozenDisplaySeconds).coerceAtLeast(0)
-            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
-        }
-    } else if (isSessionRunning) {
-        if (activeSession.isStopwatchMode) {
-            0f
-        } else if (activeSession.isInSafeBreak) {
-            // Audit R3b #148: in a break the bar prices the whole
-            // session span (the model's own span derivation — the
-            // break counts as session time), so it holds its
-            // ground and keeps moving instead of sitting at the
-            // finished block's empty remainder. Priced in the
-            // F3 form: elapsed/target, filling, no floors.
-            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
-            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
-        } else {
-            val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
-            val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
-            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
-        }
-    } else {
-        0f
-    }
+    val readout = deckReadoutFor(
+        finishState = finishState,
+        isSessionRunning = isSessionRunning,
+        activeSession = activeSession,
+        dialMinutes = dialMinutes,
+        studyBlocksCount = studyBlocksCount
+    )
+    val isStopwatchMode = readout.isStopwatchMode
+    val displaySeconds = readout.displaySeconds
+    val primaryReadout = readout.primaryReadout
+    val totalSpanMinutes = readout.totalSpanMinutes
+    val progressFraction = readout.progressFraction
 
     // =====================================================================
     // SLICE D — the strip's derivations (Uma/Rosa/Emil). TIME is a pure
@@ -522,17 +443,15 @@ fun TactileDeckScreen(
     // one-derivation law forbids; the bar now folds the one warrant
     // read directly (see the BoltInputs block below). No BLOCK word
     // is derived anywhere on this face any more.
-    val idleTimeCell: Pair<String, StripDensity> = when {
-        isStopwatchMode && !isSessionRunning -> "NO END" to StripDensity.PASS
-        dialMinutes !in 5..180 || studyBlocksCount !in 1..8 -> "INVALID" to StripDensity.FAULT
-        // UNA2-03 rider: "ENDS HH:mm" is a fact about the plan, but
-        // its PASS tone is a claim the wire stands behind — beside
-        // a warrant that is not freshly LIVE the end prints at
-        // UNKNOWN density, never PASS beside BLOCK OFF.
-        else -> endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
-            if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
-            else StripDensity.UNKNOWN
-    }
+    val idleTimeCell = idleEndsAtCell(
+        isStopwatchMode = isStopwatchMode,
+        isSessionRunning = isSessionRunning,
+        dialMinutes = dialMinutes,
+        studyBlocksCount = studyBlocksCount,
+        totalSpanMinutes = totalSpanMinutes,
+        warrantPrintState = warrantPrintState,
+        is24Hour = ClockText.is24Hour(LocalContext.current)
+    )
 
     // Emil's mid-press latch: at DOWN the host freezes the imprint
     // tenant and the TIME text; they render latched through the
@@ -627,32 +546,19 @@ fun TactileDeckScreen(
         }
     }
 
-    // The sealFreeze branches must test the freeze's presence, not
-    // only its key: at idle both sealFreeze and activeSession are
-    // null, null == null is true, and the !! below threw at
-    // composition — the idle Deck crashed in the harness before
-    // this guard (found by the lane's completion proof, Oct 29).
-    val frozenCount: Int? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.count
-        fbFrozenKey == activeSession?.id -> fbFrozenCount
-        else -> null
-    }
-    val frozenState: WarrantState? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.warrantState
-        fbFrozenKey == activeSession?.id ->
-            fbFrozenState?.let { runCatching { WarrantState.valueOf(it) }.getOrNull() }
-        else -> null
-    }
-    val frozenShut: Int? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.shutCount
-        fbFrozenKey == activeSession?.id -> fbFrozenShut
-        else -> null
-    }
-    val frozenPeek: Int? = when {
-        sealFreeze != null && sealFreeze.sessionId == activeSession?.id -> sealFreeze.peekCount
-        fbFrozenKey == activeSession?.id -> fbFrozenPeek
-        else -> null
-    }
+    val frozenSeal = frozenSealFor(
+        sealFreeze = sealFreeze,
+        activeSessionId = activeSession?.id,
+        fbFrozenKey = fbFrozenKey,
+        fbFrozenCount = fbFrozenCount,
+        fbFrozenShut = fbFrozenShut,
+        fbFrozenPeek = fbFrozenPeek,
+        fbFrozenState = fbFrozenState
+    )
+    val frozenCount = frozenSeal.count
+    val frozenState = frozenSeal.state
+    val frozenShut = frozenSeal.shut
+    val frozenPeek = frozenSeal.peek
 
     // Annulment retires the press like the seal does (step 4):
     // Issue #50 F2 cure (reset door) — no composition writes any
@@ -681,40 +587,20 @@ fun TactileDeckScreen(
     // its DOWN frame — derived, never written in composition.
     val pressLatchLive: PressLatch? =
         pressLatch?.takeIf { !isSessionRunning && latchArmKey == armResetKey }
-    val appsCell = when {
-        isSessionRunning -> {
-            if (frozenCount != null) frozenCount.toString() to StripDensity.PASS
-            else "UNKNOWN" to StripDensity.UNKNOWN
-        }
-        pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
-        // Issue #98 (R3 arming journey): the count's PASS tone is a
-        // promise those apps WILL be blocked — it may only print at
-        // PASS beside a freshly LIVE warrant, exactly the law the
-        // TIME cell's rider (UNA2-03, above) already obeys. Beside
-        // BLOCK OFF/UNKNOWN the number still prints (it is a count,
-        // not a verdict) but at UNKNOWN density, so the strip's
-        // cells can no longer disagree in one frame.
-        appsCellCount != null -> appsCellCount.toString() to
-            if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
-            else StripDensity.UNKNOWN
-        else -> "UNKNOWN" to StripDensity.UNKNOWN
-    }
-    val timeCell: Pair<String, StripDensity> = when {
-        isSessionRunning && activeSession != null -> {
-            if (activeSession.isStopwatchMode) {
-                "NO END" to StripDensity.PASS
-            } else {
-                // #127 finding 3: fresh wall clock at THIS composition
-                // (the session flow re-emits every second), never the
-                // minute-boundary nowFrame — mixing a minute-stale
-                // clock with a per-second countdown drifted ENDS up
-                // to a minute early and disagreed with the Airlock.
-                endsAtText(ClockText.is24Hour(LocalContext.current), sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
-            }
-        }
-        pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
-        else -> idleTimeCell
-    }
+    val appsCell = appsStripCell(
+        isSessionRunning = isSessionRunning,
+        frozenCount = frozenCount,
+        pressLatchLive = pressLatchLive,
+        appsCellCount = appsCellCount,
+        warrantPrintState = warrantPrintState
+    )
+    val timeCell = timeStripCell(
+        isSessionRunning = isSessionRunning,
+        activeSession = activeSession,
+        pressLatchLive = pressLatchLive,
+        idleTimeCell = idleTimeCell,
+        is24Hour = ClockText.is24Hour(LocalContext.current)
+    )
     // Issue #4 — THE FOLD (closer pass, ported by DURCH-A4).
     // Exactly one derivation reaches the seal bar: this block folds
     // the host's ONE warrant read (deckWarrant — raw state, print
@@ -831,17 +717,17 @@ fun TactileDeckScreen(
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Monolith shuts the apps you name while a study session runs.",
+                    text = stringResource(R.string.deck_intro_what),
                     style = BodyTextStyle,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "Two switches make it work. Both live in PARK, at the far end of the rail.",
+                    text = stringResource(R.string.deck_intro_switches),
                     style = BodyTextStyle,
                     color = scheme.onBackground
                 )
                 Text(
-                    text = "Nothing leaves this phone.",
+                    text = stringResource(R.string.deck_intro_privacy),
                     style = BodyTextStyle,
                     color = scheme.onSurfaceVariant
                 )
@@ -918,574 +804,48 @@ fun TactileDeckScreen(
         )
 
     }
-        // =====================================================================
-        // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
-        // the seal bar (issue #4 — THE BOLT's 60dp housing, grown
-        // from the retired proof strip's 53dp address per FEILE's
-        // grid, the SALZ rent the fold's evidence channel pays),
-        // the slide's 72dp register, the reserved sentence slot,
-        // and the imprint. The slide zone holds the grace / valve
-        // chips at the same address while sealed (Δy = 0 across
-        // tenancies), so the zone under the wheel never changes
-        // height by a pixel across the seal.
-        // =====================================================================
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            // Issue #4 — THE BOLT replaces the proof strip here:
-            // state by form (bolt pose + jewel), the end in one
-            // glass window; BIND/PROOF telemetry renders nowhere
-            // on this face (issue #6 F8's seam-stamp exile is
-            // subsumed — the stamps have no slot on the bar).
-            SealBar(
-                face = boltFace,
-                endsAtNumerals = sealNumerals,
-                plannedEndsAtNumerals = plannedNumerals
-            )
-            Spacer(Modifier.height(6.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                // Issue #125 (armed-wrong F3): during the grace
-                // window the ABORT chip owns this address even while
-                // the seal shot is still detaining the slide — the
-                // free exit must not be physically absent for the
-                // first ~1050ms of its own window. The Δy = 0 address
-                // discipline is unchanged: same Box, same chip.
-                val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
-                    activeSession != null &&
-                    activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
-                if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
-                    // The slide holds this address through the seal
-                    // (as the seated ghost), through the finish's
-                    // detention, and through its own return — the
-                    // chips take the address only for a settled,
-                    // receipt-free running session (F-Z3's room,
-                    // read by Kato's fallback: the utilities keep
-                    // the Δy = 0 address the zone has always had).
-                    AndroidView(
-                        factory = { ctx ->
-                            SlideToStartView(ctx).apply {
-                                this.soundEngine = soundEngine
-                                this.initialFraction = sledInitialFraction()
-                            }.also { slideViewRef = it }
-                        },
-                        update = { view ->
-                            slideViewRef = view
-                            view.isNightMode = groundNight
-                            view.soundEngine = soundEngine
-                            view.isArmedState = false
-                            if (view.resetKey != armResetKey) {
-                                view.resetKey = armResetKey
-                                if (armResetKey > 0) view.resetToRest()
-                            }
-                            view.warrantProvider = warrantProvider
-                            view.onPressStart = { downState ->
-                                // The latch captures from the slide's
-                                // own DOWN-frame read (Emil E-4), never
-                                // from this screen's async flow.
-                                latchArmKey = armResetKey
-                                pressLatch = PressLatch(
-                                    tenant = imprintTenantText(
-                                        isSealed = false,
-                                        shut = appsSplit?.shut,
-                                        peek = appsSplit?.peek,
-                                        warrantState = downState
-                                    ),
-                                    timeText = idleTimeCell.first,
-                                    timeDensity = idleTimeCell.second,
-                                    appsWord = appsCell.first,
-                                    appsDensity = appsCell.second
-                                )
-                            }
-                            view.onPressEnd = {
-                                if (!commitInFlight) pressLatch = null
-                            }
-                            view.onSlideCommitted = {
-                                commitInFlight = true
-                                onArmSession()
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(72.dp)
-                            .testTag("slide_to_start_view")
-                    )
-                } else {
-                    val withinGraceWindow = activeSession != null &&
-                        activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
-                    // Issue #103 F3: past the stopwatch 20-minute
-                    // floor, this same tap is a FREE, instant,
-                    // successful finish — no hold, no token spent.
-                    // The chip must say so; it may not keep wearing
-                    // the valve's label and price.
-                    val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
-                        activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-                    // Issue #98 (merged): the badge counts the
-                    // seconds the user can actually still use — the
-                    // whole window at the settle frame, 1 on the
-                    // last — derived
-                    // from the one constant the repository write
-                    // enforces (issue #103 F2).
-                    val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
-                    if (withinGraceWindow) {
-                        if (isActiveRoutineJudged) {
-                            // Issue #103 F1 / R3b #149: a non-SLEEP
-                            // routine session never takes the free
-                            // grace path — the repository diverts it
-                            // to its judging funnel (MISSED / PARTIAL
-                            // / ATTENDED). Same tap, same funnel (no
-                            // redesign under the routines freeze) —
-                            // the chip names the real cost instead of
-                            // promising a free grace cancel.
-                            BlockitActionChip(
-                                wordLabel = "END ROUTINE · WILL BE JUDGED",
-                                monoBadge = graceBadge,
-                                isPrimaryInk = true,
-                                onClick = onCancelWithinGraceWindow,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(72.dp),
-                                testTag = "routine_judged_end_button"
-                            )
-                        } else {
-                            BlockitActionChip(
-                                wordLabel = "GRACE WINDOW ABORT",
-                                monoBadge = graceBadge,
-                                isPrimaryInk = true,
-                                onClick = onCancelWithinGraceWindow,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(72.dp),
-                                testTag = "grace_abort_button"
-                            )
-                        }
-                    } else if (stopwatchFloorMet) {
-                        BlockitActionChip(
-                            wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
-                            monoBadge = "PAST 20M FLOOR",
-                            isPrimaryInk = true,
-                            onClick = onRequestDisarm,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(72.dp),
-                            testTag = "stopwatch_finish_button"
-                        )
-                    } else {
-                        // Audit R3b #147: past the stopwatch floor
-                        // this same tap is a clean, free finish —
-                        // requestDisarmChallenge completes the
-                        // session and never opens the valve. The
-                        // label says which door the tap opens:
-                        // FINISH SESSION with no token badge once
-                        // the floor is banked; the valve's true
-                        // name and price everywhere else.
-                        val stopwatchFloorMet = activeSession != null &&
-                            activeSession.isStopwatchMode &&
-                            activeSession.elapsedSeconds >=
-                                com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
-                        BlockitActionChip(
-                            wordLabel = if (stopwatchFloorMet) {
-                                "FINISH SESSION"
-                            } else {
-                                // Issue #114, finding 5: the door's
-                                // one name — EMERGENCY BREAK, the
-                                // same words its own overlay carries.
-                                "EMERGENCY BREAK (60S HOLD)"
-                            },
-                            // R3b #163 F4: a spent valve used to wear
-                            // the same badge as a live one ("0/1 WEEK"
-                            // read as a state, not a wait). The spent
-                            // badge now names the wait itself — the
-                            // week turns on Monday (MonolithWeek).
-                            monoBadge = when {
-                                stopwatchFloorMet -> ""
-                                weeklyEmergencyTokensRemaining > 0 ->
-                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
-                                else -> "0/1 WEEK · BACK MONDAY"
-                            },
-                            isPrimaryInk = true,
-                            onClick = onRequestDisarm,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
-                            testTag = "request_disarm_button"
-                        )
-                        Text(
-                            text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
-                            fontFamily = AtkinsonHyperlegibleFamily,
-                            fontSize = 12.5.sp,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
-                            modifier = Modifier.testTag("emergency_break_price")
-                        )
-                    }
-                }
-            }
-            // Audit R3b #149: the grace-to-valve cliff, named. The
-            // slot above swaps its chip at the window's edge with
-            // nothing saying the door changed; this standing line
-            // states both states, in both states — in-window it
-            // counts the free cancel down, past it the valve's
-            // terms stand printed before they are ever needed.
-            if (activeSession != null) {
-                val graceLeft = MonolithRepository.GRACE_WINDOW_SECONDS - activeSession.elapsedSeconds
-                Text(
-                    text = when {
-                        graceLeft > 0 && activeSession.routineId != null ->
-                            "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
-                        graceLeft > 0 ->
-                            "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
-                        // R3b #163 F4 (fix-forward): the spent state
-                        // names its wait here too, exactly as the
-                        // valve chip's badge does — the week turns
-                        // on Monday (MonolithWeek).
-                        else ->
-                            "GRACE SPENT · VALVE: 60S HOLD · " +
-                                if (weeklyEmergencyTokensRemaining > 0) {
-                                    "$weeklyEmergencyTokensRemaining/1 WEEK"
-                                } else {
-                                    "0/1 WEEK · BACK MONDAY"
-                                }
-                    },
-                    fontFamily = AnonymousProFamily,
-                    fontSize = 9.5.sp,
-                    letterSpacing = 0.8.sp,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-            }
-            // Issue #125 F4 (Sarthak's ruling, sharpened at
-            // 6544202995): the in-grace edit. The start window is
-            // the only place a wrong arm can be corrected — add
-            // time / change duration, change blocks, change
-            // loadout; nothing beyond the session's own setup,
-            // and nothing after the window. This block stands
-            // only while the row's elapsed is inside the window,
-            // and the repository refuses the write past it
-            // whatever any surface shows. Routine-born sessions
-            // never stand here: their ending is judged, not
-            // edited.
-            val graceEditSession = activeSession
-            if (graceEditSession != null && graceEditSession.routineId == null &&
-                graceEditSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
-            ) {
-                var graceEditOpen by remember(graceEditSession.id) { mutableStateOf(false) }
-                var editMinutes by remember(graceEditSession.id) {
-                    mutableStateOf(graceEditSession.targetDurationSeconds / 60)
-                }
-                var editBlocks by remember(graceEditSession.id) {
-                    mutableStateOf(graceEditSession.totalStudyBlocks)
-                }
-                var editLoadout by remember(graceEditSession.id) {
-                    mutableStateOf(
-                        SmartLoadout.entries.firstOrNull {
-                            it.title == graceEditSession.profileName
-                        }
-                    )
-                }
-                Spacer(Modifier.height(8.dp))
-                BlockitActionChip(
-                    wordLabel = if (graceEditOpen) "CLOSE EDIT" else "EDIT ARM",
-                    monoBadge = "START ONLY",
-                    isPrimaryInk = false,
-                    onClick = { graceEditOpen = !graceEditOpen },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(72.dp),
-                    testTag = "grace_edit_toggle"
-                )
-                if (graceEditOpen) {
-                    Spacer(Modifier.height(8.dp))
-                    if (graceEditSession.isStopwatchMode) {
-                        Text(
-                            text = "FLOW — NO SET DURATION TO CORRECT",
-                            fontFamily = AnonymousProFamily,
-                            fontSize = 9.5.sp,
-                            letterSpacing = 0.8.sp,
-                            color = scheme.onSurfaceVariant,
-                            modifier = Modifier.testTag("grace_edit_flow_note")
-                        )
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(scheme.surfaceVariant)
-                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        if (editMinutes > 10) {
-                                            editMinutes = maxOf(10, editMinutes - 5)
-                                        }
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 5.dp)
-                                    .testTag("grace_edit_minutes_down")
-                            ) {
-                                Text(
-                                    text = "−5",
-                                    fontFamily = AnonymousProFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    letterSpacing = 1.sp,
-                                    color = scheme.onBackground
-                                )
-                            }
-                            Text(
-                                text = "DURATION · $editMinutes MIN",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onBackground,
-                                modifier = Modifier.testTag("grace_edit_minutes_value")
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(scheme.surfaceVariant)
-                                    .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        if (editMinutes < 180) {
-                                            editMinutes = minOf(180, editMinutes + 5)
-                                        }
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 5.dp)
-                                    .testTag("grace_edit_minutes_up")
-                            ) {
-                                Text(
-                                    text = "+5",
-                                    fontFamily = AnonymousProFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    letterSpacing = 1.sp,
-                                    color = scheme.onBackground
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(scheme.surfaceVariant)
-                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (editBlocks > 1) editBlocks -= 1
-                                }
-                                .padding(horizontal = 14.dp, vertical = 5.dp)
-                                .testTag("grace_edit_blocks_down")
-                        ) {
-                            Text(
-                                text = "−1",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                        Text(
-                            text = if (editBlocks == 1) "BLOCKS · 1" else "BLOCKS · $editBlocks",
-                            fontFamily = AnonymousProFamily,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            letterSpacing = 1.sp,
-                            color = scheme.onBackground,
-                            modifier = Modifier.testTag("grace_edit_blocks_value")
-                        )
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(scheme.surfaceVariant)
-                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (editBlocks < 8) editBlocks += 1
-                                }
-                                .padding(horizontal = 14.dp, vertical = 5.dp)
-                                .testTag("grace_edit_blocks_up")
-                        ) {
-                            Text(
-                                text = "+1",
-                                fontFamily = AnonymousProFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                letterSpacing = 1.sp,
-                                color = scheme.onBackground
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        SmartLoadout.entries.forEach { loadout ->
-                            val selected = editLoadout == loadout
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (selected) inkControlFill() else scheme.surfaceVariant
-                                    )
-                                    .border(
-                                        1.dp,
-                                        if (selected) inkControlFill() else scheme.outlineVariant,
-                                        RoundedCornerShape(8.dp)
-                                    )
-                                    .clickable { editLoadout = loadout }
-                                    .padding(horizontal = 6.dp, vertical = 5.dp)
-                                    .testTag("grace_edit_loadout_${loadout.name}")
-                            ) {
-                                Text(
-                                    text = loadout.name.replace('_', ' '),
-                                    fontFamily = AnonymousProFamily,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    letterSpacing = 1.sp,
-                                    color = if (selected) {
-                                        onInkControlFill()
-                                    } else {
-                                        scheme.onBackground
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    BlockitActionChip(
-                        wordLabel = "APPLY EDIT",
-                        monoBadge = "FREE IN GRACE",
-                        isPrimaryInk = true,
-                        onClick = {
-                            onEditSessionInGrace(
-                                if (graceEditSession.isStopwatchMode) null else editMinutes,
-                                editBlocks,
-                                editLoadout
-                            )
-                            graceEditOpen = false
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(72.dp),
-                        testTag = "grace_edit_apply"
-                    )
-                }
-            }
-            // Issue #283 (R5 supplement): the extend verb. A running
-            // session used to offer only endings (grace abort, the
-            // valve); the original's +15 lives here, under the
-            // standing grace/valve line, at the same 72dp chair
-            // height as the other session verbs. The repository
-            // caps it (no sale at 60+ minutes remaining).
-            if (activeSession != null && !activeSession.isStopwatchMode) {
-                Spacer(Modifier.height(8.dp))
-                BlockitActionChip(
-                    wordLabel = "EXTEND SESSION",
-                    monoBadge = "+15 MIN",
-                    isPrimaryInk = false,
-                    onClick = onExtendSession,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(72.dp),
-                    testTag = "extend_session_button"
-                )
-            }
-            // Issue #261: the Safe Break's missing door. Until this
-            // chip a break could only BEGIN at a block flip — the
-            // man inside a long block had no verb for the pause he
-            // needed mid-block. The chip stands for exactly the
-            // in-block life (active, timed, not already in a
-            // break) beside the extend verb; the tap freezes the
-            // block and enters the break, and the break's own
-            // END BREAK chip (utilities room) plus its timer bring
-            // him back to the SAME block — see
-            // startSafeBreakMidBlock in the repository. The badge
-            // prints the length in force today, no more: choosing
-            // the length is the parked doctrine half of #261.
-            if (activeSession != null && activeSession.isActive &&
-                !activeSession.isInSafeBreak && !activeSession.isStopwatchMode
-            ) {
-                Spacer(Modifier.height(8.dp))
-                BlockitActionChip(
-                    wordLabel = "TAKE SAFE BREAK",
-                    monoBadge = "${com.example.data.MonolithRepository.SAFE_BREAK_DURATION_SECONDS / 60} MIN",
-                    isPrimaryInk = false,
-                    onClick = onStartSafeBreak,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(72.dp),
-                    testTag = "take_safe_break_button"
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            RefusalSentenceSlot(
-                // The slot's tenant by phase (step 4): a JAMMED
-                // attempt names its unanswering link; PROVING names
-                // itself with its live proved count (issues #98 +
-                // #126 F2 — the silent black box is closed: real
-                // blocking already runs during proving, so the frame
-                // must say the machine is checking, never render the
-                // idle form as if nothing had happened); an
-                // annulment's past-tense sentence stands until the
-                // controller clears it; otherwise the wire's
-                // standing sentence. A RUNNING session used to be
-                // forced silent here (Audit R3 #113, finding 2) —
-                // exactly the case where the sentence matters most:
-                // refusalSentenceFor reads the LIVE warrant and
-                // returns null while the wire is whole, so the
-                // running Deck stays silent until a permission it
-                // depends on actually dies, then names it with its
-                // FIX verb. The stale guard inside
-                // refusalSentenceFor(warrant, nowMono) still owns
-                // the present tense: a stale read prints nothing.
-                sentence = when {
-                    armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
-                    armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
-                    isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
-                    armSentence != null -> armSentence
-                    else -> refusalSentenceFor(deckWarrant, nowMono)
-                },
-                onAction = { action ->
-                    when (action) {
-                        RefusalAction.FIX_ACCESSIBILITY -> onFixBlockingAccess()
-                        RefusalAction.FIX_USAGE -> onFixUsageAccess()
-                        RefusalAction.RETRY_CHECK -> {
-                            // Suki: an UNSET usage grant makes "retry"
-                            // a lie — the tap routes to the pane that
-                            // owns the fact instead.
-                            if (deckWarrant?.usage == UsageAccess.UNSET) {
-                                onFixUsageAccess()
-                            } else {
-                                onRetryBlockingCheck()
-                            }
-                        }
-                    }
-                },
-                onHandBackTick = onHandBackTick
-            )
-            ImprintSlot(
-                tenantText = imprintTenant,
-                isSealed = isSessionRunning,
-                strikeKey = if (isSessionRunning) activeSession?.id?.toLong() else null,
-                struckKey = struckSessionId?.toLong(),
-                onStruck = { key -> onSessionStruck(key.toInt()) }
-            )
-        }
+        DeckPinnedStack(
+            boltFace = boltFace,
+            sealNumerals = sealNumerals,
+            plannedNumerals = plannedNumerals,
+            isSessionRunning = isSessionRunning,
+            heldFinish = heldFinish,
+            shotActive = shotActive,
+            receiptState = receiptState,
+            activeSession = activeSession,
+            soundEngine = soundEngine,
+            groundNight = groundNight,
+            armResetKey = armResetKey,
+            warrantProvider = warrantProvider,
+            appsSplit = appsSplit,
+            appsCell = appsCell,
+            idleTimeCell = idleTimeCell,
+            commitInFlight = commitInFlight,
+            isActiveRoutineJudged = isActiveRoutineJudged,
+            weeklyEmergencyTokensRemaining = weeklyEmergencyTokensRemaining,
+            armPhase = armPhase,
+            nowMono = nowMono,
+            deckWarrant = deckWarrant,
+            armSentence = armSentence,
+            imprintTenant = imprintTenant,
+            struckSessionId = struckSessionId,
+            sledInitialFraction = sledInitialFraction,
+            onSlideViewRef = { slideViewRef = it },
+            onLatchArmKey = { latchArmKey = it },
+            onPressLatch = { pressLatch = it },
+            onCommitInFlight = { commitInFlight = it },
+            onArmSession = onArmSession,
+            onCancelWithinGraceWindow = onCancelWithinGraceWindow,
+            onRequestDisarm = onRequestDisarm,
+            onExtendSession = onExtendSession,
+            onStartSafeBreak = onStartSafeBreak,
+            onFixBlockingAccess = onFixBlockingAccess,
+            onFixUsageAccess = onFixUsageAccess,
+            onRetryBlockingCheck = onRetryBlockingCheck,
+            onHandBackTick = onHandBackTick,
+            onSessionStruck = onSessionStruck,
+            onEditSessionInGrace = onEditSessionInGrace
+        )
     }
 }
 
@@ -1687,7 +1047,7 @@ private fun DeckInstrumentSection(
                 horizontalArrangement = Arrangement.End
             ) {
                 Text(
-                    text = "LAST RECEIPT",
+                    text = stringResource(R.string.deck_last_receipt),
                     fontFamily = AnonymousProFamily,
                     fontSize = 10.sp,
                     letterSpacing = 2.sp,
@@ -1810,7 +1170,7 @@ private fun DeckInstrumentSection(
         // census on run 41201464326 and moved here.
         if (!isSessionRunning && receiptState == null) {
             Text(
-                text = "ARMED WRONG? ${MonolithRepository.GRACE_WINDOW_SECONDS}S FREE ABORT — CANCEL FREE, NOTHING BOOKED",
+                text = stringResource(R.string.deck_armed_wrong, MonolithRepository.GRACE_WINDOW_SECONDS),
                 fontFamily = AnonymousProFamily,
                 fontSize = 10.sp,
                 letterSpacing = 1.sp,
@@ -1988,7 +1348,7 @@ private fun DeckInstrumentSection(
                             .testTag("dial_step_down")
                     ) {
                         Text(
-                            text = "−1",
+                            text = stringResource(R.string.deck_minus_one),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -2009,7 +1369,7 @@ private fun DeckInstrumentSection(
                             .testTag("dial_precise_entry_toggle")
                     ) {
                         Text(
-                            text = "TYPE MINUTES",
+                            text = stringResource(R.string.deck_type_minutes),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -2030,7 +1390,7 @@ private fun DeckInstrumentSection(
                             .testTag("dial_step_up")
                     ) {
                         Text(
-                            text = "+1",
+                            text = stringResource(R.string.deck_plus_one),
                             fontFamily = AnonymousProFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.sp,
@@ -2056,7 +1416,7 @@ private fun DeckInstrumentSection(
                         ) {
                             if (preciseEntryText.isEmpty()) {
                                 Text(
-                                    text = "10–180",
+                                    text = stringResource(R.string.deck_minutes_range),
                                     fontFamily = AnonymousProFamily,
                                     fontSize = 13.sp,
                                     color = scheme.onSurfaceVariant
@@ -2104,7 +1464,7 @@ private fun DeckInstrumentSection(
                                 .testTag("dial_precise_entry_set")
                         ) {
                             Text(
-                                text = "SET",
+                                text = stringResource(R.string.deck_set),
                                 fontFamily = AnonymousProFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
@@ -2147,6 +1507,905 @@ private fun DeckInstrumentSection(
             // second lie. FLOW renders the empty track only.
         }
     }
+}
+
+/**
+ * Issue #90 (complexity F1 slice): SECTION 4 — the pinned stack —
+ * extracted out of TactileDeckScreen's body as its own composable,
+ * in the pattern of DeckInstrumentSection (SECTION 1) and
+ * DeckArmedUtilities (SECTION 3). Behaviour-identical: the seal
+ * bar, the slide's 72dp register, the grace/valve chips at the
+ * same address, the sentence slot and the imprint are the same
+ * elements in the same order under the same conditions; the
+ * host's captures are explicit parameters. The stack writes four
+ * hoisted host states — the sled's view ref, the latch arm key,
+ * the press latch, the commit flag — and those writes ride
+ * explicit setter parameters (onSlideViewRef / onLatchArmKey /
+ * onPressLatch / onCommitInFlight): the states themselves stay
+ * hoisted in the host, which derives the imprint and the seal
+ * shot from them.
+ */
+@Composable
+private fun DeckPinnedStack(
+    boltFace: com.example.ui.components.BoltFace,
+    sealNumerals: String?,
+    plannedNumerals: String?,
+    isSessionRunning: Boolean,
+    heldFinish: Boolean,
+    shotActive: Boolean,
+    receiptState: com.example.data.ReceiptState?,
+    activeSession: FocusSessionEntity?,
+    soundEngine: TactileSoundEngine?,
+    groundNight: Boolean,
+    armResetKey: Int,
+    warrantProvider: () -> Warrant,
+    appsSplit: com.example.ui.MonolithViewModel.AppsSplit?,
+    appsCell: Pair<String, StripDensity>,
+    idleTimeCell: Pair<String, StripDensity>,
+    commitInFlight: Boolean,
+    isActiveRoutineJudged: Boolean,
+    weeklyEmergencyTokensRemaining: Int,
+    armPhase: ArmPhase,
+    nowMono: Long,
+    deckWarrant: Warrant?,
+    armSentence: RefusalSentence?,
+    imprintTenant: String?,
+    struckSessionId: Int?,
+    sledInitialFraction: () -> Float,
+    onSlideViewRef: (SlideToStartView?) -> Unit,
+    onLatchArmKey: (Int) -> Unit,
+    onPressLatch: (PressLatch?) -> Unit,
+    onCommitInFlight: (Boolean) -> Unit,
+    onArmSession: () -> Unit,
+    onCancelWithinGraceWindow: () -> Unit,
+    onRequestDisarm: () -> Unit,
+    onExtendSession: () -> Unit,
+    onStartSafeBreak: () -> Unit,
+    onFixBlockingAccess: () -> Unit,
+    onFixUsageAccess: () -> Unit,
+    onRetryBlockingCheck: () -> Unit,
+    onHandBackTick: () -> Unit,
+    onSessionStruck: (Int) -> Unit,
+    onEditSessionInGrace: (Int?, Int?, SmartLoadout?) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    // =====================================================================
+    // SECTION 4: THE PINNED STACK (Slice D) — outside the scroll:
+    // the seal bar (issue #4 — THE BOLT's 60dp housing, grown
+    // from the retired proof strip's 53dp address per FEILE's
+    // grid, the SALZ rent the fold's evidence channel pays),
+    // the slide's 72dp register, the reserved sentence slot,
+    // and the imprint. The slide zone holds the grace / valve
+    // chips at the same address while sealed (Δy = 0 across
+    // tenancies), so the zone under the wheel never changes
+    // height by a pixel across the seal.
+    // =====================================================================
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        // Issue #4 — THE BOLT replaces the proof strip here:
+        // state by form (bolt pose + jewel), the end in one
+        // glass window; BIND/PROOF telemetry renders nowhere
+        // on this face (issue #6 F8's seam-stamp exile is
+        // subsumed — the stamps have no slot on the bar).
+        SealBar(
+            face = boltFace,
+            endsAtNumerals = sealNumerals,
+            plannedEndsAtNumerals = plannedNumerals
+        )
+        Spacer(Modifier.height(6.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Issue #125 (armed-wrong F3): during the grace
+            // window the ABORT chip owns this address even while
+            // the seal shot is still detaining the slide — the
+            // free exit must not be physically absent for the
+            // first ~1050ms of its own window. The Δy = 0 address
+            // discipline is unchanged: same Box, same chip.
+            val graceChipDue = isSessionRunning && !heldFinish && receiptState == null &&
+                activeSession != null &&
+                activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+            if ((!isSessionRunning || shotActive || heldFinish || receiptState != null) && !graceChipDue) {
+                // The slide holds this address through the seal
+                // (as the seated ghost), through the finish's
+                // detention, and through its own return — the
+                // chips take the address only for a settled,
+                // receipt-free running session (F-Z3's room,
+                // read by Kato's fallback: the utilities keep
+                // the Δy = 0 address the zone has always had).
+                AndroidView(
+                    factory = { ctx ->
+                        SlideToStartView(ctx).apply {
+                            this.soundEngine = soundEngine
+                            this.initialFraction = sledInitialFraction()
+                        }.also { onSlideViewRef(it) }
+                    },
+                    update = { view ->
+                        onSlideViewRef(view)
+                        view.isNightMode = groundNight
+                        view.soundEngine = soundEngine
+                        view.isArmedState = false
+                        if (view.resetKey != armResetKey) {
+                            view.resetKey = armResetKey
+                            if (armResetKey > 0) view.resetToRest()
+                        }
+                        view.warrantProvider = warrantProvider
+                        view.onPressStart = { downState ->
+                            // The latch captures from the slide's
+                            // own DOWN-frame read (Emil E-4), never
+                            // from this screen's async flow.
+                            onLatchArmKey(armResetKey)
+                            onPressLatch(PressLatch(
+                                tenant = imprintTenantText(
+                                    isSealed = false,
+                                    shut = appsSplit?.shut,
+                                    peek = appsSplit?.peek,
+                                    warrantState = downState
+                                ),
+                                timeText = idleTimeCell.first,
+                                timeDensity = idleTimeCell.second,
+                                appsWord = appsCell.first,
+                                appsDensity = appsCell.second
+                            ))
+                        }
+                        view.onPressEnd = {
+                            if (!commitInFlight) onPressLatch(null)
+                        }
+                        view.onSlideCommitted = {
+                            onCommitInFlight(true)
+                            onArmSession()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp)
+                        .testTag("slide_to_start_view")
+                )
+            } else {
+                val withinGraceWindow = activeSession != null &&
+                    activeSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+                // Issue #103 F3: past the stopwatch 20-minute
+                // floor, this same tap is a FREE, instant,
+                // successful finish — no hold, no token spent.
+                // The chip must say so; it may not keep wearing
+                // the valve's label and price.
+                val stopwatchFloorMet = activeSession?.isStopwatchMode == true &&
+                    activeSession.elapsedSeconds >= MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+                // Issue #98 (merged): the badge counts the
+                // seconds the user can actually still use — the
+                // whole window at the settle frame, 1 on the
+                // last — derived
+                // from the one constant the repository write
+                // enforces (issue #103 F2).
+                val graceBadge = "${(MonolithRepository.GRACE_WINDOW_SECONDS + 1 - (activeSession?.elapsedSeconds ?: 0)).coerceIn(1, MonolithRepository.GRACE_WINDOW_SECONDS)}s"
+                if (withinGraceWindow) {
+                    if (isActiveRoutineJudged) {
+                        // Issue #103 F1 / R3b #149: a non-SLEEP
+                        // routine session never takes the free
+                        // grace path — the repository diverts it
+                        // to its judging funnel (MISSED / PARTIAL
+                        // / ATTENDED). Same tap, same funnel (no
+                        // redesign under the routines freeze) —
+                        // the chip names the real cost instead of
+                        // promising a free grace cancel.
+                        BlockitActionChip(
+                            wordLabel = "END ROUTINE · WILL BE JUDGED",
+                            monoBadge = graceBadge,
+                            isPrimaryInk = true,
+                            onClick = onCancelWithinGraceWindow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(72.dp),
+                            testTag = "routine_judged_end_button"
+                        )
+                    } else {
+                        BlockitActionChip(
+                            wordLabel = "GRACE WINDOW ABORT",
+                            monoBadge = graceBadge,
+                            isPrimaryInk = true,
+                            onClick = onCancelWithinGraceWindow,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(72.dp),
+                            testTag = "grace_abort_button"
+                        )
+                    }
+                } else if (stopwatchFloorMet) {
+                    BlockitActionChip(
+                        wordLabel = "FINISH STOPWATCH · NO BREAK SPENT",
+                        monoBadge = "PAST 20M FLOOR",
+                        isPrimaryInk = true,
+                        onClick = onRequestDisarm,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp),
+                        testTag = "stopwatch_finish_button"
+                    )
+                } else {
+                    // Audit R3b #147: past the stopwatch floor
+                    // this same tap is a clean, free finish —
+                    // requestDisarmChallenge completes the
+                    // session and never opens the valve. The
+                    // label says which door the tap opens:
+                    // FINISH SESSION with no token badge once
+                    // the floor is banked; the valve's true
+                    // name and price everywhere else.
+                    val stopwatchFloorMet = activeSession != null &&
+                        activeSession.isStopwatchMode &&
+                        activeSession.elapsedSeconds >=
+                            com.example.data.MonolithRepository.STOPWATCH_MIN_FLOOR_SECONDS
+                    BlockitActionChip(
+                        wordLabel = if (stopwatchFloorMet) {
+                            "FINISH SESSION"
+                        } else {
+                            // Issue #114, finding 5: the door's
+                            // one name — EMERGENCY BREAK, the
+                            // same words its own overlay carries.
+                            "EMERGENCY BREAK (60S HOLD)"
+                        },
+                        // R3b #163 F4: a spent valve used to wear
+                        // the same badge as a live one ("0/1 WEEK"
+                        // read as a state, not a wait). The spent
+                        // badge now names the wait itself — the
+                        // week turns on Monday (MonolithWeek).
+                        monoBadge = when {
+                            stopwatchFloorMet -> ""
+                            weeklyEmergencyTokensRemaining > 0 ->
+                                "$weeklyEmergencyTokensRemaining/1 WEEK"
+                            else -> "0/1 WEEK · BACK MONDAY"
+                        },
+                        isPrimaryInk = true,
+                        onClick = onRequestDisarm,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(72.dp), // Issue #6 F6: the chair fills its 72dp zone in every state
+                        testTag = "request_disarm_button"
+                    )
+                    Text(
+                        text = emergencyBreakPriceText(weeklyEmergencyTokensRemaining),
+                        fontFamily = AtkinsonHyperlegibleFamily,
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f),
+                        modifier = Modifier.testTag("emergency_break_price")
+                    )
+                }
+            }
+        }
+        // Audit R3b #149: the grace-to-valve cliff, named. The
+        // slot above swaps its chip at the window's edge with
+        // nothing saying the door changed; this standing line
+        // states both states, in both states — in-window it
+        // counts the free cancel down, past it the valve's
+        // terms stand printed before they are ever needed.
+        if (activeSession != null) {
+            val graceLeft = MonolithRepository.GRACE_WINDOW_SECONDS - activeSession.elapsedSeconds
+            Text(
+                text = when {
+                    graceLeft > 0 && activeSession.routineId != null ->
+                        "GRACE ${graceLeft}S — ABORT IS BOOKED BY THE ROUTINE · AFTER: VALVE, 60S HOLD"
+                    graceLeft > 0 ->
+                        "GRACE ${graceLeft}S — CANCEL FREE, NOTHING BOOKED · AFTER: VALVE, 60S HOLD"
+                    // R3b #163 F4 (fix-forward): the spent state
+                    // names its wait here too, exactly as the
+                    // valve chip's badge does — the week turns
+                    // on Monday (MonolithWeek).
+                    else ->
+                        "GRACE SPENT · VALVE: 60S HOLD · " +
+                            if (weeklyEmergencyTokensRemaining > 0) {
+                                "$weeklyEmergencyTokensRemaining/1 WEEK"
+                            } else {
+                                "0/1 WEEK · BACK MONDAY"
+                            }
+                },
+                fontFamily = AnonymousProFamily,
+                fontSize = 9.5.sp,
+                letterSpacing = 0.8.sp,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
+        // Issue #125 F4 (Sarthak's ruling, sharpened at
+        // 6544202995): the in-grace edit. The start window is
+        // the only place a wrong arm can be corrected — add
+        // time / change duration, change blocks, change
+        // loadout; nothing beyond the session's own setup,
+        // and nothing after the window. This block stands
+        // only while the row's elapsed is inside the window,
+        // and the repository refuses the write past it
+        // whatever any surface shows. Routine-born sessions
+        // never stand here: their ending is judged, not
+        // edited.
+        val graceEditSession = activeSession
+        if (graceEditSession != null && graceEditSession.routineId == null &&
+            graceEditSession.elapsedSeconds <= MonolithRepository.GRACE_WINDOW_SECONDS
+        ) {
+            var graceEditOpen by remember(graceEditSession.id) { mutableStateOf(false) }
+            var editMinutes by remember(graceEditSession.id) {
+                mutableStateOf(graceEditSession.targetDurationSeconds / 60)
+            }
+            var editBlocks by remember(graceEditSession.id) {
+                mutableStateOf(graceEditSession.totalStudyBlocks)
+            }
+            var editLoadout by remember(graceEditSession.id) {
+                mutableStateOf(
+                    SmartLoadout.entries.firstOrNull {
+                        it.title == graceEditSession.profileName
+                    }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            BlockitActionChip(
+                wordLabel = if (graceEditOpen) "CLOSE EDIT" else "EDIT ARM",
+                monoBadge = "START ONLY",
+                isPrimaryInk = false,
+                onClick = { graceEditOpen = !graceEditOpen },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp),
+                testTag = "grace_edit_toggle"
+            )
+            if (graceEditOpen) {
+                Spacer(Modifier.height(8.dp))
+                if (graceEditSession.isStopwatchMode) {
+                    Text(
+                        text = stringResource(R.string.deck_flow_no_duration),
+                        fontFamily = AnonymousProFamily,
+                        fontSize = 9.5.sp,
+                        letterSpacing = 0.8.sp,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.testTag("grace_edit_flow_note")
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (editMinutes > 10) {
+                                        editMinutes = maxOf(10, editMinutes - 5)
+                                    }
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("grace_edit_minutes_down")
+                        ) {
+                            Text(
+                                text = stringResource(R.string.deck_minus_five),
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                        Text(
+                            text = stringResource(R.string.deck_duration_edit, editMinutes),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground,
+                            modifier = Modifier.testTag("grace_edit_minutes_value")
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(scheme.surfaceVariant)
+                                .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (editMinutes < 180) {
+                                        editMinutes = minOf(180, editMinutes + 5)
+                                    }
+                                }
+                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .testTag("grace_edit_minutes_up")
+                        ) {
+                            Text(
+                                text = stringResource(R.string.deck_plus_five),
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = scheme.onBackground
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (editBlocks > 1) editBlocks -= 1
+                            }
+                            .padding(horizontal = 14.dp, vertical = 5.dp)
+                            .testTag("grace_edit_blocks_down")
+                    ) {
+                        Text(
+                            text = stringResource(R.string.deck_minus_one),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                    Text(
+                        text = if (editBlocks == 1) "BLOCKS · 1" else "BLOCKS · $editBlocks",
+                        fontFamily = AnonymousProFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        letterSpacing = 1.sp,
+                        color = scheme.onBackground,
+                        modifier = Modifier.testTag("grace_edit_blocks_value")
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(scheme.surfaceVariant)
+                            .border(1.dp, scheme.outlineVariant, RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (editBlocks < 8) editBlocks += 1
+                            }
+                            .padding(horizontal = 14.dp, vertical = 5.dp)
+                            .testTag("grace_edit_blocks_up")
+                    ) {
+                        Text(
+                            text = stringResource(R.string.deck_plus_one),
+                            fontFamily = AnonymousProFamily,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            letterSpacing = 1.sp,
+                            color = scheme.onBackground
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    SmartLoadout.entries.forEach { loadout ->
+                        val selected = editLoadout == loadout
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (selected) inkControlFill() else scheme.surfaceVariant
+                                )
+                                .border(
+                                    1.dp,
+                                    if (selected) inkControlFill() else scheme.outlineVariant,
+                                    RoundedCornerShape(8.dp)
+                                )
+                                .clickable { editLoadout = loadout }
+                                .padding(horizontal = 6.dp, vertical = 5.dp)
+                                .testTag("grace_edit_loadout_${loadout.name}")
+                        ) {
+                            Text(
+                                text = loadout.name.replace('_', ' '),
+                                fontFamily = AnonymousProFamily,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                letterSpacing = 1.sp,
+                                color = if (selected) {
+                                    onInkControlFill()
+                                } else {
+                                    scheme.onBackground
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                BlockitActionChip(
+                    wordLabel = "APPLY EDIT",
+                    monoBadge = "FREE IN GRACE",
+                    isPrimaryInk = true,
+                    onClick = {
+                        onEditSessionInGrace(
+                            if (graceEditSession.isStopwatchMode) null else editMinutes,
+                            editBlocks,
+                            editLoadout
+                        )
+                        graceEditOpen = false
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(72.dp),
+                    testTag = "grace_edit_apply"
+                )
+            }
+        }
+        // Issue #283 (R5 supplement): the extend verb. A running
+        // session used to offer only endings (grace abort, the
+        // valve); the original's +15 lives here, under the
+        // standing grace/valve line, at the same 72dp chair
+        // height as the other session verbs. The repository
+        // caps it (no sale at 60+ minutes remaining).
+        if (activeSession != null && !activeSession.isStopwatchMode) {
+            Spacer(Modifier.height(8.dp))
+            BlockitActionChip(
+                wordLabel = "EXTEND SESSION",
+                monoBadge = "+15 MIN",
+                isPrimaryInk = false,
+                onClick = onExtendSession,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp),
+                testTag = "extend_session_button"
+            )
+        }
+        // Issue #261: the Safe Break's missing door. Until this
+        // chip a break could only BEGIN at a block flip — the
+        // man inside a long block had no verb for the pause he
+        // needed mid-block. The chip stands for exactly the
+        // in-block life (active, timed, not already in a
+        // break) beside the extend verb; the tap freezes the
+        // block and enters the break, and the break's own
+        // END BREAK chip (utilities room) plus its timer bring
+        // him back to the SAME block — see
+        // startSafeBreakMidBlock in the repository. The badge
+        // prints the length in force today, no more: choosing
+        // the length is the parked doctrine half of #261.
+        if (activeSession != null && activeSession.isActive &&
+            !activeSession.isInSafeBreak && !activeSession.isStopwatchMode
+        ) {
+            Spacer(Modifier.height(8.dp))
+            BlockitActionChip(
+                wordLabel = "TAKE SAFE BREAK",
+                monoBadge = "${com.example.data.MonolithRepository.SAFE_BREAK_DURATION_SECONDS / 60} MIN",
+                isPrimaryInk = false,
+                onClick = onStartSafeBreak,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp),
+                testTag = "take_safe_break_button"
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        RefusalSentenceSlot(
+            // The slot's tenant by phase (step 4): a JAMMED
+            // attempt names its unanswering link; PROVING names
+            // itself with its live proved count (issues #98 +
+            // #126 F2 — the silent black box is closed: real
+            // blocking already runs during proving, so the frame
+            // must say the machine is checking, never render the
+            // idle form as if nothing had happened); an
+            // annulment's past-tense sentence stands until the
+            // controller clears it; otherwise the wire's
+            // standing sentence. A RUNNING session used to be
+            // forced silent here (Audit R3 #113, finding 2) —
+            // exactly the case where the sentence matters most:
+            // refusalSentenceFor reads the LIVE warrant and
+            // returns null while the wire is whole, so the
+            // running Deck stays silent until a permission it
+            // depends on actually dies, then names it with its
+            // FIX verb. The stale guard inside
+            // refusalSentenceFor(warrant, nowMono) still owns
+            // the present tense: a stale read prints nothing.
+            sentence = when {
+                armPhase is ArmPhase.Jammed -> jamSentenceFor(armPhase, nowMono)
+                armPhase is ArmPhase.Proving -> provingSentenceFor(armPhase)
+                isSessionRunning -> refusalSentenceFor(deckWarrant, nowMono)
+                armSentence != null -> armSentence
+                else -> refusalSentenceFor(deckWarrant, nowMono)
+            },
+            onAction = { action ->
+                when (action) {
+                    RefusalAction.FIX_ACCESSIBILITY -> onFixBlockingAccess()
+                    RefusalAction.FIX_USAGE -> onFixUsageAccess()
+                    RefusalAction.RETRY_CHECK -> {
+                        // Suki: an UNSET usage grant makes "retry"
+                        // a lie — the tap routes to the pane that
+                        // owns the fact instead.
+                        if (deckWarrant?.usage == UsageAccess.UNSET) {
+                            onFixUsageAccess()
+                        } else {
+                            onRetryBlockingCheck()
+                        }
+                    }
+                }
+            },
+            onHandBackTick = onHandBackTick
+        )
+        ImprintSlot(
+            tenantText = imprintTenant,
+            isSealed = isSessionRunning,
+            strikeKey = if (isSessionRunning) activeSession?.id?.toLong() else null,
+            struckKey = struckSessionId?.toLong(),
+            onStruck = { key -> onSessionStruck(key.toInt()) }
+        )
+    }
+}
+
+/**
+ * Issue #90 (complexity F1 slice): the Deck's readout derivations,
+ * extracted from TactileDeckScreen's body as a pure function. The
+ * mode, the displayed seconds, the hero readout, the true span and
+ * the progress fraction are arithmetic on the finish frame, the
+ * live session and the dial — nothing else. Behaviour-identical:
+ * the derivation bodies are the host's own, verbatim; the one
+ * mechanical change is that branches the host guarded with the
+ * isSessionRunning alias (which there implies a non-null session
+ * by construction) spell the null check out here, where the alias
+ * arrives as a plain Boolean — the added check never changes an
+ * outcome, for the same reason as the DeckInstrumentSection fix
+ * in PR #772.
+ */
+private data class DeckReadout(
+    val isStopwatchMode: Boolean,
+    val displaySeconds: Int,
+    val primaryReadout: String,
+    val totalSpanMinutes: Int,
+    val progressFraction: Float
+)
+
+private fun deckReadoutFor(
+    finishState: com.example.ui.MonolithViewModel.FinishState?,
+    isSessionRunning: Boolean,
+    activeSession: FocusSessionEntity?,
+    dialMinutes: Int,
+    studyBlocksCount: Int
+): DeckReadout {
+    val isStopwatchMode = if (finishState != null) {
+        finishState.frozenIsStopwatch
+    } else if (isSessionRunning && activeSession != null) {
+        activeSession.isStopwatchMode
+    } else {
+        // The dial alone keys flow (ESR-08, truth patch at the
+        // drawer merge, re-applied over this lane at the slide
+        // merge): the engine arms on durationMinutes (< 10 =
+        // stopwatch) and never reads the preset, so a wheel drag
+        // to 90 after tapping FLOW must sell a timed 90.
+        dialMinutes < 10
+    }
+
+    val displaySeconds = if (finishState != null) {
+        // The held frame's frozen readout (F-L2: a FLOW finish
+        // freezes its count-up total; a timed finish its last
+        // remaining count) — the ticker has stopped; nothing here
+        // re-derives from it.
+        finishState.frozenDisplaySeconds
+    } else if (isSessionRunning && activeSession != null) {
+        when {
+            activeSession.isStopwatchMode -> activeSession.elapsedSeconds
+            // Audit R3b #148: during a Safe Break the per-block
+            // remainder is 0 — that block HAS finished — so the
+            // hero read 00:00 for ten minutes, a break displayed
+            // as FINISH. In a break the hero counts the break
+            // itself down (the shield's own rendering of the same
+            // fact), under the BREAK eyebrow the strip already
+            // prints.
+            activeSession.isInSafeBreak -> activeSession.safeBreakSecondsRemaining
+            else -> activeSession.remainingSeconds
+        }
+    } else {
+        dialMinutes * 60
+    }
+
+    val minsPart = displaySeconds / 60
+    val secsPart = displaySeconds % 60
+    // Audit R3b #147: a running (or just-finished) stopwatch counts
+    // UP — the bare MM:SS read exactly like a countdown. The +
+    // prefix marks the direction on the hero readout; a timed
+    // session's countdown stays bare.
+    val countsUp = (finishState != null && finishState.frozenIsStopwatch) ||
+        (isSessionRunning && activeSession != null && activeSession.isStopwatchMode)
+    val primaryReadout = if (countsUp) {
+        String.format(Locale.US, "+%02d:%02d", minsPart, secsPart)
+    } else {
+        String.format(Locale.US, "%02d:%02d", minsPart, secsPart)
+    }
+
+    // True session span (BEYOND W3, verified against the engine): blocks
+    // plus the 10-minute Safe Breaks BETWEEN them - n x block + (n-1) x 10.
+    // The hero and the finish line both price from this and nowhere else;
+    // the naive product understated a 3 x 50 morning by 20 minutes.
+    val totalSpanMinutes = dialMinutes * studyBlocksCount + (studyBlocksCount - 1) * 10
+
+    // Issue #6 F3 (audit §3, Vega T-1/T-2/T-3 — the floored,
+    // inverted, invented fraction dies): timed progress is
+    // ELAPSED / TARGET, filling, no floors — never remaining/target
+    // born full and draining, never a 3–5% that isn't true. FLOW
+    // (stopwatch) has NO bar and NO fraction: NO END means no bar,
+    // and the old /1200 denominator was invented by the mode that
+    // denies it. Idle: no session exists, so no progress exists.
+    val progressFraction = if (finishState != null) {
+        if (finishState.frozenIsStopwatch) {
+            0f
+        } else {
+            val target = finishState.frozenTargetSeconds.coerceAtLeast(1)
+            val elapsed = (target - finishState.frozenDisplaySeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
+        }
+    } else if (isSessionRunning && activeSession != null) {
+        if (activeSession.isStopwatchMode) {
+            0f
+        } else if (activeSession.isInSafeBreak) {
+            // Audit R3b #148: in a break the bar prices the whole
+            // session span (the model's own span derivation — the
+            // break counts as session time), so it holds its
+            // ground and keeps moving instead of sitting at the
+            // finished block's empty remainder. Priced in the
+            // F3 form: elapsed/target, filling, no floors.
+            val spanTarget = activeSession.spanTargetSeconds.coerceAtLeast(1)
+            (activeSession.spanElapsedSeconds.toFloat() / spanTarget.toFloat()).coerceIn(0f, 1f)
+        } else {
+            val target = activeSession.effectiveTargetSeconds.coerceAtLeast(1)
+            val elapsed = (target - activeSession.remainingSeconds).coerceAtLeast(0)
+            (elapsed.toFloat() / target.toFloat()).coerceIn(0f, 1f)
+        }
+    } else {
+        0f
+    }
+    return DeckReadout(
+        isStopwatchMode = isStopwatchMode,
+        displaySeconds = displaySeconds,
+        primaryReadout = primaryReadout,
+        totalSpanMinutes = totalSpanMinutes,
+        progressFraction = progressFraction
+    )
+}
+
+/**
+ * Issue #90 (complexity F1 slice): the frozen-seal derivations,
+ * extracted from TactileDeckScreen's body as a pure function. The
+ * ViewModel's seal freeze outranks the screen's saveable fallback
+ * capture; both are judged against the live session's id.
+ * Behaviour-identical: the four branch bodies are the host's own,
+ * verbatim — they only ever safe-call the session, so no guard
+ * needed spelling out.
+ */
+private data class FrozenSeal(
+    val count: Int?,
+    val state: WarrantState?,
+    val shut: Int?,
+    val peek: Int?
+)
+
+private fun frozenSealFor(
+    sealFreeze: com.example.ui.MonolithViewModel.SealFreeze?,
+    activeSessionId: Int?,
+    fbFrozenKey: Int?,
+    fbFrozenCount: Int?,
+    fbFrozenShut: Int?,
+    fbFrozenPeek: Int?,
+    fbFrozenState: String?
+): FrozenSeal {
+    // The sealFreeze branches must test the freeze's presence, not
+    // only its key: at idle both sealFreeze and activeSession are
+    // null, null == null is true, and the !! below threw at
+    // composition — the idle Deck crashed in the harness before
+    // this guard (found by the lane's completion proof, Oct 29).
+    val frozenCount: Int? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.count
+        fbFrozenKey == activeSessionId -> fbFrozenCount
+        else -> null
+    }
+    val frozenState: WarrantState? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.warrantState
+        fbFrozenKey == activeSessionId ->
+            fbFrozenState?.let { runCatching { WarrantState.valueOf(it) }.getOrNull() }
+        else -> null
+    }
+    val frozenShut: Int? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.shutCount
+        fbFrozenKey == activeSessionId -> fbFrozenShut
+        else -> null
+    }
+    val frozenPeek: Int? = when {
+        sealFreeze != null && sealFreeze.sessionId == activeSessionId -> sealFreeze.peekCount
+        fbFrozenKey == activeSessionId -> fbFrozenPeek
+        else -> null
+    }
+    return FrozenSeal(
+        count = frozenCount,
+        state = frozenState,
+        shut = frozenShut,
+        peek = frozenPeek
+    )
+}
+
+/**
+ * Issue #90 (complexity F1 slice): the strip's three cells — the
+ * idle TIME cell, the APPS cell and the live TIME cell — extracted
+ * from TactileDeckScreen's body as pure functions. Each cell is a
+ * closed derivation over the frame's facts; the host keeps the
+ * one-line calls, so every reader (the seal bar's numerals, the
+ * pinned stack) is untouched. Behaviour-identical: the branch
+ * bodies are the host's own, verbatim; the one mechanical change
+ * is that the composition-context clock-format read
+ * (ClockText.is24Hour(LocalContext.current)) is taken once at
+ * each callsite and arrives as the is24Hour parameter — a pure
+ * system-settings read, the same value in every branch.
+ */
+private fun idleEndsAtCell(
+    isStopwatchMode: Boolean,
+    isSessionRunning: Boolean,
+    dialMinutes: Int,
+    studyBlocksCount: Int,
+    totalSpanMinutes: Int,
+    warrantPrintState: WarrantState?,
+    is24Hour: Boolean
+): Pair<String, StripDensity> = when {
+    isStopwatchMode && !isSessionRunning -> "NO END" to StripDensity.PASS
+    dialMinutes !in 5..180 || studyBlocksCount !in 1..8 -> "INVALID" to StripDensity.FAULT
+    // UNA2-03 rider: "ENDS HH:mm" is a fact about the plan, but
+    // its PASS tone is a claim the wire stands behind — beside
+    // a warrant that is not freshly LIVE the end prints at
+    // UNKNOWN density, never PASS beside BLOCK OFF.
+    else -> endsAtText(is24Hour, sessionEndsAtMillis(System.currentTimeMillis(), totalSpanMinutes * 60)) to
+        if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
+        else StripDensity.UNKNOWN
+}
+
+private fun appsStripCell(
+    isSessionRunning: Boolean,
+    frozenCount: Int?,
+    pressLatchLive: PressLatch?,
+    appsCellCount: Int?,
+    warrantPrintState: WarrantState?
+): Pair<String, StripDensity> = when {
+    isSessionRunning -> {
+        if (frozenCount != null) frozenCount.toString() to StripDensity.PASS
+        else "UNKNOWN" to StripDensity.UNKNOWN
+    }
+    pressLatchLive != null -> pressLatchLive.appsWord to pressLatchLive.appsDensity
+    // Issue #98 (R3 arming journey): the count's PASS tone is a
+    // promise those apps WILL be blocked — it may only print at
+    // PASS beside a freshly LIVE warrant, exactly the law the
+    // TIME cell's rider (UNA2-03, above) already obeys. Beside
+    // BLOCK OFF/UNKNOWN the number still prints (it is a count,
+    // not a verdict) but at UNKNOWN density, so the strip's
+    // cells can no longer disagree in one frame.
+    appsCellCount != null -> appsCellCount.toString() to
+        if (warrantPrintState == WarrantState.LIVE) StripDensity.PASS
+        else StripDensity.UNKNOWN
+    else -> "UNKNOWN" to StripDensity.UNKNOWN
+}
+
+private fun timeStripCell(
+    isSessionRunning: Boolean,
+    activeSession: FocusSessionEntity?,
+    pressLatchLive: PressLatch?,
+    idleTimeCell: Pair<String, StripDensity>,
+    is24Hour: Boolean
+): Pair<String, StripDensity> = when {
+    isSessionRunning && activeSession != null -> {
+        if (activeSession.isStopwatchMode) {
+            "NO END" to StripDensity.PASS
+        } else {
+            // #127 finding 3: fresh wall clock at THIS composition
+            // (the session flow re-emits every second), never the
+            // minute-boundary nowFrame — mixing a minute-stale
+            // clock with a per-second countdown drifted ENDS up
+            // to a minute early and disagreed with the Airlock.
+            endsAtText(is24Hour, sessionEndsAtMillis(System.currentTimeMillis(), activeSession.spanRemainingSeconds)) to StripDensity.PASS
+        }
+    }
+    pressLatchLive != null -> pressLatchLive.timeText to pressLatchLive.timeDensity
+    else -> idleTimeCell
 }
 
 /**
@@ -2284,7 +2543,7 @@ private fun DeckTaskSection(
                 // it never poses as a fresh start chosen today.
                 if (activeTaskFromYesterday) {
                     Text(
-                        text = "FROM YESTERDAY",
+                        text = stringResource(R.string.deck_from_yesterday),
                         fontFamily = AnonymousProFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 9.5.sp,

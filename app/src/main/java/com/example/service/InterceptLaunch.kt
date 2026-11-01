@@ -44,7 +44,19 @@ object InterceptLaunch {
     var droppedLaunchCount: Int = 0
         private set
 
-    private const val FALLBACK_NOTIFICATION_ID = 4097
+    /**
+     * Issue #155 F3 residue (BUILDER-2, WING-F): this id was 4097 —
+     * the SUMMONS id. Notification identity is (package, id); the
+     * channel does not separate two cards, so a summons post and a
+     * fallback post silently REPLACED each other in the shade: a
+     * BREAK OVER / SESSION COMPLETE summons could erase the only
+     * user-gesture door to a dropped Airlock firing, and a fallback
+     * could erase the summons. The estate's ids are 4096 (shield),
+     * 4097 (summons), 4098 (break alert), 820000 (break-end) — the
+     * fallback takes its own: 4099. Public so the pin test can
+     * assert the separation directly.
+     */
+    const val FALLBACK_NOTIFICATION_ID = 4099
 
     /** Issue #94 (routed stray ex #155): the fallback's OWN channel.
      *  This post used to re-create the shield's standing channel
@@ -63,10 +75,17 @@ object InterceptLaunch {
      * Returns true when the launch was handed to the system; on any
      * failure, stamps the drop and posts the notification fallback,
      * then returns false.
+     *
+     * A successful launch also retires any standing fallback card:
+     * its whole premise was "the block screen could not open on its
+     * own" — a launch that just opened proves that premise dead, so
+     * the card must not keep posing as the current state of the
+     * door (issue #155 F3 residue).
      */
     fun launch(context: Context, intent: Intent, appName: String): Boolean {
         return try {
             context.startActivity(intent)
+            cancelFallbackNotification(context)
             true
         } catch (e: Exception) {
             lastDroppedLaunchWallMillis = System.currentTimeMillis()
@@ -118,9 +137,30 @@ object InterceptLaunch {
                 )
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setAutoCancel(true)
+                // Issue #155 F3 residue: the fallback carried NO
+                // expiry — an untapped "<app> blocked" card lingered
+                // indefinitely, and a tap hours later would deliver
+                // a stale firing's intent as if the intercept were
+                // current. It now self-expires on the estate's
+                // moment-card clock (the same 45 minutes as the F3
+                // completion card and the SESSION COMPLETE summons).
+                // While the user stays in the blocked app the doors
+                // re-fire and re-post it, so the expiry only ever
+                // retires a card whose moment has actually passed.
+                .setTimeoutAfter(MonolithShieldService.COMPLETION_TIMEOUT_MS)
                 .setContentIntent(pending)
                 .build()
             manager.notify(FALLBACK_NOTIFICATION_ID, notification)
+        }
+    }
+
+    /** Retire the standing fallback card, if any. Best-effort, like
+     *  the post: a failure here must never crash an intercept door. */
+    private fun cancelFallbackNotification(context: Context) {
+        runCatching {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE)
+                as? NotificationManager ?: return
+            manager.cancel(FALLBACK_NOTIFICATION_ID)
         }
     }
 }

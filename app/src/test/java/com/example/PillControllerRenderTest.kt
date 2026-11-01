@@ -52,6 +52,22 @@ import org.robolectric.shadows.ShadowWindowManagerImpl
  * or the foreground witness cannot be established in the sandbox, the
  * test fails THERE, saying which door was shut — never downstream at
  * an empty window.
+ *
+ * World isolation (the session face's cure, Oct 31): the tick
+ * derives from EVERY app row in the shared store
+ * (`getAllAppsSnapshot`), and in PillDerivation a live peek lease
+ * outranks the session face — while a Safe Break outranks the
+ * lease, which is why the break face never saw this. Suites that
+ * grant leases leave them standing in the store
+ * (PeekMinutesSetterTest's leaseEndIsStampedFromTheSetLength
+ * grants `com.peekset.lease` a five-minute lease and restores
+ * only the minutes value), so in the full suite this file's
+ * session-face tick printed the polluter's peek face —
+ * [LEASE, 05:00, ✕] — instead of its own session: the failure
+ * flagged merge-introduced by PR #773 on #245 (6545374876).
+ * This suite seeds no app rows; it clears the app table before
+ * starting the controller, so the derivation reads the world
+ * this test actually made. The label assertions are unchanged.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -156,6 +172,17 @@ class PillControllerRenderTest {
 
         val driveScope = CoroutineScope(Dispatchers.Main + Job())
         scope = driveScope
+        // World isolation (see the class doc): clear every app
+        // row the shared store is holding, so no foreign peek
+        // lease can outrank this suite's own faces in the
+        // derivation. This suite seeds no app rows of its own.
+        val strayApps = runBlocking { dao.getAllAppsSnapshot() }
+        if (strayApps.isNotEmpty()) {
+            runBlocking {
+                dao.deleteAppsByPackage(strayApps.map { it.packageName })
+            }
+        }
+
         val pill = PillController(context, repository, dao, driveScope, context.packageName)
         controller = pill
         pill.start()

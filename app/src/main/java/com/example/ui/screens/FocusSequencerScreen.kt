@@ -319,7 +319,7 @@ fun FocusSequencerScreen(
                     // for a full audit round with nothing wired to
                     // it; the banner could only be waited out.
                     Text(
-                        text = "DISMISS",
+                        text = stringResource(R.string.sequencer_dismiss),
                         fontFamily = AtkinsonHyperlegibleFamily,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp,
@@ -737,7 +737,7 @@ private fun TaskLeafItem(
                     ) {
                         if (stepDraft.isEmpty()) {
                             Text(
-                                text = "Write a step...",
+                                text = stringResource(R.string.sequencer_write_step),
                                 fontFamily = AtkinsonHyperlegibleFamily,
                                 fontSize = 12.5.sp,
                                 color = scheme.onSurfaceVariant
@@ -763,7 +763,7 @@ private fun TaskLeafItem(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                         Text(
-                            text = "ADD STEP",
+                            text = stringResource(R.string.sequencer_add_step),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -773,7 +773,7 @@ private fun TaskLeafItem(
                                 .testTag("hand_split_add_${task.id}")
                         )
                         Text(
-                            text = "CLOSE",
+                            text = stringResource(R.string.sequencer_close),
                             fontFamily = AtkinsonHyperlegibleFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,

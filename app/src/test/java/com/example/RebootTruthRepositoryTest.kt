@@ -90,20 +90,6 @@ class RebootTruthRepositoryTest {
         db.close()
     }
 
-    private fun sign(
-        startWall: Long,
-        startMono: Long,
-        boot: Int,
-        target: Int,
-        stopwatch: Boolean = false
-    ): String = CryptoIntegrityManager.signSessionState(
-        startWallTimeMillis = startWall,
-        startElapsedRealtimeMillis = startMono,
-        bootCount = boot,
-        targetDurationSeconds = target,
-        isStopwatch = stopwatch
-    )
-
     private fun sessionRow(
         startWall: Long,
         startMono: Long,
@@ -111,22 +97,31 @@ class RebootTruthRepositoryTest {
         target: Int = 3_600,
         elapsed: Int = 0,
         accumulated: Int = 0,
-        lastTickMono: Long,
-        hmac: String
-    ): FocusSessionEntity = FocusSessionEntity(
-        intention = "Deep Study",
-        profileName = "Default",
-        targetDurationSeconds = target,
-        elapsedSeconds = elapsed,
-        startWallTimeMillis = startWall,
-        startElapsedRealtimeMillis = startMono,
-        bootCount = boot,
-        accumulatedBeforeRebootSeconds = accumulated,
-        lastTickElapsedRealtimeMillis = lastTickMono,
-        hmacSignature = hmac,
-        isActive = true,
-        completedSuccessfully = false
-    )
+        lastTickMono: Long
+    ): FocusSessionEntity {
+        // Issue #36 (ruling 3): the v2 signature covers the row's
+        // own time fields (elapsed, accumulated, lastTick), so the
+        // fabricated row is built first and signed over itself —
+        // the helper that signed the five v1 scalars is gone with
+        // the scalar API.
+        val unsigned = FocusSessionEntity(
+            intention = "Deep Study",
+            profileName = "Default",
+            targetDurationSeconds = target,
+            elapsedSeconds = elapsed,
+            startWallTimeMillis = startWall,
+            startElapsedRealtimeMillis = startMono,
+            bootCount = boot,
+            accumulatedBeforeRebootSeconds = accumulated,
+            lastTickElapsedRealtimeMillis = lastTickMono,
+            hmacSignature = "",
+            isActive = true,
+            completedSuccessfully = false
+        )
+        return unsigned.copy(
+            hmacSignature = CryptoIntegrityManager.signSessionState(unsigned)
+        )
+    }
 
     private suspend fun insert(row: FocusSessionEntity): FocusSessionEntity {
         val id = db.monolithDao().insertSession(row).toInt()
@@ -196,7 +191,6 @@ class RebootTruthRepositoryTest {
                 target = target,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, anchoredBoot, target)
             )
         )
 
@@ -266,7 +260,6 @@ class RebootTruthRepositoryTest {
                 target = target,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, anchoredBoot, target)
             )
         )
         assertNull(ShieldRaiseStore.raiseMonoForBoot(context, machineBoot))
@@ -314,7 +307,6 @@ class RebootTruthRepositoryTest {
                 target = target,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, anchoredBoot, target)
             )
         )
 
@@ -362,7 +354,6 @@ class RebootTruthRepositoryTest {
                 target = target,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, anchoredBoot, target)
             )
         )
 
@@ -405,7 +396,6 @@ class RebootTruthRepositoryTest {
                 boot = anchoredBoot,
                 elapsed = banked,
                 lastTickMono = monoNow - 10_000L,
-                hmac = sign(startWall, startMono, anchoredBoot, 3_600)
             )
         )
 
@@ -445,7 +435,6 @@ class RebootTruthRepositoryTest {
                 boot = machineBoot,
                 elapsed = 600,
                 lastTickMono = monoNow - 5_000L,
-                hmac = sign(startWall, startMono, machineBoot, 3_600)
             )
         )
 
@@ -468,14 +457,15 @@ class RebootTruthRepositoryTest {
         val monoNow = SystemClock.elapsedRealtime()
         val wallNow = System.currentTimeMillis()
         val row = insert(
+            // The one fixture that must NOT be honestly signed:
+            // the built row's signature is replaced with a forgery.
             sessionRow(
                 startWall = wallNow - 600_000L,
                 startMono = monoNow - 600_000L,
                 boot = machineBoot,
                 elapsed = 600,
-                lastTickMono = monoNow - 1_000L,
-                hmac = "forged"
-            )
+                lastTickMono = monoNow - 1_000L
+            ).copy(hmacSignature = "forged")
         )
         val (verified, tamper) = repo.computeVerifiedSessionElapsed(row)
         assertEquals(600, verified)
@@ -497,7 +487,6 @@ class RebootTruthRepositoryTest {
                 boot = machineBoot,
                 elapsed = 595,
                 lastTickMono = monoNow - 5_000L,
-                hmac = sign(startWall, startMono, machineBoot, 3_600)
             )
         )
         val (verified, tamper) = repo.computeVerifiedSessionElapsed(row)

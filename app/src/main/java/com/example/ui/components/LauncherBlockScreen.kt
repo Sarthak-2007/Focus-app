@@ -49,11 +49,13 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.AppBlockTier
 import com.example.data.ClockText
 import com.example.data.BlockedAppEntity
@@ -283,7 +285,7 @@ private fun LauncherHome(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         androidx.compose.material3.Text(
-            text = "M O N O L I T H",
+            text = stringResource(R.string.launcher_wordmark),
             fontFamily = SoraFamily,
             fontWeight = FontWeight.Bold,
             fontSize = 13.sp,
@@ -363,7 +365,10 @@ private fun LauncherHome(
             // was paused while the dial under it kept counting; the
             // truth is the break minutes remaining.
             androidx.compose.material3.Text(
-                text = "SAFE BREAK · ${(session.safeBreakSecondsRemaining + 59) / 60} MIN",
+                text = stringResource(
+                    R.string.launcher_safe_break_eyebrow,
+                    (session.safeBreakSecondsRemaining + 59) / 60
+                ),
                 fontFamily = AnonymousProFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp,
@@ -391,7 +396,7 @@ private fun LauncherHome(
         }
         if (endsAtMs != null) {
             androidx.compose.material3.Text(
-                text = "ENDS " + ClockText.timeOfDay(LocalContext.current, endsAtMs),
+                text = stringResource(R.string.launcher_ends, ClockText.timeOfDay(LocalContext.current, endsAtMs)),
                 fontFamily = AnonymousProFamily,
                 fontSize = 13.sp,
                 color = NightTextColorSecondary
@@ -399,7 +404,7 @@ private fun LauncherHome(
         }
         if (session != null && shutCount > 0) {
             androidx.compose.material3.Text(
-                text = "$shutCount SHUT",
+                text = stringResource(R.string.launcher_shut_count, shutCount),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontSize = 11.sp,
                 color = NightColorOnSurfaceVariant
@@ -432,7 +437,7 @@ private fun LauncherHome(
             verticalAlignment = Alignment.CenterVertically
         ) {
             androidx.compose.material3.Text(
-                text = "RETURN TO THE DECK",
+                text = stringResource(R.string.launcher_return_to_deck),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp,
@@ -444,7 +449,7 @@ private fun LauncherHome(
                     .testTag("launcher_close")
             )
             androidx.compose.material3.Text(
-                text = "EMERGENCY BREAK",
+                text = stringResource(R.string.emergency_break),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 12.sp,
@@ -534,7 +539,7 @@ private fun LauncherAppsPage(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             androidx.compose.material3.Text(
-                text = "‹ LAUNCHER",
+                text = stringResource(R.string.launcher_back),
                 fontFamily = AtkinsonHyperlegibleFamily,
                 fontWeight = FontWeight.Bold,
                 fontSize = 13.sp,
