@@ -351,6 +351,11 @@ class SoundHapticsLivedTest {
                     parkReturnTick = 0,
                     onDismiss = {},
                     onFixClick = {},
+                    // Main added the Guard CHECK verb (onCheckClick,
+                    // required) after this harness was written; the
+                    // harness passes it as a no-op like every other
+                    // callback here — assertions unchanged.
+                    onCheckClick = {},
                     onToggleSound = {},
                     onToggleShortsReelsSniper = {}
                 )
