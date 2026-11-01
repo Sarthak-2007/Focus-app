@@ -408,18 +408,20 @@ fun ReceiptSheet(
                         text = stringResource(R.string.receipt_forged_line, forgedName.uppercase(Locale.US))
                     )
                 }
-                if (receipt.bankedBreakSeconds > 0) {
-                    // #57: exact span — the old `/ 60` printed a
-                    // false `0 MIN` for 1–59 banked seconds and
-                    // truncated every other figure.
-                    ReceiptMonoLine(
-                        text = stringResource(R.string.receipt_break_banked_span, longSpan(receipt.bankedBreakSeconds))
-                    )
-                }
+                // AUDIT-receipt item 10 — KILL: no BREAK BANKED
+                // line prints here, whatever the state carries.
+                // The line priced the 60-second emergency valve's
+                // hold as banked time — a semantic falsehood (the
+                // valve is an exit, never a currency). The state
+                // field bankedBreakSeconds stays as bookkeeping;
+                // only the print dies. Ruled by SUCCESSOR-12
+                // (convergence-s12 leg record): item 10 governs
+                // over ReceiptSheetTruthTest's #57 display pins,
+                // which were amended to this same absence law.
                 // Issue #105 (F4): the Safe Breaks actually lived
                 // in this session, from its own taken ledger
                 // (breakTakenSeconds, threaded as safeBreakSeconds)
-                // — the valve-fed BREAK BANKED line above reads 0
+                // — the valve-fed banked figure reads 0
                 // on every publishable slip and was the only break
                 // line, so the breaks the user lived never printed.
                 // Exact span via longSpan, never rounded.

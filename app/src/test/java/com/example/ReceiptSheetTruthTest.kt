@@ -42,7 +42,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Issue #57 (audit R1, slice receipt-sheet) — the five findings
  * pinned at the sheet surface and at the pure formatters:
  *  1. The sealed elapsed prints as the RAN total.
- *  2. BREAK BANKED never prints a false/truncated figure.
+ *  2. BREAK BANKED never prints. (This class's #57 pins once
+ *     asserted the line displayed exactly; AUDIT-receipt item 10
+ *     kills the print outright, and SUCCESSOR-12 ruled item 10
+ *     governs — convergence-s12 leg record. The two breakBanked
+ *     pins below were amended under that ruling to the stronger
+ *     absence form: no figure, false or exact, ever prints.)
  *  3. PLANNED is exact — no silent ceiling to the next minute.
  *  4. Cross-midnight spans date BOTH the ARMED and ENDED lines;
  *     same-day slips keep the bare HH:mm print.
@@ -272,10 +277,16 @@ class ReceiptSheetTruthTest {
 
     @Test
     fun breakBanked_neverPrintsFalseZeroOrTruncation() {
+        // RULED AMENDMENT (SUCCESSOR-12, convergence-s12, decided
+        // by the queue-place-7 kill): AUDIT-receipt item 10 kills
+        // the BREAK BANKED print — the #57 display pin this was
+        // (BREAK BANKED 45 SEC displayed) pinned the killed line.
+        // Amended to item 10's law in its stronger absence form:
+        // with 45 banked seconds in state, no BREAK BANKED text
+        // of any figure prints — not the exact span, not the old
+        // false zero, not the name alone.
         show(receipt(wall(9, 0), wall(9, 50), bankedBreakSeconds = 45))
-        composeRule.onNodeWithText("BREAK BANKED 45 SEC", substring = true)
-            .assertIsDisplayed()
-        composeRule.onNodeWithText("BREAK BANKED 0 MIN", substring = true)
+        composeRule.onNodeWithText("BREAK BANKED", substring = true)
             .assertDoesNotExist()
     }
 
@@ -338,10 +349,18 @@ class ReceiptSheetTruthTest {
     }
 
     @Test
-    fun breakBanked_119seconds_printsInFull() {
+    fun breakBanked_119seconds_neverPrints() {
+        // RULED AMENDMENT (SUCCESSOR-12, convergence-s12, decided
+        // by the queue-place-7 kill): this pin once asserted
+        // BREAK BANKED 1 MIN 59 SEC displayed — the #57 lane's
+        // arithmetic law for a print AUDIT-receipt item 10 had
+        // already killed. Item 10 governs: at 119 banked seconds
+        // the slip prints no BREAK BANKED line at all. Renamed
+        // from breakBanked_119seconds_printsInFull so the name
+        // states the law it now pins.
         show(receipt(wall(9, 0), wall(9, 50), bankedBreakSeconds = 119))
-        composeRule.onNodeWithText("BREAK BANKED 1 MIN 59 SEC", substring = true)
-            .assertIsDisplayed()
+        composeRule.onNodeWithText("BREAK BANKED", substring = true)
+            .assertDoesNotExist()
     }
 
     @Test
