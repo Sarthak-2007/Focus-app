@@ -607,4 +607,13 @@ interface MonolithDao {
 
     @Query("SELECT * FROM strongroom_crank_weeks WHERE weekAnchorMillis < :anchor ORDER BY weekAnchorMillis DESC LIMIT 1")
     suspend fun getLatestStrongroomCrankWeekBefore(anchor: Long): StrongroomCrankWeekEntity?
+
+    /** The newest SPENT (seal-broken) crank week before [anchor] —
+     *  CH-1's marker read at composition (BUILD-SR-13 cure): the
+     *  floor test must find the spent marker even when a later
+     *  unspent week's row stands between it and the claimed week
+     *  (a fresh row is born on every crankWeek read, so the newest
+     *  prior row is not necessarily the marker). */
+    @Query("SELECT * FROM strongroom_crank_weeks WHERE weekAnchorMillis < :anchor AND sealBroken = 1 ORDER BY weekAnchorMillis DESC LIMIT 1")
+    suspend fun getLatestSpentStrongroomCrankWeekBefore(anchor: Long): StrongroomCrankWeekEntity?
 }

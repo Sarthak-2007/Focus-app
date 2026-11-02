@@ -30,14 +30,28 @@ import androidx.compose.ui.unit.sp
 // ---------------------------------------------------------------------
 // THE SEVEN INKS (Audit A §4 — the closed palette)
 // ---------------------------------------------------------------------
+//
+// TOKEN RE-POINT AT COMPOSITION (BUILD-SR-13, executing the faces
+// lane's own filed plan + manifest step 4): this file originally
+// declared its own seven inks in this package, colliding with
+// P0's Color.kt declarations of the same names (InkViolet /
+// InkGold / InkRose / InkBlue / StrongroomGround /
+// StrongroomLineWork) once both stood in one tree. The lane-local
+// declarations are deleted; the names this lane's surfaces use
+// now alias P0's canonical inks (identical hexes, verified
+// firsthand: F04FCB · 493EA4 · E2BC39 · C84481 · E47E35 ·
+// 377ED0 · 34323B). P0's StrongroomGround and StrongroomLineWork
+// stand as the single declarations. Named in the composition
+// record (work/build-sr-13/composition-record.md).
 
-val InkPink = Color(0xFFF04FCB)
-val InkViolet = Color(0xFF493EA4)
-val InkGold = Color(0xFFE2BC39)
-val InkRose = Color(0xFFC84481)
-val InkEmber = Color(0xFFE47E35)
-val InkBlue = Color(0xFF377ED0)
-val InkLine = Color(0xFF34323B)
+/** The pink ink — P0's magenta, under this lane's name. */
+val InkPink: Color = InkMagenta
+
+/** The ember ink — P0's orange, under this lane's name. */
+val InkEmber: Color = InkOrange
+
+/** The line ink — P0's graphite, under this lane's name. */
+val InkLine: Color = InkGraphite
 
 /** The palette, whole — the census every Strongroom token test
  *  and later sweep reads. */
@@ -50,14 +64,12 @@ val StrongroomInks: List<Color> = listOf(
 // L1 ground & finish KEPT · L2 dark line-work KEPT)
 // ---------------------------------------------------------------------
 
-/** The door's ground: deep-violet enamelled steel. */
-val StrongroomGround = InkViolet
+// The door's ground (StrongroomGround = InkViolet) and the four
+// printings' ink (StrongroomLineWork = InkGraphite) are declared
+// once, in P0's Color.kt — see the re-point note above.
 
 /** Gold leaf + hand-laid gold pinstripe. */
 val StrongroomGold = InkGold
-
-/** The four printings' ink: dark line-work. */
-val StrongroomLineWork = InkLine
 
 /** The antechamber lamp's warm note (the concept's own orange,
  *  in-palette as the ember ink) — P5's ground note, tokenised

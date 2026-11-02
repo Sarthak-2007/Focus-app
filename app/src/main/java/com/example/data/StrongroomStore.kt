@@ -317,9 +317,17 @@ class StrongroomStore(private val dao: MonolithDao) {
         // is born. Adjacent rollover and skips past an UNSPENT
         // marker mint nothing and stand fresh, as TokenWeekGuard
         // rules for the token.
-        dao.getLatestStrongroomCrankWeekBefore(anchor)?.let { prior ->
+        // CURED AT COMPOSITION (BUILD-SR-13): the floor reads the
+        // newest SPENT marker, not the newest prior row — a fresh
+        // row born on an intervening week's read (this function
+        // inserts one below) otherwise stands between the marker
+        // and a minted week and the floor never fires (the CH-1
+        // test's failure on PR #841 head 0f1dd0e6, run 41422275346:
+        // the adjacent week's read birthed its unspent row, and
+        // the +3-week mint read fresh past the spent marker).
+        dao.getLatestSpentStrongroomCrankWeekBefore(anchor)?.let { prior ->
             val oneWeekMillis = 7L * 24 * 3_600_000L
-            if (prior.sealBroken && anchor > prior.weekAnchorMillis + oneWeekMillis) {
+            if (anchor > prior.weekAnchorMillis + oneWeekMillis) {
                 return StrongroomDay.GovernorCrankWeek(
                     weekAnchorMillis = anchor,
                     spentSeconds = StrongroomDay.CRANK_SECONDS,
