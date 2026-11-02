@@ -961,7 +961,7 @@ private fun HeldSlipCard(
                                     actions.onTakeCall(slip)
                                 slip.kind == HeldSlip.Kind.CODE && !revealed ->
                                     actions.onShowCode(slip)
-                                else -> actions.onResolveHeld(slip, taken = true)
+                                else -> actions.onResolveHeld(slip, true)
                             }
                         }
                         .padding(horizontal = 16.dp, vertical = 9.dp)
@@ -978,7 +978,7 @@ private fun HeldSlipCard(
                     modifier = Modifier
                         .background(StrongroomRoles.Field, RoundedCornerShape(3.dp))
                         .border(1.5.dp, StrongroomInks.Gold, RoundedCornerShape(3.dp))
-                        .clickable { actions.onResolveHeld(slip, taken = false) }
+                        .clickable { actions.onResolveHeld(slip, false) }
                         .padding(horizontal = 16.dp, vertical = 9.dp)
                 ) {
                     Text(
