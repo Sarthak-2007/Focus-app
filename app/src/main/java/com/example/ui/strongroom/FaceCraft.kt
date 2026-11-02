@@ -155,10 +155,17 @@ object FaceCraft {
         // on consumption the masks stamp from HourFigures' paths at
         // the cut width. The heightfield and relief pass consume
         // masks and are indifferent to their hand.
+        // Adoption cure (BUILD-SR-16): the filed working paper's
+        // elvis construction did not type-check (this file's compile
+        // was always the venue's, on adoption — see header). Same
+        // intent, sound form: the bundled face where the platform
+        // loads it, the platform bold otherwise.
         val typeface: Typeface =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 runCatching { context.resources.getFont(R.font.anonymous_pro_bold) }.getOrNull()
-            } else null ?: Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            } else {
+                null
+            }) ?: Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
         stamp(DEPTH_GLYPH_GROOVE) { p ->
             p.style = Paint.Style.FILL
             p.typeface = typeface
