@@ -258,12 +258,21 @@ object LiftingPlate {
     }
 
     /**
-     * THE STRUCK-ONCE GUARD (B-14). P1's store persists a strike
-     * when told to; this guard is the law above the store that
-     * decides whether it may be told. (Named upward in this lane's
-     * opening line: if BUILD-SR-3 prefers the guard inside the
-     * store, this object lifts out in one move — the law is the
-     * same either way.)
+     * THE STRUCK-ONCE GUARD (B-14) — RETIREMENT CONDITION NAMED.
+     * BUILD-SR-3 has since landed the guard INSIDE
+     * `StrongroomStore.strikePlate` (their e357ae49, test-proven:
+     * struck states return as struck, never recomputed, nothing
+     * written), and per METHODS-SR-3's plate-guard rule the law
+     * lives in ONE home — the store. This object therefore
+     * RETIRES at composition, in the same act that wires the
+     * surfaces to the store: it exists in this PR only because
+     * the store is not yet on main and this lane's struck-once
+     * law must stand enforced standalone until then. Its one
+     * caller pattern — an AlreadyStruck routes late standings to
+     * a confession — survives retirement as caller behaviour on
+     * the store's standing-plate return; no law case lives here
+     * that the store's guard does not carry (agreed with
+     * BUILD-SR-3 by letter, this act).
      */
     object PlateStrikeGuard {
         fun strike(
