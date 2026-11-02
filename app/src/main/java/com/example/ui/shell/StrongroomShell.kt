@@ -44,10 +44,28 @@ import com.example.ui.foundation.StrongroomTheme
  * (Doorway/Signing, the sealed face, the antechamber, the break,
  * the lifting/plate) are their own slices seating behind this
  * one; nothing finished is authored here.
+ *
+ * THE SEALED STANDING, UNIFIED (BUILD-SR-38 merge composition,
+ * consuming BUILD-SR-37's named remainder): the seal's standing
+ * is derived ONCE — from the sealed day's standing record, as the
+ * sealed face's immutable snapshot (the host's loadSealFacts) —
+ * and this shell consumes THAT fact through [sealedStanding]
+ * whenever the host supplies it, instead of deriving a parallel
+ * standing from the kept session. Both face hosts (this shell's
+ * SEALED_FACE host and the doorway place's glue) render the one
+ * snapshot, and the place that stands them is derived from the
+ * same fact: there is no second derivation of the seal anywhere
+ * in the composition. [sealedStanding] = null keeps the shell's
+ * standalone default (the kept session's standing) for callers
+ * that compose the shell without the Strongroom seal's facts.
+ * The break's and the lifting's inputs remain the kept session /
+ * finish facts — those places are other slices' derivations and
+ * this unification touches the seal's standing only.
  */
 @Composable
 fun StrongroomShell(
     viewModel: MonolithViewModel,
+    sealedStanding: Boolean? = null,
     doorwayContent: @Composable () -> Unit = { DoorwayBirthWord() },
     sealedFaceContent: @Composable () -> Unit = {},
     antechamberContent: @Composable () -> Unit = {},
@@ -60,7 +78,7 @@ fun StrongroomShell(
 
     val finishNow = finish
     val place = deriveShellPlace(
-        sealed = session?.isActive == true,
+        sealed = sealedStanding ?: (session?.isActive == true),
         onBreak = session?.isInSafeBreak == true,
         lifting = finishNow != null && !finishNow.issued,
         atAntechamber = standingPlace == StrongroomPlace.ANTECHAMBER

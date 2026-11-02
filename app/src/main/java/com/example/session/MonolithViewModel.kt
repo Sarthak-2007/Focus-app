@@ -767,6 +767,27 @@ class MonolithViewModel(
     )
     val currentPlace: StateFlow<StrongroomPlace> = _currentPlace.asStateFlow()
 
+    // BUILD-SR-38 (merge composition — the sealed face's
+    // derivation, unified): the Strongroom seal's standing, as
+    // derived ONCE by the host from the sealed day's standing
+    // record (the same derivation that produces the sealed face's
+    // snapshot — MainActivity's loadSealFacts). The Strongroom
+    // swing strikes its seal in the Strongroom store and starts
+    // no legacy session, so the movement law below reads this
+    // standing beside the legacy session's: one derivation of the
+    // seal, consumed by the shell's place, both face hosts, and
+    // this law — never a parallel one. The host re-notes it on
+    // every seal-facts read (birth + every resume + the swing's
+    // completion).
+    @Volatile
+    private var strongroomSealStanding: Boolean = false
+
+    /** Note the Strongroom seal's standing, from the host's one
+     *  derivation of it. */
+    fun noteStrongroomSealStanding(standing: Boolean) {
+        strongroomSealStanding = standing
+    }
+
     // The manual theme is DEAD (chrome C4): _darkTheme and
     // toggleTheme() are deleted with the DAY/NIGHT pill. The theme
     // is an evaluation — see themeEvaluation below (declared after
@@ -3464,7 +3485,9 @@ class MonolithViewModel(
      *
      *  - Hard locks (proving / the seal shot / a detaining finish)
      *    refuse every movement, as before.
-     *  - While a session is active, the lawful targets are the
+     *  - While a seal stands — a live session, or the Strongroom
+     *    seal as noted from the host's one derivation of it
+     *    (BUILD-SR-38) — the lawful targets are the
      *    sealed face and the antechamber — never the doorway
      *    (while sealed, the launcher is the room; there is no
      *    route out of it, ledger D-7), and never BREAK or
@@ -3487,7 +3510,12 @@ class MonolithViewModel(
         // head — a refused movement still reads as his committed
         // intent to move, and the bloom never gates the verb.
         bloomNightLanding()
-        val sealed = activeSession.value?.isActive == true
+        // The seal's standing, from the one derivation (the kept
+        // session's standing OR the Strongroom seal's, as noted
+        // by the host from the sealed day's standing record —
+        // BUILD-SR-38's unification: the second touch is lawful
+        // exactly when a seal stands, whichever engine struck it).
+        val sealed = activeSession.value?.isActive == true || strongroomSealStanding
         val lawful = when {
             hardNavigationLocked() -> false
             sealed -> place == StrongroomPlace.SEALED_FACE ||

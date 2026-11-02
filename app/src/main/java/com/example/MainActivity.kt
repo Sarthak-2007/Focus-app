@@ -16,6 +16,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -31,6 +33,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import com.example.data.DoorWordStore
 import com.example.data.PermissionStepStore
 import com.example.data.StrongroomDayEntity
 import com.example.data.StrongroomHeldArrivalEntity
@@ -48,12 +51,20 @@ import com.example.service.LoadoutShortcuts
 import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
+import com.example.service.StrongroomEngineBridge
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
 import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
 import com.example.ui.doorway.plateTruthForDoorway
+import com.example.ui.sealed.DoorWordSetter
+import com.example.ui.sealed.SealedFace
+import com.example.ui.sealed.SealedFaceActions
+import com.example.ui.sealed.SealedFaceState
+import com.example.ui.sealed.SwingAct
+import com.example.ui.sealed.SwingActActions
+import com.example.ui.sealed.SwingActState
 import com.example.ui.shell.StrongroomShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -395,6 +406,39 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         doorwayState = loadDoorwayState(appContext)
     }
 
+    // BUILD-SR-37 (the Seal slice): the seal's standing facts, read
+    // from the Strongroom store on the same tick as the doorway's —
+    // the sealed face's printings snapshot (derived ONCE from the
+    // sealed day's standing record + the door-word as it stands;
+    // the face is never re-derived from live facts while the seal
+    // stands) and whether today's standing day makes the swing
+    // invocable at the first sitting. An unsigned day stands open
+    // (GAP-COORD-04 as ruled): no seal stands, no face derives,
+    // and the shell rests at the doorway.
+    var sealedFaceState by remember { mutableStateOf<SealedFaceState?>(null) }
+    var swingStanding by remember { mutableStateOf(false) }
+    var swingActState by remember { mutableStateOf(SwingActState()) }
+    val shellScope = androidx.compose.runtime.rememberCoroutineScope()
+    LaunchedEffect(doorwayRefreshTick.value) {
+        val facts = loadSealFacts(appContext)
+        sealedFaceState = facts.first
+        swingStanding = facts.second
+        // The movement law reads the same one derivation
+        // (BUILD-SR-38 merge composition): the second touch is
+        // lawful exactly when the snapshot stands.
+        viewModel.noteStrongroomSealStanding(facts.first != null)
+    }
+    val sealedFaceActions = SealedFaceActions(
+        // The knock's sound/haptic substance rides the Stage 13/14
+        // slices through this seam; platform-edge reaches are
+        // already answered by the engine's knock voice via the
+        // bridge. The face itself changes nothing in answer.
+        onKnock = {},
+        onGrilleOpen = {
+            viewModel.moveToPlace(com.example.session.StrongroomPlace.ANTECHAMBER)
+        }
+    )
+
     // Watch Store residency (census §2c, re-carried): the old
     // composition stamped residency on DECK entry; the host has
     // no DECK, so residency starts at the shell's own birth and
@@ -450,25 +494,86 @@ private fun ShellHost(viewModel: MonolithViewModel) {
 
     StrongroomShell(
         viewModel = viewModel,
+        // THE UNIFIED STANDING (BUILD-SR-38 merge composition):
+        // the shell's place derivation consumes the seal's standing
+        // from THE SAME derivation that produces the face's
+        // snapshot — loadSealFacts, from the sealed day's standing
+        // record. The legacy session's standing no longer derives
+        // the face's place in parallel: one derivation, and both
+        // hosts render its one snapshot.
+        sealedStanding = sealedFaceState != null,
         doorwayContent = {
-            // The signing place, composed (BUILD-SR-35 + BUILD-SR-36
-            // at merge): the Doorway's four furniture pieces stand
-            // in the room's upper reach, and the signing table —
-            // the evening's act — stands at the open door below
-            // them. One place, not two destinations (census C-21 +
-            // C-02; GAP-R01: no navigation glue exists).
-            androidx.compose.foundation.layout.Column(
-                modifier = androidx.compose.ui.Modifier.fillMaxSize()
-            ) {
-                androidx.compose.foundation.layout.Box(
-                    modifier = androidx.compose.ui.Modifier.weight(1f)
+            // While a Strongroom seal stands, the doorway place
+            // itself stands as the sealed face (BUILD-SR-37;
+            // ledger D-7: while sealed, the launcher is the face
+            // and there is no route into the normal app — the
+            // signing table does not stand under a standing seal).
+            // BUILD-SR-38 merge composition: this glue renders THE
+            // ONE SNAPSHOT (loadSealFacts' derivation, shared with
+            // the shell's SEALED_FACE host) — since the shell's
+            // place derivation now consumes that same standing,
+            // this branch stands as the birth-frame form, before
+            // the shell's first unified derivation lands the place
+            // at SEALED_FACE; it derives nothing of its own.
+            val face = sealedFaceState
+            if (face != null) {
+                SealedFace(state = face, actions = sealedFaceActions)
+            } else {
+                // The signing place, composed (BUILD-SR-35 +
+                // BUILD-SR-36 at merge): the Doorway's four
+                // furniture pieces stand in the room's upper reach,
+                // and the signing table — the evening's act — stands
+                // at the open door below them. One place, not two
+                // destinations (census C-21 + C-02; GAP-R01: no
+                // navigation glue exists).
+                // BUILD-SR-37: between them stands THE SWING ACT,
+                // invocable as the morning's first sitting when a
+                // day stands composed or signed — his hand swings
+                // the door on the standing signing, and at frame
+                // contact this host fires the seal through the
+                // bridge's activateSeal (its fresh host, per the
+                // Caller-Orphan Register: until this slice it had
+                // no production caller).
+                androidx.compose.foundation.layout.Column(
+                    modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
-                    Doorway(state = doorwayState)
-                }
-                androidx.compose.foundation.layout.Box(
-                    modifier = androidx.compose.ui.Modifier.weight(1.35f)
-                ) {
-                    SigningHost(viewModel = viewModel)
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier.weight(1f)
+                    ) {
+                        Doorway(state = doorwayState)
+                    }
+                    if (swingStanding) {
+                        SwingAct(
+                            state = swingActState,
+                            actions = SwingActActions(
+                                onContact = {
+                                    shellScope.launch {
+                                        val todayIso = StrongroomDay
+                                            .filingDateIso(System.currentTimeMillis())
+                                        val span = withContext(Dispatchers.IO) {
+                                            StrongroomEngineBridge.activateSeal(
+                                                appContext, todayIso
+                                            )
+                                        }
+                                        swingActState = if (span != null) {
+                                            SwingActState(sealStruck = true)
+                                        } else {
+                                            SwingActState(sealFailed = true)
+                                        }
+                                    }
+                                },
+                                onCeremonyComplete = {
+                                    swingActState = SwingActState()
+                                    doorwayRefreshTick.value++
+                                }
+                            )
+                        )
+                    }
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier.weight(1.35f)
+                    ) {
+                        SigningHost(viewModel = viewModel)
+                    }
                 }
             }
         },
@@ -479,6 +584,20 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // and the host below renders nothing when no sealed
             // day stands (no dead route, route-book Law R-2).
             AntechamberHost(viewModel = viewModel)
+        },
+        sealedFaceContent = {
+            // The shell's own SEALED_FACE host: the face from THE
+            // ONE SNAPSHOT (BUILD-SR-38 merge composition — the
+            // sealed face's derivation is unified: the snapshot is
+            // derived once from the sealed day's standing record
+            // in loadSealFacts, the shell's place derivation below
+            // consumes that same standing via sealedStanding, and
+            // both hosts — this one and the doorway place's glue —
+            // render that one snapshot; re-shown exactly as cut,
+            // never recomposed, ledger B-10).
+            sealedFaceState?.let { face ->
+                SealedFace(state = face, actions = sealedFaceActions)
+            }
         }
     )
 }
@@ -715,6 +834,11 @@ private fun SigningHost(viewModel: MonolithViewModel) {
     var firstSigning by remember { mutableStateOf(false) }
     var codesWait by remember { mutableStateOf(false) }
     var signed by remember { mutableStateOf(false) }
+    // BUILD-SR-37: the door-word as it stands (its store is the
+    // ruling's home — GAP-COORD-01 as ruled at PR #873: a single
+    // word of his choosing, set at the signing table, changeable
+    // only at a signing; unset = the kept place).
+    var doorWord by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(Unit) {
         val facts = withContext(Dispatchers.IO) {
@@ -756,74 +880,98 @@ private fun SigningHost(viewModel: MonolithViewModel) {
         firstSigning = facts.third.first
         codesWait = facts.third.second
         signed = facts.third.third
+        doorWord = withContext(Dispatchers.IO) {
+            DoorWordStore(appContext).doorWord()
+        }
     }
 
     val standing = day ?: return
 
-    com.example.ui.signing.Signing(
-        state = com.example.ui.signing.SigningState(
-            day = standing,
-            tokens = apps.map {
-                com.example.ui.signing.SigningToken(it.packageName, it.appName)
-            },
-            guard = guard,
-            firstSigning = firstSigning,
-            codesWaitTonight = codesWait,
-            signed = signed
-        ),
-        actions = com.example.ui.signing.SigningActions(
-            onAmend = { amendment ->
-                val amended = com.example.domain.StrongroomComposition
-                    .amend(standing, amendment)
-                day = amended
-                amendment.taskLine?.let { viewModel.setIntentionText(it) }
-                amendment.sentence?.let { viewModel.setShieldIntention(it) }
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        StrongroomStore(AppContainer.dao(appContext))
-                            .sign(amended.record, amended = true)
-                    }
-                }
-            },
-            onAllowanceMove = { target ->
-                scope.launch {
-                    val now = System.currentTimeMillis()
-                    val todayIso = com.example.domain.StrongroomDay
-                        .filingDateIso(now)
-                    val next = withContext(Dispatchers.IO) {
-                        val store = StrongroomStore(AppContainer.dao(appContext))
-                        val current = store.guardState(now)
-                        when (
-                            val move = com.example.ui.signing.AllowancePawl.move(
-                                current, target, todayIso,
-                                com.example.domain.StrongroomDay
-                                    .nextDayStartMillis(now)
-                            )
-                        ) {
-                            is com.example.ui.signing.AllowancePawl.Move.Tightened ->
-                                store.tightenGuard(now, move.state.allowanceMinutes)
-                            is com.example.ui.signing.AllowancePawl.Move.RaiseWound ->
-                                store.requestGuardRaise(
-                                    now, move.state.pendingAllowanceMinutes
-                                ).first
-                            is com.example.ui.signing.AllowancePawl.Move.BeyondHardStop ->
-                                current
+    // The signing table, with the door-word's scribe line joined
+    // to its setters (BUILD-SR-37, per the coordinator's ruling at
+    // PR #873: the setting control joins the signing table's
+    // setters at the sealed-face slice's composition — the Signing
+    // as delivered is not reopened for it).
+    androidx.compose.foundation.layout.Column(
+        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+    ) {
+        com.example.ui.signing.Signing(
+            state = com.example.ui.signing.SigningState(
+                day = standing,
+                tokens = apps.map {
+                    com.example.ui.signing.SigningToken(it.packageName, it.appName)
+                },
+                guard = guard,
+                firstSigning = firstSigning,
+                codesWaitTonight = codesWait,
+                signed = signed
+            ),
+            actions = com.example.ui.signing.SigningActions(
+                onAmend = { amendment ->
+                    val amended = com.example.domain.StrongroomComposition
+                        .amend(standing, amendment)
+                    day = amended
+                    amendment.taskLine?.let { viewModel.setIntentionText(it) }
+                    amendment.sentence?.let { viewModel.setShieldIntention(it) }
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            StrongroomStore(AppContainer.dao(appContext))
+                                .sign(amended.record, amended = true)
                         }
                     }
-                    guard = next
-                }
-            },
-            onSignature = {
-                signed = true
-                scope.launch {
-                    withContext(Dispatchers.IO) {
-                        StrongroomStore(AppContainer.dao(appContext))
-                            .sign(standing.record, amended = true)
+                },
+                onAllowanceMove = { target ->
+                    scope.launch {
+                        val now = System.currentTimeMillis()
+                        val todayIso = com.example.domain.StrongroomDay
+                            .filingDateIso(now)
+                        val next = withContext(Dispatchers.IO) {
+                            val store = StrongroomStore(AppContainer.dao(appContext))
+                            val current = store.guardState(now)
+                            when (
+                                val move = com.example.ui.signing.AllowancePawl.move(
+                                    current, target, todayIso,
+                                    com.example.domain.StrongroomDay
+                                        .nextDayStartMillis(now)
+                                )
+                            ) {
+                                is com.example.ui.signing.AllowancePawl.Move.Tightened ->
+                                    store.tightenGuard(now, move.state.allowanceMinutes)
+                                is com.example.ui.signing.AllowancePawl.Move.RaiseWound ->
+                                    store.requestGuardRaise(
+                                        now, move.state.pendingAllowanceMinutes
+                                    ).first
+                                is com.example.ui.signing.AllowancePawl.Move.BeyondHardStop ->
+                                    current
+                            }
+                        }
+                        guard = next
+                    }
+                },
+                onSignature = {
+                    signed = true
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            StrongroomStore(AppContainer.dao(appContext))
+                                .sign(standing.record, amended = true)
+                        }
                     }
                 }
-            }
+            ),
+            modifier = androidx.compose.ui.Modifier.weight(1f)
         )
-    )
+        DoorWordSetter(
+            word = doorWord,
+            onSetWord = { raw ->
+                val store = DoorWordStore(appContext)
+                val ok = store.put(raw)
+                if (ok) doorWord = store.doorWord()
+                ok
+            },
+            modifier = androidx.compose.ui.Modifier
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        )
+    }
 }
 
 /**
@@ -906,6 +1054,43 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
             plate = plate
         )
     }
+/**
+ * The seal's standing facts (BUILD-SR-37) — the ONLY source of the
+ * sealed face and the swing's invocability in the composed app:
+ *
+ *  - **The sealed face**: the Strongroom store's sealed day, when
+ *    one stands, re-expressed as [SealedFaceState] from its
+ *    standing signing record and the door-word as it stands in
+ *    [DoorWordStore]. Derived here, once per read, as an immutable
+ *    snapshot — the face paints whole from it (the 100 ms paint
+ *    bar's ground) and is never re-derived from live facts (held
+ *    arrivals, punches, the purse) while the seal stands.
+ *  - **The swing's invocability**: today's filing-day row standing
+ *    COMPOSED or SIGNED, with no seal already standing. The swing
+ *    fires from the standing signing exactly as it stands (the
+ *    app never checks whether the evening happened, B-2); a day
+ *    that does not stand makes no swing invocable, and an unsigned
+ *    day stands open (GAP-COORD-04 as ruled).
+ */
+private suspend fun loadSealFacts(context: Context): Pair<SealedFaceState?, Boolean> =
+    withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        val store = StrongroomStore(AppContainer.dao(appContext))
+        val sealedRow = store.sealedDay()
+        val face = sealedRow?.let { row ->
+            SealedFaceState.standing(
+                sealedRecord = row.toSigningRecord(),
+                doorWord = DoorWordStore(appContext).doorWord()
+            )
+        }
+        val todayIso = StrongroomDay.filingDateIso(System.currentTimeMillis())
+        val todayRow = store.day(todayIso)
+        val swingStanding = face == null && todayRow != null &&
+            (todayRow.state == StrongroomDayEntity.STATE_COMPOSED ||
+                todayRow.state == StrongroomDayEntity.STATE_SIGNED)
+        face to swingStanding
+    }
+
 // Issue #27 (finding 5): a FIX trip must never die silently.
 // Every Settings launch goes through here: the exact pane
 // first; if the OEM throws, the generic Settings home is the
