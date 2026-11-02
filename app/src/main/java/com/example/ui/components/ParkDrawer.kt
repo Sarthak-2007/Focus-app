@@ -85,6 +85,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import com.example.service.guardLineFor
 
 /**
  * ============================================================================
@@ -744,7 +745,7 @@ fun ParkDrawer(
                 // line — which single grant is fatal, stated as a
                 // state, above the board's per-item rows.
                 val availabilityLine = snapshot?.let {
-                    com.example.ui.components.availabilityLineFor(it, nowMono)
+                    com.example.service.availabilityLineFor(it, nowMono)
                 }
                 if (availabilityLine != null) {
                     Text(

@@ -1,6 +1,6 @@
 package com.example
 
-import com.example.ui.MonolithDestination
+import com.example.session.MonolithDestination
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test

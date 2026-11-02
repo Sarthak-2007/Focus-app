@@ -1,4 +1,6 @@
-package com.example.ui
+package com.example.service
+
+import com.example.session.MonolithDestination
 
 /**
  * Issue #155 F5 (WING-F, BUILDER-4): what a tap on a glance card is

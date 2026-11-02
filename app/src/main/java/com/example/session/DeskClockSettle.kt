@@ -1,4 +1,4 @@
-package com.example.ui
+package com.example.session
 
 /**
  * FLOW §2 — the desk clock's auto-raise, decided one ticker beat
@@ -510,3 +510,9 @@ internal fun nightReturnEntryIsSnap(
     from == NightReturnPhase.OPEN && to == NightReturnPhase.LANDING -> true
     else -> false
 }
+
+// EXTRACTION C-10 — the DeskClockEntryCause enum, moved verbatim out of
+// ui/components/AirlockAndDisarmOverlays.kt into the C-1/C-3 engine home
+// (this file). It is the type of the ViewModel's deskClockEntryCause flow.
+// Name and entries unchanged.
+enum class DeskClockEntryCause { UNWATCHED, WATCHED, HAND, SEEDED }

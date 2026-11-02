@@ -18,9 +18,9 @@ import com.example.data.RoutineEntity
 import com.example.data.RoutineSchedule
 import com.example.data.SmartLoadout
 import com.example.service.InterceptPath
-import com.example.ui.peekOfferFor
+import com.example.session.peekOfferFor
 import com.example.service.matchBlockedDomain
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithViewModel
 import com.example.ui.components.ParkDrawer
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals

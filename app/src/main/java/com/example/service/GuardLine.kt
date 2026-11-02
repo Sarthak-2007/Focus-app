@@ -1,10 +1,5 @@
-package com.example.ui.components
+package com.example.service
 
-import com.example.service.DetectorHealthSnapshot
-import com.example.service.PermPrint
-import com.example.service.WatchItemId
-import com.example.service.WatchSnapshot
-import com.example.service.WatchStore
 
 /** The Guard line's confession of ignorance (issue #9, P-6):
  *  the counted set has not been measured, so no count exists.

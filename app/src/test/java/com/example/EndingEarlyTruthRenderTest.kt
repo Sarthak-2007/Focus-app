@@ -10,7 +10,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.FocusSessionEntity
 import com.example.data.StudyModePreset
 import com.example.service.TactileSoundEngine
-import com.example.ui.DisarmChallengeState
+import com.example.session.DisarmChallengeState
 import com.example.ui.components.DisarmChallengeOverlay
 import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme

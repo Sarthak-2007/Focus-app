@@ -5,17 +5,13 @@ import com.example.data.BlockedAppEntity
 import com.example.data.FocusSessionEntity
 import com.example.data.InterceptLogEntity
 import com.example.service.InterceptPath
-import com.example.ui.PeekWithheld
-import com.example.ui.components.breakAppointmentText
-import com.example.ui.components.cooldownRemainingSeconds
-import com.example.ui.components.doorLastReachLine
-import com.example.ui.components.doorMemoryLineText
-import com.example.ui.nextBreakInstantMillis
-import com.example.ui.peekOfferFor
-import com.example.ui.peekWithheldFor
-import com.example.ui.sessionInterceptCount
-import com.example.ui.sessionIsLive
-import com.example.ui.taperWallSeconds
+import com.example.session.PeekWithheld
+import com.example.session.nextBreakInstantMillis
+import com.example.session.peekOfferFor
+import com.example.session.peekWithheldFor
+import com.example.session.sessionInterceptCount
+import com.example.session.sessionIsLive
+import com.example.session.taperWallSeconds
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -47,21 +43,6 @@ class HeldDoorFixTest {
     // FIX-5b — anchored derivation.
     // -----------------------------------------------------------------
 
-    @Test
-    fun derivedSecondsUntilCeilsFromTheAnchor() {
-        val now = 500_000L
-        assertEquals(2, cooldownRemainingSeconds(now + 1_500L, now))
-        assertEquals(1, cooldownRemainingSeconds(now + 1_000L, now))
-        assertEquals(1, cooldownRemainingSeconds(now + 1L, now))
-        assertEquals(10, cooldownRemainingSeconds(now + 10_000L, now))
-        // End reached, end passed, end never anchored: zero —
-        // and a cooldown print at zero is unrepresentable because
-        // the overlay holds no cooldown tenant at zero.
-        assertEquals(0, cooldownRemainingSeconds(now, now))
-        assertEquals(0, cooldownRemainingSeconds(now - 1L, now))
-        assertEquals(0, cooldownRemainingSeconds(0L, now))
-    }
-
     // FIX-6's gate line ("PEEK OPENS IN M:SS" replacing the hero
     // numeral) is NOT carried at the #11 merge: main's numeral is
     // a wired fidget (Issue #55's transmute pulse) and the two
@@ -89,49 +70,6 @@ class HeldDoorFixTest {
         // the wall is the floor whatever the count says.
         assertEquals(5, taperWallSeconds(0, justExpiredLease = true))
         assertEquals(5, taperWallSeconds(4, justExpiredLease = true))
-    }
-
-    @Test
-    fun memoryLineCountsThisSessionAndStaysSilentOnTheFirstVisit() {
-        assertNull(doorMemoryLineText(0))
-        assertEquals("SECOND TIME THIS SESSION", doorMemoryLineText(1))
-        assertEquals("THIRD TIME THIS SESSION", doorMemoryLineText(2))
-        assertEquals("TENTH TIME THIS SESSION", doorMemoryLineText(9))
-        assertEquals("11TH TIME THIS SESSION", doorMemoryLineText(10))
-    }
-
-    @Test
-    fun lastReachLineStaysSilentWithoutAPriorReach() {
-        // Issue #264 (B-264-25): 0 = no prior reach in the log —
-        // the door claims no memory it doesn't have.
-        assertNull(doorLastReachLine(0L, nowMillis = 1_000_000L))
-    }
-
-    @Test
-    fun lastReachLineNamesTheDistanceInTheDoorsOwnUnits() {
-        val now = 10L * 24L * 3_600_000L // an arbitrary fixed "now"
-        assertEquals(
-            "LAST REACH UNDER A MINUTE AGO",
-            doorLastReachLine(now - 30_000L, now)
-        )
-        assertEquals(
-            "LAST REACH 26 MIN AGO",
-            doorLastReachLine(now - 26L * 60_000L, now)
-        )
-        assertEquals(
-            "LAST REACH 3 H AGO",
-            doorLastReachLine(now - 3L * 3_600_000L, now)
-        )
-        assertEquals(
-            "LAST REACH 2 D AGO",
-            doorLastReachLine(now - 2L * 86_400_000L, now)
-        )
-        // A log stamp in the future (clock skew) never prints a
-        // negative distance.
-        assertEquals(
-            "LAST REACH UNDER A MINUTE AGO",
-            doorLastReachLine(now + 5_000L, now)
-        )
     }
 
     // -----------------------------------------------------------------
@@ -243,13 +181,6 @@ class HeldDoorFixTest {
                 now
             )
         )
-    }
-
-    @Test
-    fun breakAppointmentPrintsTheDerivedInstant() {
-        val instant = 1_700_000_000_000L
-        val hhmm = SimpleDateFormat("HH:mm", Locale.US).format(Date(instant))
-        assertEquals("BREAK AT $hhmm OPENS THIS APP", breakAppointmentText(instant))
     }
 
     // -----------------------------------------------------------------

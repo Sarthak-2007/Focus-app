@@ -1,6 +1,6 @@
 package com.example
 
-import com.example.ui.evaluateTheme
+import com.example.session.evaluateTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

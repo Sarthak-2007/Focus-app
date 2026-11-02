@@ -6,8 +6,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import com.example.ui.AirlockInterceptState
-import com.example.ui.PeekWithheld
+import com.example.session.AirlockInterceptState
+import com.example.session.PeekWithheld
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.theme.MyApplicationTheme
 import androidx.compose.runtime.getValue

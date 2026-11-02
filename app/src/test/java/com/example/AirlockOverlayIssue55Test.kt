@@ -1,7 +1,7 @@
 package com.example
 
-import com.example.ui.PeekWithheld
-import com.example.ui.peekSecondsRemaining
+import com.example.session.PeekWithheld
+import com.example.session.peekSecondsRemaining
 import com.example.ui.components.airlockCountdownRemaining
 import com.example.ui.components.cooldownRemainingSeconds
 import com.example.ui.components.peekCooldownPrint

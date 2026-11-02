@@ -1,8 +1,8 @@
 package com.example
 
-import com.example.ui.GlanceAbout
-import com.example.ui.GlanceRouting
-import com.example.ui.MonolithDestination
+import com.example.service.GlanceAbout
+import com.example.service.GlanceRouting
+import com.example.session.MonolithDestination
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -15,7 +15,7 @@ import org.junit.Test
  *
  * Pins, per glance state, the destination a tap must land on —
  * and the two gates that force the table: the seal law in
- * [com.example.ui.MonolithViewModel.navigateTo] (non-DECK refused
+ * [com.example.session.MonolithViewModel.navigateTo] (non-DECK refused
  * while a session is active) and the receipt slip's DECK gate in
  * MainActivity (the standing slip renders only on the Deck).
  * A routing row that named SHIELD for a live state would be a

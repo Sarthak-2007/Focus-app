@@ -76,11 +76,11 @@ import com.example.service.PermissionReturnService
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
-import com.example.ui.GlanceRouting
-import com.example.ui.LoadoutShortcuts
-import com.example.ui.MonolithDestination
-import com.example.ui.ArmPhase
-import com.example.ui.MonolithViewModel
+import com.example.service.GlanceRouting
+import com.example.service.LoadoutShortcuts
+import com.example.session.MonolithDestination
+import com.example.session.ArmPhase
+import com.example.session.MonolithViewModel
 import com.example.ui.BreakDimScrim
 import com.example.ui.nightDesaturate
 import com.example.ui.rememberBreakDimAlpha
@@ -91,12 +91,12 @@ import com.example.ui.components.LauncherBlockScreen
 import com.example.ui.components.PeekCountdownPill
 import com.example.ui.components.LauncherPage
 import com.example.ui.components.DisarmChallengeOverlay
-import com.example.ui.components.GuardLinePrint
+import com.example.service.GuardLinePrint
 import com.example.ui.components.MonolithPullDownHeader
 import com.example.ui.components.ParkDrawer
 import com.example.ui.components.ReceptionSheet
 import com.example.ui.components.doorsMaskAt
-import com.example.ui.components.guardLineFor
+import com.example.service.guardLineFor
 import com.example.ui.components.receptionFirstRoutineLine
 import com.example.ui.components.receptionTotal
 import com.example.ui.screens.DrawerScreen
@@ -256,7 +256,7 @@ class MainActivity : ComponentActivity() {
                 // pin and the Deck's ground surfaces now step
                 // together, on the VM's one mirror.
                 isFocusSessionActive = activeSessionForTheme?.isActive == true &&
-                    shotGround == com.example.ui.MonolithViewModel.ShotGround.GROUNDED
+                    shotGround == com.example.session.MonolithViewModel.ShotGround.GROUNDED
             ) {
                 MonolithRootApp(viewModel = viewModel)
             }
@@ -830,9 +830,9 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     val nightScrimAlpha = remember { androidx.compose.animation.core.Animatable(0f) }
     LaunchedEffect(nightReturnPhase) {
         val target = when (nightReturnPhase) {
-            com.example.ui.NightReturnPhase.VEILED -> 0.80f
-            com.example.ui.NightReturnPhase.LANDING -> 0.45f
-            com.example.ui.NightReturnPhase.OPEN -> 0f
+            com.example.session.NightReturnPhase.VEILED -> 0.80f
+            com.example.session.NightReturnPhase.LANDING -> 0.45f
+            com.example.session.NightReturnPhase.OPEN -> 0f
         }
         if (nightReturnSnapEntry) {
             nightScrimAlpha.snapTo(target)
@@ -849,7 +849,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // its NIGHT scheme — 0.55 is a weight only against a known
     // ground, and the stand-down path's evaluation has already
     // flipped to day by the time the return begins.
-    val nightReturnArmed = nightReturnPhase != com.example.ui.NightReturnPhase.OPEN
+    val nightReturnArmed = nightReturnPhase != com.example.session.NightReturnPhase.OPEN
     val lastReceiptSessionId by viewModel.lastReceiptSessionId.collectAsStateWithLifecycle()
     // Issue #143 F4: the DND gate's line for the Deck.
     val dndLine by viewModel.dndLine.collectAsStateWithLifecycle()
@@ -903,7 +903,7 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // Deck derives its own split internally and Shield / Tasks /
     // Vault keep the immediate session-night above.
     val groundNight = darkTheme ||
-        shotGround == com.example.ui.MonolithViewModel.ShotGround.GROUNDED
+        shotGround == com.example.session.MonolithViewModel.ShotGround.GROUNDED
     // Issue #143 (F5): the system bars follow the ground night.
     // onCreate pins a light status bar exactly once; without this,
     // dark status glyphs sat on the night ground for the whole
@@ -2257,13 +2257,13 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
  */
 @Composable
 private fun AirlockTailOverlays(
-    airlockState: com.example.ui.AirlockInterceptState,
+    airlockState: com.example.session.AirlockInterceptState,
     viewModel: MonolithViewModel,
     context: android.content.Context,
     guardSettings: com.example.data.GuardSettingsEntity?,
     allApps: List<com.example.data.BlockedAppEntity>,
-    floatingPeekPill: com.example.ui.FloatingPeekPillState,
-    disarmChallenge: com.example.ui.DisarmChallengeState,
+    floatingPeekPill: com.example.session.FloatingPeekPillState,
+    disarmChallenge: com.example.session.DisarmChallengeState,
     weeklyEmergencyTokensRemaining: Int,
     breakDimAlpha: Float,
     onOpenAllowedApps: () -> Unit,
@@ -2700,13 +2700,13 @@ private fun ReceiptOverlays(
 @Composable
 private fun DeskClockOverlayCluster(
     nightScrimAlpha: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
-    nightReturnPhase: com.example.ui.NightReturnPhase,
+    nightReturnPhase: com.example.session.NightReturnPhase,
     viewModel: MonolithViewModel,
     isAlwaysOnDeskClockVisible: Boolean,
     activeSession: com.example.data.FocusSessionEntity?,
     activeTask: com.example.data.FocusTaskEntity?,
     burnInFigure8MinuteStep: Int,
-    deskClockEntryCause: com.example.ui.components.DeskClockEntryCause,
+    deskClockEntryCause: com.example.session.DeskClockEntryCause,
     deskClockExitIsFinish: Boolean,
     deskClockSurrenderFade: Boolean,
     deskClockDescentApplies: Boolean,
@@ -2733,7 +2733,7 @@ private fun DeskClockOverlayCluster(
     // (H-5: a raw pointerInput draws no ripple on the
     // black).
     if (nightScrimAlpha.value > 0f) {
-        val veiled = nightReturnPhase == com.example.ui.NightReturnPhase.VEILED
+        val veiled = nightReturnPhase == com.example.session.NightReturnPhase.VEILED
         Box(
             modifier = Modifier
                 .fillMaxSize()

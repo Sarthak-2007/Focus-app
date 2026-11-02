@@ -13,10 +13,10 @@ import com.example.ui.components.endsAtText
 import com.example.ui.components.peekBadgeText
 import com.example.ui.components.peekCooldownPrint
 import com.example.ui.components.peekPriceText
-import com.example.ui.components.refusalSentenceFor
+import com.example.session.refusalSentenceFor
 import com.example.ui.components.seamMarksFor
-import com.example.ui.peekOfferFor
-import com.example.ui.peekSecondsRemaining
+import com.example.session.peekOfferFor
+import com.example.session.peekSecondsRemaining
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

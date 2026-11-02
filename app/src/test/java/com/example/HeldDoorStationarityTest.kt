@@ -12,8 +12,8 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import com.example.ui.AirlockInterceptState
-import com.example.ui.PeekWithheld
+import com.example.session.AirlockInterceptState
+import com.example.session.PeekWithheld
 import com.example.ui.components.AirlockInterceptOverlay
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals

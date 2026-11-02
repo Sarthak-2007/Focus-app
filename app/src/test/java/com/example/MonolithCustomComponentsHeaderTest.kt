@@ -5,7 +5,7 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
-import com.example.ui.components.GuardLinePrint
+import com.example.service.GuardLinePrint
 import com.example.ui.components.MonolithPullDownHeader
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Assert.assertEquals

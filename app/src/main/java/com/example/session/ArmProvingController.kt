@@ -1,4 +1,4 @@
-package com.example.ui
+package com.example.session
 import com.example.R
 
 import android.util.Log
@@ -10,7 +10,6 @@ import com.example.data.MonolithRepository
 import com.example.service.MonolithAccessibilityService
 import com.example.service.MonolithShieldService
 import com.example.service.RoutineHeartbeat
-import com.example.ui.components.RefusalSentence
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job

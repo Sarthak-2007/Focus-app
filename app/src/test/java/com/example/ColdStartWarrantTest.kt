@@ -6,8 +6,8 @@ import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WarrantState
 import com.example.service.WatchStore
-import com.example.ui.components.RefusalAction
-import com.example.ui.components.refusalSentenceFor
+import com.example.session.RefusalAction
+import com.example.session.refusalSentenceFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

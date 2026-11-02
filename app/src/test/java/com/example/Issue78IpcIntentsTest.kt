@@ -10,7 +10,7 @@ import com.example.service.InterceptPath
 import com.example.service.ShieldDispatch
 import com.example.service.MonolithShieldService
 import com.example.service.shieldDispatchFor
-import com.example.ui.airlockIntentRevalidated
+import com.example.session.airlockIntentRevalidated
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

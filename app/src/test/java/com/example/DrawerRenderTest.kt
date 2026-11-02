@@ -20,8 +20,8 @@ import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.TaskQueueStatus
 import com.example.service.TactileSoundEngine
-import com.example.ui.MonolithDestination
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithDestination
+import com.example.session.MonolithViewModel
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.runBlocking
 import org.junit.After

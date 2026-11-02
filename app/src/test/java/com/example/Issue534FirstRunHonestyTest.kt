@@ -6,7 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.TactileSoundEngine
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithViewModel
 import com.example.parkIntroSpendsOnDismiss
 import com.example.PARK_INTRO_READ_DWELL_MS
 import org.junit.After

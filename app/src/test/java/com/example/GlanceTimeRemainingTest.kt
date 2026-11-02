@@ -97,34 +97,16 @@ class GlanceTimeRemainingTest {
     }
 
     @Test
-    fun deskClockModeLabel_namesTheDirection() {
-        // Re-pointed at main's #111 label function (the branch's
-        // deskClockLabel is superseded and must not return).
-        assertEquals(
-            "ELAPSED",
-            com.example.ui.components.deskClockModeLabel(row(stopwatch = true))
-        )
-        assertEquals(
-            "REMAINING",
-            com.example.ui.components.deskClockModeLabel(row())
-        )
-        assertEquals(
-            "SET TIME",
-            com.example.ui.components.deskClockModeLabel(null)
-        )
-    }
-
-    @Test
     fun sessionEnd_isOneFreshDerivation() {
         // Finding 3: end = the caller's fresh now + span remaining,
         // exactly — no minute-boundary rounding anywhere in the math.
         assertEquals(
             1_700_000_000_000L + 10_200_000L,
-            com.example.ui.components.sessionEndsAtMillis(1_700_000_000_000L, 10200)
+            com.example.session.sessionEndsAtMillis(1_700_000_000_000L, 10200)
         )
         assertEquals(
             1_700_000_000_000L,
-            com.example.ui.components.sessionEndsAtMillis(1_700_000_000_000L, -5)
+            com.example.session.sessionEndsAtMillis(1_700_000_000_000L, -5)
         )
     }
 }

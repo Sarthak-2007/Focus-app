@@ -11,9 +11,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.FocusSessionEntity
 import com.example.service.TactileSoundEngine
-import com.example.ui.ArmLink
-import com.example.ui.ArmPhase
-import com.example.ui.LinkMark
+import com.example.session.ArmLink
+import com.example.session.ArmPhase
+import com.example.session.LinkMark
 import com.example.ui.screens.TactileDeckScreen
 import com.example.ui.theme.MyApplicationTheme
 import java.io.File

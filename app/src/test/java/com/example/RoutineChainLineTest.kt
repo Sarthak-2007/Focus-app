@@ -1,7 +1,7 @@
 package com.example
 
-import com.example.ui.components.ROUTINE_CHAIN_STALE_MS
-import com.example.ui.components.routineChainLineFor
+import com.example.service.ROUTINE_CHAIN_STALE_MS
+import com.example.service.routineChainLineFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

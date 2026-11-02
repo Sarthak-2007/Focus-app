@@ -14,7 +14,7 @@ import com.example.data.BlockedAppEntity
 import com.example.data.LoadoutRules
 import com.example.data.SmartLoadout
 import com.example.data.categorizePackage
-import com.example.ui.appMatchesQuery
+import com.example.session.appMatchesQuery
 import com.example.ui.screens.PEEK_TERMS_LINE
 import com.example.ui.screens.ShieldMatrixScreen
 import com.example.ui.theme.MyApplicationTheme

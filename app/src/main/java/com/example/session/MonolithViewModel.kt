@@ -1,4 +1,4 @@
-package com.example.ui
+package com.example.session
 
 import android.util.Log
 import com.example.MLog
@@ -33,6 +33,8 @@ import com.example.data.StudyModePreset
 import com.example.data.SystemGuardStatus
 import com.example.data.TaskQueueStatus
 import com.example.service.InterceptPath
+import com.example.service.ShieldBlockingStatus
+import com.example.service.computeShieldBlockingStatus
 import com.example.service.MonolithShieldService
 import com.example.service.BreakPillOverlay
 import com.example.service.PeekPillOverlay
@@ -844,8 +846,8 @@ class MonolithViewModel(
     // A-4: why the face last rose, and whether its pending exit
     // is a finish (the receipt seam) rather than a dismissal.
     private val _deskClockEntryCause =
-        MutableStateFlow(com.example.ui.components.DeskClockEntryCause.HAND)
-    val deskClockEntryCause: StateFlow<com.example.ui.components.DeskClockEntryCause> =
+        MutableStateFlow(com.example.session.DeskClockEntryCause.HAND)
+    val deskClockEntryCause: StateFlow<com.example.session.DeskClockEntryCause> =
         _deskClockEntryCause.asStateFlow()
     private val _deskClockExitIsFinish = MutableStateFlow(false)
     val deskClockExitIsFinish: StateFlow<Boolean> = _deskClockExitIsFinish.asStateFlow()
@@ -991,10 +993,10 @@ class MonolithViewModel(
      *  seam flags reset, visibility. Every raise site (ticker,
      *  hand chip, wake re-raise) goes through here so no site
      *  can forget a reset (Glanz G-8's wake-site omission). */
-    private fun stampDeskClockRaise(cause: com.example.ui.components.DeskClockEntryCause) {
+    private fun stampDeskClockRaise(cause: com.example.session.DeskClockEntryCause) {
         _deskClockRaiseGeneration.value += 1
         _deskClockEntryStartsAtFull.value =
-            cause == com.example.ui.components.DeskClockEntryCause.SEEDED
+            cause == com.example.session.DeskClockEntryCause.SEEDED
         _deskClockEntryCause.value = cause
         _deskClockExitIsFinish.value = false
         _deskClockExitIsYield.value = false
@@ -1092,7 +1094,7 @@ class MonolithViewModel(
                 deskClockSettle.noteWakeReRaise(session.id)
                 _deskClockSurrenderFade.value = false
                 stampDeskClockRaise(
-                    com.example.ui.components.DeskClockEntryCause.SEEDED
+                    com.example.session.DeskClockEntryCause.SEEDED
                 )
                 deskClockSettleStampMono = nowMono
             } else {
@@ -1832,7 +1834,7 @@ class MonolithViewModel(
         _themeNow
     ) { snap, session, warrant, now ->
         val sessionStart = session?.startWallTimeMillis
-        com.example.ui.components.shieldReceiptLine(
+        com.example.session.shieldReceiptLine(
             sessionActive = session?.isActive == true,
             lawWrittenWallMillis = sessionStart,
             sight = snap.engineSight,
@@ -1918,8 +1920,8 @@ class MonolithViewModel(
          *  the default is the NOT CHECKED floor, so no freeze can
          *  be minted carrying no line at all; both capture sites
          *  pass an explicit guardLineFor(...) value. */
-        val guardLine: com.example.ui.components.GuardLinePrint =
-            com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
+        val guardLine: com.example.service.GuardLinePrint =
+            com.example.service.GuardLinePrint("GUARD — NOT CHECKED")
     )
 
     private val _sealFreeze = MutableStateFlow<SealFreeze?>(null)
@@ -1967,7 +1969,7 @@ class MonolithViewModel(
             }
         }
 
-    val guardLinePrint: StateFlow<com.example.ui.components.GuardLinePrint> = combine(
+    val guardLinePrint: StateFlow<com.example.service.GuardLinePrint> = combine(
         com.example.service.WatchStore.snapshots,
         _sealFreeze,
         activeSession,
@@ -1976,13 +1978,13 @@ class MonolithViewModel(
         if (session?.isActive == true && freeze != null) {
             freeze.guardLine
         } else {
-            com.example.ui.components.guardLineFor(
+            com.example.service.guardLineFor(
                 snap, android.os.SystemClock.elapsedRealtime()
             )
         }
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
-        com.example.ui.components.GuardLinePrint("GUARD — NOT CHECKED")
+        com.example.service.GuardLinePrint("GUARD — NOT CHECKED")
     )
 
     /** Issue #94 F4: the ROUTINE CHAIN line's print — the first
@@ -1994,7 +1996,7 @@ class MonolithViewModel(
      *  stands open is named on the next beat, not at some later
      *  navigation. Null = no window enforcing — the line prints
      *  nothing and claims nothing. */
-    val routineChainPrint: StateFlow<com.example.ui.components.GuardLinePrint?> = combine(
+    val routineChainPrint: StateFlow<com.example.service.GuardLinePrint?> = combine(
         repository.guardSettingsFlow,
         routines,
         guardClock
@@ -2003,7 +2005,7 @@ class MonolithViewModel(
         val windowActive = routineList.any {
             com.example.data.RoutineSchedule.isEnforcingAt(it, now)
         }
-        com.example.ui.components.routineChainLineFor(
+        com.example.service.routineChainLineFor(
             settings?.lastRoutineTickMillis ?: 0L, windowActive, now
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -2042,7 +2044,7 @@ class MonolithViewModel(
     )
 
     val armPhase: StateFlow<ArmPhase> = armProving.phase
-    val armSentence: StateFlow<com.example.ui.components.RefusalSentence?> = armProving.armSentence
+    val armSentence: StateFlow<com.example.session.RefusalSentence?> = armProving.armSentence
     val armAnnulCount: StateFlow<Int> = armProving.annulCount
 
     // Slice E state, declared BEFORE init on purpose: init starts
@@ -2495,7 +2497,7 @@ class MonolithViewModel(
                         shutCount = apps.value.count { it.resolvedTier == AppBlockTier.LOCKED },
                         peekCount = apps.value.count { it.resolvedTier == AppBlockTier.PEEK_2M },
                         warrantState = repository.standingWarrant().state,
-                        guardLine = com.example.ui.components.guardLineFor(
+                        guardLine = com.example.service.guardLineFor(
                             com.example.service.WatchStore.snapshots.value,
                             android.os.SystemClock.elapsedRealtime()
                         )
@@ -2536,7 +2538,7 @@ class MonolithViewModel(
                             shutCount = apps?.count { it.resolvedTier == AppBlockTier.LOCKED },
                             peekCount = apps?.count { it.resolvedTier == AppBlockTier.PEEK_2M },
                             warrantState = repository.standingWarrant().state,
-                            guardLine = com.example.ui.components.guardLineFor(
+                            guardLine = com.example.service.guardLineFor(
                                 com.example.service.WatchStore.snapshots.value,
                                 android.os.SystemClock.elapsedRealtime()
                             )
@@ -2690,10 +2692,10 @@ class MonolithViewModel(
                     stampDeskClockRaise(
                         when {
                             deskClockSettle.lastRaiseWasColdOpen ->
-                                com.example.ui.components.DeskClockEntryCause.SEEDED
+                                com.example.session.DeskClockEntryCause.SEEDED
                             clockNowMono - deskClockLastInteractionMono < 10_000L ->
-                                com.example.ui.components.DeskClockEntryCause.WATCHED
-                            else -> com.example.ui.components.DeskClockEntryCause.UNWATCHED
+                                com.example.session.DeskClockEntryCause.WATCHED
+                            else -> com.example.session.DeskClockEntryCause.UNWATCHED
                         }
                     )
                     deskClockSettleStampMono = clockNowMono
@@ -2821,7 +2823,7 @@ class MonolithViewModel(
                     _deskClockKeepAwake.value =
                         _isAlwaysOnDeskClockVisible.value &&
                             _deskClockEntryCause.value ==
-                            com.example.ui.components.DeskClockEntryCause.HAND
+                            com.example.session.DeskClockEntryCause.HAND
                     _deskClockSurrenderFade.value = false
                     _deskClockDescentApplies.value = false
                 }
@@ -3911,7 +3913,7 @@ class MonolithViewModel(
             // Wave-3 (Glanz G-8): through the one raise stamp —
             // generation, cause, seam resets, decision.
             stampDeskClockRaise(
-                com.example.ui.components.DeskClockEntryCause.HAND
+                com.example.session.DeskClockEntryCause.HAND
             )
             deskClockSettleStampMono = deskClockLastInteractionMono
         } else {
@@ -5617,7 +5619,7 @@ class MonolithViewModel(
                 // also calls, so Airlock and Deck can never print ENDS
                 // times a minute apart for the same session again.
                 ?.let {
-                    com.example.ui.components.sessionEndsAtMillis(
+                    com.example.session.sessionEndsAtMillis(
                         System.currentTimeMillis(), it.spanRemainingSeconds
                     )
                 },
