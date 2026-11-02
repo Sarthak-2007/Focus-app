@@ -1239,6 +1239,69 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
+    // =====================================================================
+    // THE REGISTRY PATH (SOUND-SR-5): three hooks, additive only —
+    // no existing call site is re-routed. The registry
+    // (SoundEvent.kt) is the scaling authority on this path:
+    // StrongroomSoundEngine's gate has already applied the family
+    // volume curve, so the transient below enqueues at the exact
+    // caller-computed gain (via fullGainAlways, which bypasses
+    // this engine's internal night scaling — one authority, never
+    // two). The hard gates are NOT bypassed: enqueueTransient
+    // still enforces the sound fact, the ringer's word, and
+    // DND-for-unattended through audioPermitted, and the synth
+    // loop re-reads the ringer at play time (issue #150).
+    // =====================================================================
+
+    /** Play a registry voice at its exact, gate-scaled gain. */
+    fun playRegistryTransientExact(
+        fundamentalHz: Float,
+        durationMs: Int,
+        gain: Float,
+        chordRatio: Float,
+        unattended: Boolean
+    ) {
+        enqueueTransient(
+            fundamentalHz = fundamentalHz,
+            durationMs = durationMs,
+            gain = gain,
+            chordRatio = chordRatio,
+            unattended = unattended,
+            fullGainAlways = true
+        )
+    }
+
+    /** Fire a registry waveform (the felt twin) on this thread. */
+    fun playRegistryHaptic(timingsMs: LongArray, amplitudes: IntArray, fallbackMs: Long) {
+        triggerWaveform(timingsMs, amplitudes, fallbackMs)
+    }
+
+    /**
+     * Pre-pay the transient path's fixed costs BEFORE an event
+     * that cannot wait (the knock): start the lanes, request
+     * audio focus, and push one zero-gain pass through the synth
+     * loop so its AudioTrack is built and playing-ready. Called
+     * at seal/prime time and when the sealed face shows — a reach
+     * then pays only vibrate() + a queue offer on its own thread.
+     * The zero-gain pass sounds nothing (gain 0 renders silence);
+     * if the phone's facts silence the engine outright, the pass
+     * is dropped by the standing gates and costs nothing.
+     */
+    fun warmUpSoundPath() {
+        if (!running) return
+        ensureThreadsStarted()
+        requestTransientAudioFocus()
+        commandQueue.offer(
+            SynthCommand(
+                fundamentalHz = 220f,
+                durationSamples = 256,
+                gain = 0f,
+                chordRatio = 1.0f,
+                seq = seqCounter.incrementAndGet()
+            )
+        )
+    }
+
     /** Test seam (Siegel T2): the pending legacy command count —
      *  the Throw's queue-clear law is asserted against it. */
     internal fun pendingCommandCount(): Int = commandQueue.size
