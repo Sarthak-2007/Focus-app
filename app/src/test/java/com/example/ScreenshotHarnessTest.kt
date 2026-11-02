@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomDay
+import com.example.ui.doorway.DoorFace
+import com.example.ui.doorway.Doorway
+import com.example.ui.doorway.DoorwayState
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
@@ -405,6 +408,42 @@ class ScreenshotHarnessTest {
         // The span's last second and a half: the ease nearly off,
         // the bolts travelling home on the score.
         shootBreak("break-redriving.png", remainingMs = 1_500L, openPile = false)
+    }
+
+    // ── THE DOORWAY (LEAD-DOORFIX) — the opening, as the phone
+    // hosts it ─────────────────────────────────────────────────
+    // The opening surface composed the way MainActivity's doorway
+    // place composes it: the Doorway in its weight(1f) reach, the
+    // signing region below at weight(1.35f) — standing EMPTY here,
+    // as the host's SigningHost renders nothing on a day with no
+    // composed day standing (the state Sarthak's phone opened in,
+    // 2026-11-03 03:35 IST) — and the drawer's shut front at the
+    // foot. One place, shot whole: this is the app's first screen.
+
+    private fun shootDoorway(name: String) {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    // The face behind the whole place, as the host
+                    // lays it (LEAD-DOORFIX): the seven-ink print,
+                    // edge to edge — the door IS the surface.
+                    DoorFace()
+                    Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) {
+                            Doorway(state = DoorwayState.AtRest)
+                        }
+                        Box(Modifier.weight(1.35f)) {}
+                        DrawerFront(onOpen = {})
+                    }
+                }
+            }
+        }
+        writeShot(name, bitmap)
+    }
+
+    @Test
+    fun doorway_opening_atRest() {
+        shootDoorway("doorway-opening.png")
     }
 
     // ── THE DRAWER (BUILD-SR-41) — the kept days, rendered ─────
