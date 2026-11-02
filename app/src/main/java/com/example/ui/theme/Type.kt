@@ -307,22 +307,10 @@ val TaskActiveTitleTextStyle = TextStyle(
     platformStyle = TightNumericPlatformStyle
 )
 
-// Material slots draw ONLY from the Stage 5 steps (P0): a component that
-// reaches for a slot inherits the scale, never a stock Material size.
-val Typography = Typography(
-    displayLarge = MonolithType.Scr6,
-    displayMedium = MonolithType.Scr5,
-    displaySmall = MonolithType.Scr4,
-    headlineLarge = MonolithType.Scr4,
-    headlineMedium = MonolithType.Scr3,
-    headlineSmall = MonolithType.Scr3,
-    titleLarge = MonolithType.Scr3,
-    titleMedium = MonolithType.Scr2,
-    titleSmall = MonolithType.Scr1,
-    bodyLarge = MonolithType.Scr2,
-    bodyMedium = MonolithType.Scr1,
-    bodySmall = MonolithType.Scr0,
-    labelLarge = MonolithType.Scr3,
-    labelMedium = MonolithType.Scr1,
-    labelSmall = MonolithType.Scr0
-)
+// The Material Typography val lives in Theme.kt, NOT here — on purpose:
+// its initialiser reads MonolithType's styles, and MonolithType's styles
+// read this file's font families. Two classes whose initialisers read
+// each other are a class-init cycle: whichever starts second hands the
+// first a field that is still null (the venue caught exactly this —
+// every Typography slot read null in the test JVM). Theme.kt's
+// initialisers never read back into this file, so the cycle cannot form.
