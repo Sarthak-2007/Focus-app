@@ -42,6 +42,7 @@ import com.example.domain.StrongroomDay
 import com.example.ui.foundation.BodyIntegrator
 import com.example.ui.foundation.BodyState
 import com.example.ui.foundation.LocalStrongroomLightState
+import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.MechanismBodies
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
@@ -198,9 +199,9 @@ fun Antechamber(
                 CallingHorn(onCallOut = actions.onCallOut)
                 Spacer(Modifier.height(24.dp))
                 DrumAndTokens(state, actions)
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(18.dp))
                 GovernorsWall(state, actions)
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(18.dp))
                 HeldPileCorner(
                     state = state,
                     onOpen = { step = RoomStep.PILE }
@@ -381,7 +382,7 @@ private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) 
         // The drum itself.
         Box(
             modifier = Modifier
-                .size(228.dp)
+                .size(248.dp)
                 .clip(CircleShape)
                 .pointerInput(stock, room.shutterClosed) {
                     var lastAngle: Double? = null
@@ -846,6 +847,7 @@ private fun GovernorsWall(state: AntechamberState, actions: AntechamberActions) 
 @Composable
 private fun HeldPileCorner(state: AntechamberState, onOpen: () -> Unit) {
     val room = state.room
+    val lightState = LocalStrongroomLightState.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -868,7 +870,16 @@ private fun HeldPileCorner(state: AntechamberState, onOpen: () -> Unit) {
                         RoundedCornerShape(3.dp)
                     )
                     .border(1.5.dp, StrongroomRoles.OnLeaf, RoundedCornerShape(3.dp))
-            )
+            ) {
+                // Each landed slip's leaf, grained.
+                Canvas(Modifier.matchParentSize()) {
+                    grainLeaf(
+                        StrongroomLight.descend(StrongroomInks.Gold, 2 + (i % 2)),
+                        seed = 71 + i,
+                        state = lightState
+                    )
+                }
+            }
         }
         if (layers == 0) {
             // The empty pile is the pile as it is — a bare brass
@@ -900,6 +911,37 @@ private fun HeldPileCorner(state: AntechamberState, onOpen: () -> Unit) {
     }
 }
 
+/** Grain a gold-leaf surface at the brass cell (the pile's slips
+ *  and covers are leaf, and leaf is grained like every material
+ *  in the room — a flat gold band is a placeholder finish, the
+ *  same defect the shutter's first drawing carried). */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.grainLeaf(
+    base: androidx.compose.ui.graphics.Color,
+    seed: Int,
+    state: StrongroomLightState
+) {
+    val cell = AntechamberTexture.Species.BRASS.cellPx.dp.toPx()
+    var yy = 0f
+    var rowI = 0
+    while (yy < size.height) {
+        var xx = 0f
+        var colI = 0
+        while (xx < size.width) {
+            drawRect(
+                color = AntechamberTexture.cellTone(
+                    base, StrongroomInks.Graphite,
+                    AntechamberTexture.Species.BRASS, colI, rowI,
+                    seed = seed, state = state
+                ),
+                topLeft = Offset(xx, yy),
+                size = Size(cell + 1f, cell + 1f)
+            )
+            xx += cell; colI++
+        }
+        yy += cell; rowI++
+    }
+}
+
 @Composable
 private fun HeldPileSlips(state: AntechamberState, actions: AntechamberActions) {
     val room = state.room
@@ -918,6 +960,7 @@ private fun HeldSlipCard(
     actions: AntechamberActions
 ) {
     val revealed = slip.kind == HeldSlip.Kind.CODE && slip.id in state.revealedCodeIds
+    val lightState = LocalStrongroomLightState.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -928,6 +971,13 @@ private fun HeldSlipCard(
             .border(1.5.dp, StrongroomRoles.OnLeaf, RoundedCornerShape(3.dp))
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
+        // The slip's leaf, grained (seeded by the slip itself).
+        Canvas(Modifier.matchParentSize()) {
+            grainLeaf(
+                StrongroomLight.descend(StrongroomInks.Gold, 4),
+                seed = 61 + slip.id, state = lightState
+            )
+        }
         Column(Modifier.fillMaxWidth()) {
             when (slip.kind) {
                 HeldSlip.Kind.CALL -> {
@@ -956,7 +1006,15 @@ private fun HeldSlipCard(
                                     .size(width = 118.dp, height = 26.dp)
                                     .background(StrongroomInks.Gold, RoundedCornerShape(2.dp))
                                     .border(1.dp, StrongroomRoles.OnLeaf, RoundedCornerShape(2.dp))
-                            )
+                            ) {
+                                // The cover is brass leaf, grained.
+                                Canvas(Modifier.matchParentSize()) {
+                                    grainLeaf(
+                                        StrongroomInks.Gold,
+                                        seed = 67, state = lightState
+                                    )
+                                }
+                            }
                             Spacer(Modifier.width(12.dp))
                             Text(
                                 text = AntechamberModel.hourOf(slip.arrivedAtWallMillis),
