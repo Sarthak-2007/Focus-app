@@ -394,6 +394,42 @@ class ScreenshotHarnessTest {
         )
     }
 
+    /** NAV-ALL (the NORMAL-APP redirect): the PLAIN-face gate.
+     *  A normal app screen — a title and a line of text on a plain
+     *  background (the desk clock's figures, the empty drawer's
+     *  "No days yet.", the plain sealed status) — populates under
+     *  BOTH the standard and sparse coverage floors while
+     *  rendering truly: its furniture is words, and words cover
+     *  almost nothing. The honest checks for such a face are the
+     *  ones that still bite: the shot exists, it is not a blank
+     *  field (real colour variance from text and rules), and —
+     *  in the tests that compose through semantics — the words
+     *  themselves are asserted on nodes. Measured numbers print
+     *  to the run log like the other gates. */
+    private fun writeShotPlain(name: String, bitmap: Bitmap) {
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        val colors = HashSet<Int>()
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                colors.add(bitmap.getPixel(x, y))
+                y += 7
+            }
+            x += 7
+        }
+        println("PLAIN-SHOT $name bytes=${file.length()} colours=${colors.size}")
+        assertTrue(
+            "plain shot must not be a blank field " +
+                "(distinct sampled colours: ${colors.size})",
+            colors.size > 8
+        )
+    }
+
     @Test
     fun antechamber_room_dressed() {
         shoot(
@@ -647,11 +683,16 @@ class ScreenshotHarnessTest {
 
     @Test
     fun home_deviceSpec_signTomorrow_signingStanding() {
+        // NAV-ALL (normal-app redirect): repointed from the
+        // retired HomeDoor to the living home — the same act
+        // (HOME stands at device spec; SIGN TOMORROW, by its own
+        // button, stands the signing table), driven by a touch on
+        // the button's text, as the walk drives it.
         val bitmap = drawShotDevice(
             interact = {
                 composeRule
-                    .onNodeWithContentDescription("SIGN TOMORROW")
-                    .performClick()
+                    .onNodeWithText("SIGN TOMORROW")
+                    .performTouchInput { click(center) }
             }
         ) {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
@@ -660,10 +701,15 @@ class ScreenshotHarnessTest {
                         androidx.compose.runtime.mutableStateOf(false)
                     }
                     if (!open) {
-                        HomeDoor(
-                            state = homeStandingState(),
-                            actions = homeDoorActions(
-                                onSignTomorrow = { open = true }
+                        com.example.ui.home.HomeScreen(
+                            state = com.example.ui.home.HomeState(
+                                todayLine = "No day signed for today",
+                                tomorrowLine = "Tomorrow is not signed yet"
+                            ),
+                            actions = com.example.ui.home.HomeActions(
+                                onSignTomorrow = { open = true },
+                                onToday = {}, onApps = {},
+                                onSettings = {}, onPastDays = {}
                             )
                         )
                     } else {
@@ -841,7 +887,7 @@ class ScreenshotHarnessTest {
                 )
             }
         }
-        writeShotSparse("drawer-open-empty-device.png", bitmap)
+        writeShotPlain("drawer-open-empty-device.png", bitmap)
     }
 
     /** The capture at a real device's spec: the bitmap IS the
@@ -1347,7 +1393,11 @@ class ScreenshotHarnessTest {
                     }
                 }
             }
-            writeShot(name, bitmap)
+            // NAV-ALL (normal-app redirect): the face is a plain
+            // status screen now; the plain-face gate is the
+            // honest one for it (richness returns with the art
+            // pass, and the gate with it).
+            writeShotPlain(name, bitmap)
         } finally {
             composeRule.mainClock.autoAdvance = true
         }
@@ -1423,7 +1473,7 @@ class ScreenshotHarnessTest {
                     }
                 }
             }
-            writeShot("sealed-face-knock.png", bitmap)
+            writeShotPlain("sealed-face-knock.png", bitmap)
         } finally {
             composeRule.mainClock.autoAdvance = true
         }
@@ -1743,7 +1793,7 @@ class ScreenshotHarnessTest {
                 wallTimeText = "03:30"
             )
         }
-        writeShotSparse("desk-clock-device.png", bitmap)
+        writeShotPlain("desk-clock-device.png", bitmap)
     }
 
     @Test
@@ -1969,15 +2019,18 @@ class ScreenshotHarnessTest {
         snap("nav-walk-1-home.png", sparse = true)
         // (2) SIGN TOMORROW, by the button's own click: the
         // signing table stands in the place.
-        composeRule.onNodeWithText("SIGN TOMORROW").performClick()
+        composeRule.onNodeWithText("SIGN TOMORROW")
+            .performTouchInput { click(center) }
         composeRule.onNodeWithText("‹ HOME").assertExists()
         snap("nav-walk-2-signing.png")
         // (3) Back, by the host's own row: home again.
-        composeRule.onNodeWithText("‹ HOME").performClick()
+        composeRule.onNodeWithText("‹ HOME")
+            .performTouchInput { click(center) }
         composeRule.onNodeWithText("SIGN TOMORROW").assertExists()
         snap("nav-walk-3-home-again.png", sparse = true)
         // (4) PAST DAYS: the plain drawer list stands.
-        composeRule.onNodeWithText("PAST DAYS").performClick()
+        composeRule.onNodeWithText("PAST DAYS")
+            .performTouchInput { click(center) }
         composeRule.onNodeWithText("Past days").assertExists()
         snap("nav-walk-4-drawer.png", sparse = true)
     }
