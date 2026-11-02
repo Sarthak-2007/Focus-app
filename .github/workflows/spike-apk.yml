@@ -1,0 +1,131 @@
+name: spike-apk
+
+# Stage 4P SPIKE-ONLY artefact route (SUCCESSOR-13 ruling, 2026-11-02,
+# executed by SPIKE-CI-S4P). This file exists ONLY on spike-4p-* branches
+# in the Spike Pit (~/workspace/spike-pit-4p/); it is part of each row's
+# spike delta, named in the Pit DELETION-MANIFEST, and dies with the Pit
+# at 4P close. It NEVER lands on main and no PR carries it there.
+#
+# Why it exists: the venue (rescue-build.yml) builds/uploads its APK only
+# AFTER unit tests pass (its build job, issue #24 finding 1), and the
+# Floor head's four standing named failures stop every build at that
+# head — so no spike artefact exists to install on the test device, for
+# any row. This workflow assembles the debug APK WITHOUT the unit-test
+# gate so a probe run can install its spike.
+#
+# Bounds (the ruling, hard):
+#   - This job runs NO tests at all — no test task, no test compile.
+#     No settlement is prejudged: the floor's four own-lines stand
+#     exactly as the Floor Certificate carries them.
+#   - The artefact is built to learn, never ships (Craft Ledger CL-008):
+#     it exists to be installed on the one test device for a probe run.
+#   - Toolchain + signing checks are copied from the venue's own build
+#     job (same pinned actions, JDK 21 / SDK 37, same committed
+#     debug.keystore install-over verification) so the spike APK
+#     installs over the Monolith on the test device exactly as a venue
+#     APK would. Only the test + APK-gating steps are omitted.
+
+on:
+  push:
+    branches:
+      - 'spike-4p-*'
+  workflow_dispatch:
+
+# Least privilege, as the venue: this workflow only reads the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spike-apk:
+    name: Spike APK (assemble only, no tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Install SDK platform 37
+        run: |
+          SDKMANAGER="$(command -v sdkmanager || echo "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager")"
+          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || { echo "::warning::sdkmanager license step failed — see log tail"; tail -20 /tmp/sdk-licenses.log; }
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;37.0.0"
+
+      # Copied from the venue's build job: the committed debug.keystore
+      # is the install-over key; refuse to build with any other key.
+      - name: Verify committed debug keystore (install-over key)
+        id: keystore
+        run: |
+          EXPECTED="BD:15:AD:5F:E9:B6:96:44:64:C0:F8:67:C7:AE:96:F6:1D:DD:34:09:3B:38:77:F6:03:2B:EF:A1:D1:0F:27:FF"
+          if [ ! -f debug.keystore ]; then
+            echo "::error::debug.keystore missing from checkout — refusing to build an APK that could not install over the installed Monolith."
+            exit 1
+          fi
+          FP=$(keytool -list -v -keystore debug.keystore -storepass android -alias androiddebugkey 2>/dev/null | grep -m1 "SHA256:" | sed 's/.*SHA256: *//')
+          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
+          if [ "$FP" != "$EXPECTED" ]; then
+            echo "::error::debug.keystore SHA-256 '$FP' does not match the install-over key '$EXPECTED' — refusing to sign with the wrong key."
+            exit 1
+          fi
+          echo "Signing key verified: $FP"
+
+      # THE ONLY BUILD STEP. assembleDebug and nothing else: no
+      # testDebugUnitTest, no compileDebugUnitTestKotlin, no lint.
+      - name: Assemble debug (spike — no tests)
+        id: assemble
+        run: |
+          chmod +x gradlew
+          ./gradlew --console=plain assembleDebug
+
+      # Copied from the venue: prove the BUILT APK carries the
+      # install-over signer before it becomes an artefact, and read
+      # its package + versionCode from the APK itself for the record.
+      - name: Verify APK signer + read badging (install-over proof)
+        id: apksigner
+        run: |
+          APKSIGNER="$(command -v apksigner || echo "$ANDROID_HOME/build-tools/37.0.0/apksigner")"
+          AAPT2="$(command -v aapt2 || echo "$ANDROID_HOME/build-tools/37.0.0/aapt2")"
+          FP=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -m1 -o "[0-9a-f]\{64\}")
+          BADGING=$("$AAPT2" dump badging app/build/outputs/apk/debug/app-debug.apk)
+          PKG=$(echo "$BADGING" | grep -m1 -o "name='[^']*'" | head -1 | sed "s/name='//;s/'//")
+          VC=$(echo "$BADGING" | grep -m1 -o "versionCode='[0-9]*'" | grep -o "[0-9]*")
+          VN=$(echo "$BADGING" | grep -m1 -o "versionName='[^']*'" | sed "s/versionName='//;s/'//")
+          echo "apk_fingerprint=$FP" >> "$GITHUB_OUTPUT"
+          echo "package=$PKG" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VC" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VN" >> "$GITHUB_OUTPUT"
+          if [ "$FP" != "bd15ad5fe9b6964464c0f867c7ae96f61ddd34093b3877f6032befa1d10f27ff" ]; then
+            echo "::error::app-debug.apk signer $FP is not the install-over key bd15ad5f...27ff - this APK would NOT install over the Monolith on the phone. Refusing to upload it."
+            exit 1
+          fi
+          echo "APK signer verified: $FP - package $PKG - versionCode $VC - versionName $VN"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: spike-apk-${{ github.ref_name }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Spike verdict summary
+        if: always()
+        run: |
+          {
+            echo "## Spike APK verdict — ${{ github.ref_name }} · ${{ github.sha }}"
+            echo "- Assemble debug (NO tests run, by ruling): ${{ steps.assemble.outcome }}"
+            echo "- Artefact: spike-apk-${{ github.ref_name }} (debug APK, built to learn under CL-008 — never ships; dies with the Pit at 4P close)"
+            echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }}; built-APK signer gate: ${{ steps.apksigner.outcome }} - ${{ steps.apksigner.outputs.apk_fingerprint }}"
+            echo "- APK package: ${{ steps.apksigner.outputs.package }} · versionCode: ${{ steps.apksigner.outputs.version_code }} · versionName: ${{ steps.apksigner.outputs.version_name }}"
+            echo "- Main is untouched by this workflow; it exists only on spike-4p-* branches."
+          } >> "$GITHUB_STEP_SUMMARY"
