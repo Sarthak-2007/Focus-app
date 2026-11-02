@@ -127,7 +127,8 @@ class StrongroomMigrationP1Test {
                         "sentence", "breakLengthMinutes", "breakFiresAtOffsetMillis",
                         "allowanceTotalMinutes", "allowanceSpentMinutes", "gapsEncoded",
                         "sealedAtWallMillis", "sealedAtElapsedMillis", "sealedBootCount",
-                        "spanDurationMillis", "state", "struckHeldMillis",
+                        "spanDurationMillis", "state", "dayShape", "amendedBySigning", "taskLine",
+                        "struckHeldMillis",
                         "struckBracketGapMillis", "crankSealBroken", "carriedFromSessionId"
                     )
                 )
@@ -226,6 +227,67 @@ class StrongroomMigrationP1Test {
             val guard = store.guardState(sealWall)
             assertTrue(guard.guardOn)
             assertEquals(StrongroomStore.DEFAULT_ALLOWANCE_MINUTES, guard.allowanceMinutes)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun composition_unsignedDaySeals_andPlateStrikesOnce() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val store = StrongroomStore(db.monolithDao())
+            val utc = ZoneId.of("UTC")
+            val template = com.example.domain.StrongroomComposition.DayTemplate(
+                lockedPackages = setOf("com.video.app"),
+                liftingTime = LocalTime.of(6, 0),
+                breakLengthMinutes = 20,
+                breakFiresAtOffsetMillis = -1L,
+                allowanceMinutes = 30,
+                gaps = emptyList()
+            )
+            val order = com.example.domain.StrongroomComposition.WeekStandingOrder(
+                shapeByWeekday = java.time.DayOfWeek.values()
+                    .associateWith { com.example.domain.StrongroomComposition.DayShape.ORDINARY },
+                templateByShape = mapOf(
+                    com.example.domain.StrongroomComposition.DayShape.ORDINARY to template
+                )
+            )
+            // No evening happened. The day still stands composed…
+            val composed = store.composeDay(order, "2026-11-03")
+            assertFalse(composed.amendedBySigning)
+            assertEquals(
+                com.example.data.StrongroomDayEntity.STATE_COMPOSED,
+                store.day("2026-11-03")!!.state
+            )
+            // …and the swing seals it as it stands (B-2: the app
+            // never checks whether the evening happened).
+            val sealWall = java.time.LocalDateTime.of(2026, 11, 3, 5, 0)
+                .atZone(utc).toInstant().toEpochMilli()
+            val span = store.seal("2026-11-03", sealWall, 100_000L, bootCount = 3, zone = utc)
+            assertNotNull(span)
+            // The plate strikes once; a second strike returns the
+            // plate as struck and writes nothing new (B-14).
+            val first = store.strikePlate(
+                "2026-11-03", nowElapsedMillis = 100_000L + span!!.spanDurationMillis,
+                nowBootCount = 3, sealFailed = false, zone = utc
+            )!!
+            val second = store.strikePlate(
+                "2026-11-03", nowElapsedMillis = 100_000L,
+                nowBootCount = 9, sealFailed = true, zone = utc
+            )!!
+            assertEquals(first.sealState, second.sealState)
+            assertEquals(first.hoursHeldMillis, second.hoursHeldMillis)
+            assertEquals("LIFTED", store.day("2026-11-03")!!.state)
+            // Amendment after the strike is refused.
+            assertNull(
+                store.amendDay(
+                    order, "2026-11-03",
+                    com.example.domain.StrongroomComposition.SigningAmendment(sentence = "too late")
+                )
+            )
         } finally {
             db.close()
         }

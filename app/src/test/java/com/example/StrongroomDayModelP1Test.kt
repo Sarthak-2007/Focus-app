@@ -32,8 +32,8 @@ class StrongroomDayModelP1Test {
         breakFiresAtOffsetMillis = 3_600_000L,
         allowanceMinutes = 30,
         gaps = listOf(
-            StrongroomDay.ShapedGap(StrongroomDay.GapKind.MEDITATION, 0L, 1_800_000L),
-            StrongroomDay.ShapedGap(StrongroomDay.GapKind.GYM, 7_200_000L, 3_600_000L)
+            StrongroomDay.ShapedGap(StrongroomDay.GapKind.GYM, 7_200_000L, 1_800_000L),
+            StrongroomDay.ShapedGap(StrongroomDay.GapKind.SADHANA, 9_000_000L, 1_800_000L)
         )
     )
     private val seal = StrongroomDay.SealSpan(
