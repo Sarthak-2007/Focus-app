@@ -17,10 +17,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import com.example.data.MonolithDatabase
 import com.example.data.StrongroomDayBirth
@@ -35,6 +38,7 @@ import com.example.ui.doorway.DoorwayState
 import com.example.ui.doorway.HomeDoor
 import com.example.ui.doorway.HomeDoorActions
 import com.example.ui.drawer.Drawer
+import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
 import com.example.ui.drawer.DrawerState
