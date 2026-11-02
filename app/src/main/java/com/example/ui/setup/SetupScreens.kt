@@ -1,7 +1,9 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.example.ui.setup
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,11 +13,38 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,67 +52,69 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.data.AppBlockTier
 import com.example.domain.StrongroomGuard
-import com.example.ui.foundation.StrongroomInks
-import com.example.ui.foundation.StrongroomType
+import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
- * SETUP-FLOW — the setup side of the app, plain and working
- * (Sarthak's order, 2026-11-03: working functionality first,
- * design later; build all the screens and navigation).
+ * SETUP — plain, normal settings screens (Sarthak's redirect,
+ * 2026-11-03: "build a normal app"). Standard Android settings
+ * patterns throughout, nothing themed, nothing coined: a
+ * settings list, switches that show the real state, radio
+ * buttons for choices, the system time and date pickers, a
+ * plain number field. A screen his mother could read.
  *
- * Three plain screens behind one doorway entry, all reachable in
- * unsealed hours and nowhere else (the host stands this surface
- * only inside the doorway place's unsealed branch — while a seal
- * stands there is no route into the normal app, D-7):
+ * Four sections behind one doorway entry, reachable in
+ * unsealed hours only (the host stands this surface only
+ * inside the doorway place's unsealed branch — while a block
+ * is on, there is no route into the normal app):
  *
- *  - PERMISSIONS — every grant the engine needs, each row showing
- *    its REAL state read from the system (the repository's own
- *    watch queries — the same reads the Guard sweep trusts), and
- *    each tap opening the real Settings pane for that grant.
- *    AUTOSTART is the one door Android will not report: its row
- *    opens the vendor's pane where one exists and takes his word
- *    ("MARK DONE") as the sworn state, printed as SWORN, never
- *    GRANTED — the Watch Store's own law (F44).
- *  - APPS — the installed catalogue the repository keeps synced
- *    (installed apps only), each row carrying the three tiers the
- *    engine itself runs on: SHUT (LOCKED) · PEEK (PEEK_2M) ·
- *    OPEN. A tap writes the row through the entity's own
- *    normalisation — the exact rows [com.example.data.LegacyCarry]
- *    reads when a day is born, so what he sets here is what the
- *    signing and the seal inherit.
- *  - DAY — his standing lifting hour: the hour a sealed day
- *    lifts (ends), set by his hand here and kept in SetupStore.
- *    The day's birth reads it when no session window stands —
- *    on a fresh install it is the ONLY lifting source, so
- *    without it no day can be born and the home stays an empty
- *    door (build 5). The evening signing still moves a single
- *    day's hour; this is the standing hour days are born from.
- *  - GUARD — the standing guard, worked through the store's own
- *    verbs, the three rules behaving as ruled: tighten lands
- *    instantly; a raise is scheduled from the next day-start
- *    (03:30) and refused outright once the day's purse is spent;
- *    off is scheduled to the next day-start, refused while a
- *    sealed block stands, and inside a stretch there is NO off
- *    at all — the stretch's chosen end date is the only exit.
- *
- * Plain look by order: flat graphite field, gold lines, the
- * house type. No richness work lives here; the design pass is a
- * later programme and changes nothing in the wiring.
+ *  - LIFTING TIME — the time his day ends (the sealed block
+ *    lifts). Set with the normal time picker and kept in
+ *    SetupStore. A day is born from this standing time when no
+ *    session window stands — on a fresh install it is the only
+ *    source, so without it no day can start and the home stays
+ *    an empty door (build 5). One day's time can still be
+ *    changed at that day's signing.
+ *  - PERMISSIONS — every permission the app needs, each row
+ *    showing its REAL state read from the system (the same
+ *    reads the guard sweep trusts), the switch showing that
+ *    state, and an "Open settings" button opening the real
+ *    system page for it. Autostart is the one Android will not
+ *    report: its row says so plainly and takes his word
+ *    ("Mark done") — shown as done-by-his-word, never as a
+ *    system grant.
+ *  - APPS — the installed apps (the catalogue the app keeps
+ *    synced — installed apps only), each with its real icon
+ *    and name and three radio choices: Blocked · Peek (2 min)
+ *    · Allowed. The choice writes the catalogue row the day's
+ *    birth reads, so what he sets here is what tomorrow's
+ *    signing and the block itself use.
+ *  - GUARD — a plain on/off switch, the daily allowance as a
+ *    plain number of minutes, and stretch setup with a date
+ *    picker. The three rules as ruled, in plain words under
+ *    each control: lowering the allowance applies straight
+ *    away; raising it starts tomorrow at 3:30 AM, never today,
+ *    and can't be set once today's allowance is spent; off
+ *    starts at the next day-start and is refused while a block
+ *    is running; during a stretch there is no off at all — the
+ *    end date he picked is the only way out.
  */
 
 enum class SetupSection { HOME, DAY, PERMISSIONS, APPS, GUARD }
 
 /** One permission row: [key] is the WatchItemId name (or the
  *  NOTIFICATIONS key for the runtime grant), [stateText] is the
- *  row's real standing as the host read it. */
+ *  row's real standing in plain words, as the host read it. */
 data class SetupPermissionRow(
     val key: String,
     val title: String,
@@ -91,34 +122,35 @@ data class SetupPermissionRow(
     val granted: Boolean
 )
 
-/** One app row: the catalogue row's own facts, re-expressed. */
+/** One app row: the catalogue row's own facts, re-expressed,
+ *  plus the app's real icon as the host loaded it (null until
+ *  loaded, and in fabricated harness states). */
 data class SetupAppRow(
     val packageName: String,
     val appName: String,
-    val tier: AppBlockTier
+    val tier: AppBlockTier,
+    val icon: ImageBitmap? = null
 )
 
 data class SetupState(
     val section: SetupSection = SetupSection.HOME,
-    /** His standing lifting hour as read from SetupStore;
-     *  [liftingHour] -1 = never set — no day can be born. */
+    /** His standing lifting time as read from SetupStore;
+     *  [liftingHour] -1 = never set — no day can start. */
     val liftingHour: Int = -1,
     val liftingMinute: Int = 0,
     val permissions: List<SetupPermissionRow> = emptyList(),
     val apps: List<SetupAppRow> = emptyList(),
     val guard: StrongroomGuard.GuardState? = null,
-    /** The last Guard act's outcome, in plain words — the host
-     *  fills it from the store verbs' own results, never invented. */
+    /** The last guard action's result, in plain words — the
+     *  host fills it from the store verbs' own results. */
     val guardNote: String = "",
-    /** The stretch's end, formatted for the row ("" = no stretch). */
+    /** The stretch's end, formatted for reading ("" = none). */
     val stretchEndText: String = ""
 ) {
     val grantedCount: Int get() = permissions.count { it.granted }
     val liftingSet: Boolean get() = liftingHour in 0..23
-    val liftingText: String get() = if (liftingSet) {
-        "${liftingHour.toString().padStart(2, '0')}:" +
-            liftingMinute.toString().padStart(2, '0')
-    } else ""
+    val liftingTime: LocalTime? get() =
+        if (liftingSet) LocalTime.of(liftingHour, liftingMinute) else null
 }
 
 data class SetupActions(
@@ -136,407 +168,576 @@ data class SetupActions(
     val onDone: () -> Unit = {}
 )
 
-private val Field = StrongroomInks.Graphite
-private val Line = StrongroomInks.Gold
-private val InkOnField = Color(0xFFE8E6E0)
-private val DimInk = Color(0xFFA8A6B2)
+private val TimeFormat: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+private val DateFormat: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("d MMM yyyy", Locale.getDefault())
 
 @Composable
 fun Setup(state: SetupState, actions: SetupActions, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Field)
-            .padding(horizontal = 20.dp, vertical = 16.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = when (state.section) {
-                    SetupSection.HOME -> "SETUP"
-                    SetupSection.DAY -> "SETUP — DAY"
-                    SetupSection.PERMISSIONS -> "SETUP — PERMISSIONS"
-                    SetupSection.APPS -> "SETUP — APPS"
-                    SetupSection.GUARD -> "SETUP — GUARD"
+    val atHome = state.section == SetupSection.HOME
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        when (state.section) {
+                            SetupSection.HOME -> "Setup"
+                            SetupSection.DAY -> "Lifting time"
+                            SetupSection.PERMISSIONS -> "Permissions"
+                            SetupSection.APPS -> "Apps"
+                            SetupSection.GUARD -> "Guard"
+                        }
+                    )
                 },
-                style = StrongroomType.Scr3,
-                color = Line,
-                modifier = Modifier.weight(1f)
-            )
-            PlainButton(
-                text = if (state.section == SetupSection.HOME) "CLOSE" else "BACK",
-                onClick = {
-                    if (state.section == SetupSection.HOME) actions.onClose()
-                    else actions.onBackToSetupHome()
+                navigationIcon = {
+                    IconButton(
+                        onClick = {
+                            if (atHome) actions.onClose()
+                            else actions.onBackToSetupHome()
+                        }
+                    ) {
+                        Icon(
+                            imageVector = if (atHome) Icons.Default.Close
+                            else Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = if (atHome) "Close" else "Back"
+                        )
+                    }
                 }
             )
         }
-        Spacer(Modifier.height(14.dp))
-        when (state.section) {
-            SetupSection.HOME -> SetupHome(state, actions)
-            SetupSection.DAY -> DayPanel(state, actions)
-            SetupSection.PERMISSIONS -> PermissionsList(state, actions)
-            SetupSection.APPS -> AppsList(state, actions)
-            SetupSection.GUARD -> GuardPanel(state, actions)
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            when (state.section) {
+                SetupSection.HOME -> SetupHome(state, actions)
+                SetupSection.DAY -> DayPanel(state, actions)
+                SetupSection.PERMISSIONS -> PermissionsList(state, actions)
+                SetupSection.APPS -> AppsList(state, actions)
+                SetupSection.GUARD -> GuardPanel(state, actions)
+            }
         }
     }
 }
 
 @Composable
 private fun SetupHome(state: SetupState, actions: SetupActions) {
-    Column(Modifier.verticalScroll(rememberScrollState())) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp)
+    ) {
         Text(
-            "What the app needs before a day can run. Set it once; " +
-                "change it here any evening.",
-            style = StrongroomType.Scr1, color = DimInk
+            "Set these once, here. You can come back and change " +
+                "them any time.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
-        Spacer(Modifier.height(16.dp))
-        EntryRow(
-            title = "DAY",
-            detail = if (state.liftingSet) "day lifts at ${state.liftingText}"
-            else "no lifting hour set — no day can be born yet",
+        val lifting = state.liftingTime
+        SettingsRow(
+            title = "Lifting time",
+            detail = if (lifting != null) {
+                "Your day ends at ${lifting.format(TimeFormat)}"
+            } else {
+                "Not set — a day can't start until you set this"
+            },
             onClick = { actions.onOpenSection(SetupSection.DAY) }
         )
-        EntryRow(
-            title = "PERMISSIONS",
-            detail = if (state.permissions.isEmpty()) "not read yet"
+        SettingsRow(
+            title = "Permissions",
+            detail = if (state.permissions.isEmpty()) "Not read yet"
             else "${state.grantedCount} of ${state.permissions.size} granted",
             onClick = { actions.onOpenSection(SetupSection.PERMISSIONS) }
         )
-        EntryRow(
-            title = "APPS",
-            detail = if (state.apps.isEmpty()) "no apps read yet"
-            else "${state.apps.count { it.tier == AppBlockTier.LOCKED }} shut · " +
+        SettingsRow(
+            title = "Apps",
+            detail = if (state.apps.isEmpty()) "No apps read yet"
+            else "${state.apps.count { it.tier == AppBlockTier.LOCKED }} blocked · " +
                 "${state.apps.count { it.tier == AppBlockTier.PEEK_2M }} peek · " +
-                "${state.apps.count { it.tier == AppBlockTier.OPEN }} open",
+                "${state.apps.count { it.tier == AppBlockTier.OPEN }} allowed",
             onClick = { actions.onOpenSection(SetupSection.APPS) }
         )
-        EntryRow(
-            title = "GUARD",
+        SettingsRow(
+            title = "Guard",
             detail = state.guard?.let {
-                (if (it.guardOn) "on" else "off") +
-                    " · allowance ${it.allowanceMinutes} min/day" +
-                    if (state.stretchEndText.isNotEmpty()) " · stretch to ${state.stretchEndText}" else ""
-            } ?: "not read yet",
+                (if (it.guardOn) "On" else "Off") +
+                    " · ${it.allowanceMinutes} minutes a day" +
+                    if (state.stretchEndText.isNotEmpty()) {
+                        " · stretch to ${state.stretchEndText}"
+                    } else ""
+            } ?: "Not read yet",
             onClick = { actions.onOpenSection(SetupSection.GUARD) }
         )
-        Spacer(Modifier.height(20.dp))
-        Box(
+        Spacer(Modifier.height(24.dp))
+        Button(
+            onClick = { actions.onDone() },
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Line, RoundedCornerShape(6.dp))
-                .clickable { actions.onDone() }
-                .semantics { contentDescription = "finish setup" }
-                .padding(vertical = 16.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp)
         ) {
-            Text(
-                "DONE — BACK TO HOME",
-                style = StrongroomType.Scr3,
-                color = Field
-            )
+            Text("Done")
         }
     }
 }
 
 @Composable
-private fun EntryRow(title: String, detail: String, onClick: () -> Unit) {
-    Column(
+private fun SettingsRow(title: String, detail: String, onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text(title) },
+        supportingContent = { Text(detail) },
+        trailingContent = {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowRight,
+                contentDescription = null
+            )
+        },
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp)
-            .border(1.dp, Line, RoundedCornerShape(6.dp))
             .clickable { onClick() }
-            .semantics { contentDescription = title.lowercase() }
-            .padding(horizontal = 14.dp, vertical = 14.dp)
-    ) {
-        Text(title, style = StrongroomType.Scr3, color = InkOnField)
-        Spacer(Modifier.height(2.dp))
-        Text(detail, style = StrongroomType.Scr1, color = DimInk)
-    }
+    )
+    HorizontalDivider()
 }
 
 @Composable
 private fun DayPanel(state: SetupState, actions: SetupActions) {
-    // The steppers work from the standing hour when one stands,
-    // else from 20:00 — the first tap on a fresh install sets
-    // the hour it lands on, printed on the plate before he taps.
-    val baseMinutes = if (state.liftingSet) {
-        state.liftingHour * 60 + state.liftingMinute
-    } else 20 * 60
-    fun shift(delta: Int) {
-        val total = ((baseMinutes + delta) % 1440 + 1440) % 1440
-        actions.onSetLiftingTime(total / 60, total % 60)
-    }
-    Column(Modifier.verticalScroll(rememberScrollState())) {
+    var showPicker by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)
+    ) {
         if (!state.liftingSet) {
             Text(
-                "No lifting hour is set. Without one, no day can " +
-                    "be born — the home stays an empty door with " +
-                    "nothing to sign. Set it here and the day stands.",
-                style = StrongroomType.Scr2, color = StrongroomInks.Rose
+                "No lifting time is set yet.",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.error
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Until you set one, a day can't start — there " +
+                    "would be no time for it to end. This is the " +
+                    "one setting a new install needs first.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Spacer(Modifier.height(20.dp))
         }
         Text(
-            "YOUR DAY LIFTS AT",
-            style = StrongroomType.Scr3, color = InkOnField
+            "Your day ends at",
+            style = MaterialTheme.typography.bodyLarge
         )
-        Spacer(Modifier.height(10.dp))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Line, RoundedCornerShape(6.dp))
-                .semantics { contentDescription = "lifting hour" }
-                .padding(vertical = 22.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = if (state.liftingSet) state.liftingText else "20:00",
-                style = StrongroomType.Scr6,
-                color = Field
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        Row {
-            PlainButton("−1H") { shift(-60) }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            PlainButton("−15M") { shift(-15) }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            PlainButton("+15M") { shift(15) }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            PlainButton("+1H") { shift(60) }
-        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = state.liftingTime?.format(TimeFormat) ?: "Not set",
+            style = MaterialTheme.typography.headlineMedium
+        )
         Spacer(Modifier.height(16.dp))
-        Text(
-            "The hour your sealed day lifts — the block ends and " +
-                "the phone is yours again. Days are born from this " +
-                "standing hour; a running session's own window end " +
-                "outranks it, and the evening signing can still " +
-                "move one single day's hour.",
-            style = StrongroomType.Scr1, color = DimInk
-        )
-        if (!state.liftingSet) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "The plate shows 20:00 — tap any step and that " +
-                    "becomes your hour.",
-                style = StrongroomType.Scr1, color = Line
-            )
+        Button(onClick = { showPicker = true }) {
+            Text(if (state.liftingSet) "Change time" else "Set time")
         }
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "This is when the block lifts and the phone is yours " +
+                "again. Days start from this standing time; if a " +
+                "session is already running, its own end time " +
+                "counts instead. You can also change a single " +
+                "day's time when you sign that day.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    if (showPicker) {
+        val pickerState = rememberTimePickerState(
+            initialHour = state.liftingTime?.hour ?: 20,
+            initialMinute = state.liftingTime?.minute ?: 0,
+            is24Hour = false
+        )
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        actions.onSetLiftingTime(
+                            pickerState.hour, pickerState.minute
+                        )
+                        showPicker = false
+                    }
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) {
+                    Text("Cancel")
+                }
+            },
+            text = { TimePicker(state = pickerState) }
+        )
     }
 }
 
 @Composable
 private fun PermissionsList(state: SetupState, actions: SetupActions) {
-    Column(Modifier.verticalScroll(rememberScrollState())) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp)
+    ) {
         Text(
-            "Each row is the system's real answer, read now. " +
-                "Tap OPEN and grant it in Settings; come back and it re-reads.",
-            style = StrongroomType.Scr1, color = DimInk
+            "These are the system's real answers, read just now. " +
+                "Tap \"Open settings\" and turn the permission on " +
+                "there; when you come back, the switch here shows " +
+                "the new answer.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
-        Spacer(Modifier.height(12.dp))
         state.permissions.forEach { row ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp)
-                    .border(1.dp, Line, RoundedCornerShape(6.dp))
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(row.title, style = StrongroomType.Scr2, color = InkOnField)
-                    Text(
-                        row.stateText,
-                        style = StrongroomType.Scr1,
-                        color = if (row.granted) Line else StrongroomInks.Rose
-                    )
+            ListItem(
+                headlineContent = { Text(row.title) },
+                supportingContent = { Text(row.stateText) },
+                leadingContent = {
+                    // The switch shows the real state. These
+                    // grants live in system settings, so the
+                    // switch itself does not take a tap.
+                    Switch(checked = row.granted, onCheckedChange = null)
+                },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (row.key == KEY_AUTOSTART && !row.granted) {
+                            TextButton(onClick = { actions.onAttestAutostart() }) {
+                                Text("Mark done")
+                            }
+                        }
+                        TextButton(onClick = { actions.onPermissionTap(row.key) }) {
+                            Text("Open settings")
+                        }
+                    }
                 }
-                if (row.key == KEY_AUTOSTART && !row.granted) {
-                    PlainButton("MARK DONE") { actions.onAttestAutostart() }
-                    Spacer(Modifier.padding(horizontal = 4.dp))
-                }
-                PlainButton("OPEN") { actions.onPermissionTap(row.key) }
-            }
+            )
+            HorizontalDivider()
         }
     }
 }
 
 @Composable
 private fun AppsList(state: SetupState, actions: SetupActions) {
-    Column(Modifier.verticalScroll(rememberScrollState())) {
-        Text(
-            "Installed apps only. SHUT locks it while a day is sealed, " +
-                "PEEK gives it a 2-minute check-in, OPEN leaves it alone. " +
-                "This is the list tomorrow's signing is built from.",
-            style = StrongroomType.Scr1, color = DimInk
-        )
-        Spacer(Modifier.height(12.dp))
-        if (state.apps.isEmpty()) {
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
             Text(
-                "No apps read yet — the catalogue is still syncing.",
-                style = StrongroomType.Scr2, color = InkOnField
+                "Installed apps only. Blocked apps stay shut while " +
+                    "a day is running. Peek gives an app a 2-minute " +
+                    "check-in. Allowed apps are left alone. This " +
+                    "list is what tomorrow's day is built from.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
             )
         }
-        state.apps.forEach { row ->
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 5.dp)
-                    .border(1.dp, Line, RoundedCornerShape(6.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
-            ) {
-                Text(row.appName, style = StrongroomType.Scr2, color = InkOnField)
-                Text(row.packageName, style = StrongroomType.Scr0, color = DimInk)
-                Spacer(Modifier.height(8.dp))
-                Row {
-                    TierButton("SHUT", row.tier == AppBlockTier.LOCKED) {
+        if (state.apps.isEmpty()) {
+            item {
+                Text(
+                    "No apps read yet — the list is still loading.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
+        items(state.apps, key = { it.packageName }) { row ->
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AppIcon(row)
+                    Spacer(Modifier.size(14.dp))
+                    Column {
+                        Text(
+                            row.appName,
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+                        Text(
+                            row.packageName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 56.dp, end = 8.dp, bottom = 6.dp)
+                ) {
+                    TierOption("Blocked", row.tier == AppBlockTier.LOCKED) {
                         actions.onSetTier(row.packageName, AppBlockTier.LOCKED)
                     }
-                    Spacer(Modifier.padding(horizontal = 4.dp))
-                    TierButton("PEEK", row.tier == AppBlockTier.PEEK_2M) {
+                    TierOption("Peek 2 min", row.tier == AppBlockTier.PEEK_2M) {
                         actions.onSetTier(row.packageName, AppBlockTier.PEEK_2M)
                     }
-                    Spacer(Modifier.padding(horizontal = 4.dp))
-                    TierButton("OPEN", row.tier == AppBlockTier.OPEN) {
+                    TierOption("Allowed", row.tier == AppBlockTier.OPEN) {
                         actions.onSetTier(row.packageName, AppBlockTier.OPEN)
                     }
                 }
+                HorizontalDivider()
             }
         }
+    }
+}
+
+@Composable
+private fun AppIcon(row: SetupAppRow) {
+    val icon = row.icon
+    if (icon != null) {
+        Image(
+            bitmap = icon,
+            contentDescription = null,
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+        )
+    } else {
+        // No icon loaded (or a fabricated harness state): the
+        // normal placeholder — the app's first letter on a
+        // plain tile.
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = row.appName.take(1).uppercase(),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun TierOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .selectable(
+                selected = selected,
+                role = Role.RadioButton,
+                onClick = onClick
+            )
+            .padding(horizontal = 6.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(label, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 private fun GuardPanel(state: SetupState, actions: SetupActions) {
     val guard = state.guard
-    var stretchDate by remember { mutableStateOf("") }
-    Column(Modifier.verticalScroll(rememberScrollState())) {
+    // The field re-seeds whenever the standing allowance moves
+    // (a tighten landing, a raise taking effect at day-start).
+    var allowanceText by remember(guard?.allowanceMinutes) {
+        mutableStateOf((guard?.allowanceMinutes ?: 0).toString())
+    }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var stretchIso by remember { mutableStateOf("") }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 8.dp)
+    ) {
         if (guard == null) {
-            Text("Reading the guard…", style = StrongroomType.Scr2, color = InkOnField)
+            Text(
+                "Loading…",
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(16.dp)
+            )
             return@Column
         }
-        Text(
-            if (guard.guardOn) "The guard is ON." else "The guard is OFF.",
-            style = StrongroomType.Scr3, color = InkOnField
+        ListItem(
+            headlineContent = { Text("Guard") },
+            supportingContent = {
+                Text(if (guard.guardOn) "On" else "Off")
+            },
+            trailingContent = {
+                Switch(
+                    checked = guard.guardOn,
+                    // During a stretch there is no off — the
+                    // switch is disabled and the words below say
+                    // why. Otherwise the switch works the verbs:
+                    // on is instant; off starts at the next
+                    // day-start, and the note below prints what
+                    // the verb actually did.
+                    enabled = state.stretchEndText.isEmpty(),
+                    onCheckedChange = { on ->
+                        if (on) actions.onGuardOn() else actions.onGuardOff()
+                    }
+                )
+            }
         )
         if (state.guardNote.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Text(state.guardNote, style = StrongroomType.Scr1, color = Line)
-        }
-        Spacer(Modifier.height(14.dp))
-        Row {
-            PlainButton("TURN ON") { actions.onGuardOn() }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            if (state.stretchEndText.isEmpty()) {
-                PlainButton("TURN OFF") { actions.onGuardOff() }
-            }
-        }
-        if (state.stretchEndText.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
             Text(
-                "A stretch is running — there is no off switch inside " +
-                    "a stretch. It ends ${state.stretchEndText}.",
-                style = StrongroomType.Scr1, color = DimInk
+                state.guardNote,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
         }
-        Spacer(Modifier.height(22.dp))
+        if (state.stretchEndText.isNotEmpty()) {
+            Text(
+                "A stretch is running until ${state.stretchEndText}. " +
+                    "There is no off switch during a stretch — the " +
+                    "end date you picked is the only way out.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+        HorizontalDivider()
+        Spacer(Modifier.height(16.dp))
         Text(
-            "DAILY ALLOWANCE — ${guard.allowanceMinutes} MIN",
-            style = StrongroomType.Scr3, color = InkOnField
+            "Daily allowance",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
         Text(
-            "Lowering it takes effect now. Raising it starts tomorrow " +
-                "at 03:30 — never the same day.",
-            style = StrongroomType.Scr1, color = DimInk
+            "How many minutes of peeked apps you get each day.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = allowanceText,
+                onValueChange = { text ->
+                    allowanceText = text.filter { it.isDigit() }.take(3)
+                },
+                label = { Text("Minutes") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Number
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.size(12.dp))
+            val parsed = allowanceText.toIntOrNull()
+            Button(
+                onClick = { parsed?.let { actions.onSetAllowance(it) } },
+                enabled = parsed != null && parsed in 0..600 &&
+                    parsed != guard.allowanceMinutes
+            ) {
+                Text("Save")
+            }
+        }
+        Text(
+            "Lowering it applies straight away. Raising it starts " +
+                "tomorrow at 3:30 AM — never the same day.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
         if (guard.pendingAllowanceMinutes >= 0) {
             Text(
-                "A raise to ${guard.pendingAllowanceMinutes} min is set " +
-                    "to start at the next day-start.",
-                style = StrongroomType.Scr1, color = Line
+                "A raise to ${guard.pendingAllowanceMinutes} minutes " +
+                    "is set to start at the next day-start (3:30 AM).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
         }
-        Spacer(Modifier.height(10.dp))
-        Row {
-            PlainButton("−10") { actions.onSetAllowance((guard.allowanceMinutes - 10).coerceAtLeast(0)) }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            PlainButton("−5") { actions.onSetAllowance((guard.allowanceMinutes - 5).coerceAtLeast(0)) }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            PlainButton("+5") { actions.onSetAllowance(guard.allowanceMinutes + 5) }
-            Spacer(Modifier.padding(horizontal = 4.dp))
-            PlainButton("+10") { actions.onSetAllowance(guard.allowanceMinutes + 10) }
-        }
-        Spacer(Modifier.height(22.dp))
-        Text("STRETCH", style = StrongroomType.Scr3, color = InkOnField)
+        HorizontalDivider(modifier = Modifier.padding(vertical = 16.dp))
+        Text(
+            "Stretch",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
         if (state.stretchEndText.isNotEmpty()) {
             Text(
-                "Running until ${state.stretchEndText}. The end date " +
-                    "you chose is the only way out.",
-                style = StrongroomType.Scr1, color = DimInk
+                "Running until ${state.stretchEndText}.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
         } else {
             Text(
-                "Lock the guard on until a date you pick now. Inside " +
-                    "a stretch there is no off — choose the end like " +
-                    "you mean it. Date as 2026-11-10.",
-                style = StrongroomType.Scr1, color = DimInk
+                "Keep the guard on until a date you pick now. " +
+                    "During a stretch there is no off switch — " +
+                    "pick the end date like you mean it.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
-            Spacer(Modifier.height(10.dp))
-            BasicTextField(
-                value = stretchDate,
-                onValueChange = { stretchDate = it },
-                textStyle = TextStyle(color = InkOnField, fontSize = StrongroomType.Scr2.fontSize),
-                cursorBrush = SolidColor(Line),
+            if (stretchIso.isNotEmpty()) {
+                Text(
+                    "Ends: ${
+                        runCatching {
+                            java.time.LocalDate.parse(stretchIso)
+                                .format(DateFormat)
+                        }.getOrDefault(stretchIso)
+                    }",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(1.dp, Line, RoundedCornerShape(6.dp))
-                    .semantics { contentDescription = "stretch end date" }
-                    .padding(horizontal = 14.dp, vertical = 14.dp)
-            )
-            Spacer(Modifier.height(10.dp))
-            PlainButton("BEGIN STRETCH") { actions.onBeginStretch(stretchDate) }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(onClick = { showDatePicker = true }) {
+                    Text("Choose end date")
+                }
+                Spacer(Modifier.size(12.dp))
+                Button(
+                    onClick = { actions.onBeginStretch(stretchIso) },
+                    enabled = stretchIso.isNotEmpty()
+                ) {
+                    Text("Start stretch")
+                }
+            }
         }
     }
-}
-
-@Composable
-private fun PlainButton(text: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .border(1.dp, Line, RoundedCornerShape(6.dp))
-            .clickable { onClick() }
-            .semantics { contentDescription = text.lowercase() }
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text, style = StrongroomType.Scr1, color = Line)
-    }
-}
-
-@Composable
-private fun TierButton(text: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .then(
-                if (selected) Modifier.background(Line, RoundedCornerShape(6.dp))
-                else Modifier.border(1.dp, Line, RoundedCornerShape(6.dp))
-            )
-            .clickable { onClick() }
-            .semantics { contentDescription = text.lowercase() }
-            .padding(horizontal = 16.dp, vertical = 9.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text,
-            style = StrongroomType.Scr1,
-            color = if (selected) Field else Line
-        )
+    if (showDatePicker) {
+        val dateState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        dateState.selectedDateMillis?.let { millis ->
+                            stretchIso = Instant.ofEpochMilli(millis)
+                                .atZone(ZoneId.of("UTC"))
+                                .toLocalDate()
+                                .toString()
+                        }
+                        showDatePicker = false
+                    }
+                ) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        ) {
+            DatePicker(state = dateState, showModeToggle = false)
+        }
     }
 }
 
 /** The autostart row's key — not a WatchItemId the sweep can
- *  measure; the host maps it to the vendor pane + the oath. */
+ *  measure; the host maps it to the vendor pane + his word. */
 const val KEY_AUTOSTART = "AUTOSTART"
 
 /** The notifications row's key — the POST_NOTIFICATIONS runtime

@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -2003,6 +2004,35 @@ private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
     var guardNote by remember { mutableStateOf("") }
     var refreshTick by remember { mutableStateOf(0) }
 
+    // The app list's real icons, loaded off the main thread
+    // whenever the catalogue's package set changes (the normal
+    // settings look: every app wears its own face).
+    var appIcons by remember {
+        mutableStateOf<Map<String, androidx.compose.ui.graphics.ImageBitmap>>(
+            emptyMap()
+        )
+    }
+    val packageKey = apps.joinToString("|") { it.packageName }
+    LaunchedEffect(packageKey) {
+        appIcons = withContext(Dispatchers.IO) {
+            val pm = appContext.packageManager
+            apps.mapNotNull { row ->
+                runCatching {
+                    val drawable = pm.getApplicationIcon(row.packageName)
+                    val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
+                    val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
+                    val bitmap = android.graphics.Bitmap.createBitmap(
+                        width, height, android.graphics.Bitmap.Config.ARGB_8888
+                    )
+                    val canvas = android.graphics.Canvas(bitmap)
+                    drawable.setBounds(0, 0, width, height)
+                    drawable.draw(canvas)
+                    row.packageName to bitmap.asImageBitmap()
+                }.getOrNull()
+            }.toMap()
+        }
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             kotlinx.coroutines.delay(2500L)
@@ -2032,7 +2062,8 @@ private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
                 com.example.ui.setup.SetupAppRow(
                     packageName = it.packageName,
                     appName = it.appName,
-                    tier = it.resolvedTier
+                    tier = it.resolvedTier,
+                    icon = appIcons[it.packageName]
                 )
             },
             guardNote = guardNote
@@ -2213,7 +2244,7 @@ private fun loadSetupFacts(
         return com.example.ui.setup.SetupPermissionRow(
             key = item.name,
             title = title,
-            stateText = if (granted) "GRANTED" else "MISSING",
+            stateText = if (granted) "Granted" else "Not granted",
             granted = granted
         )
     }
@@ -2230,7 +2261,7 @@ private fun loadSetupFacts(
         com.example.ui.setup.SetupPermissionRow(
             key = com.example.ui.setup.KEY_NOTIFICATIONS,
             title = "Notifications",
-            stateText = if (notificationsGranted) "GRANTED" else "MISSING",
+            stateText = if (notificationsGranted) "Granted" else "Not granted",
             granted = notificationsGranted
         ),
         row(com.example.service.WatchItemId.NOTIFICATION_LISTENER, "Held calls (notification access)"),
@@ -2241,9 +2272,10 @@ private fun loadSetupFacts(
             key = com.example.ui.setup.KEY_AUTOSTART,
             title = "Autostart",
             stateText = if (autostartSworn) {
-                "SWORN — you marked it done (Android can't report this one)"
+                "Done — you marked it yourself (Android can't check this one)"
             } else {
-                "NOT SET — Android can't report this one; open it, set it, mark it done"
+                "Not set — Android can't check this one; open it, " +
+                    "turn it on, then tap Mark done"
             },
             granted = autostartSworn
         )
