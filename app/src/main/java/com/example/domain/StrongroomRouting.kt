@@ -180,6 +180,26 @@ object StrongroomRouting {
     ): FiringEvent? = firingSchedule(signing, seal)
         .firstOrNull { it.atElapsedMillis > nowElapsedMillis }
 
+    /**
+     * The firing due at a reading, WITH THE BOOT GUARD (CH-2,
+     * CRITIC-SR-5): no firing of the time-lock — break or lift —
+     * fires in an ajar day. When the boot count differs from the
+     * seal's, the span's clock died with the boot; the only lawful
+     * next act is the ajar strike (the bridge's boot path), never
+     * a firing. Returns the earliest event due at or before
+     * [nowElapsedMillis] in this boot, or null.
+     */
+    fun firingDue(
+        signing: StrongroomDay.SigningRecord,
+        seal: StrongroomDay.SealSpan,
+        nowElapsedMillis: Long,
+        nowBootCount: Int
+    ): FiringEvent? {
+        if (nowBootCount != seal.sealedBootCount) return null
+        return firingSchedule(signing, seal)
+            .firstOrNull { it.atElapsedMillis <= nowElapsedMillis }
+    }
+
     // ------------------------------------------------------------------
     // Integrity — tamper vs the ajar truth
     // ------------------------------------------------------------------

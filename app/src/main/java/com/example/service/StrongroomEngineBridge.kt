@@ -222,9 +222,13 @@ object StrongroomEngineBridge {
      * seal, called from MonolithBootReceiver's guarded groups:
      *  - no sealed day: nothing.
      *  - AJAR (the boot died under the seal): strike the ajar
-     *    plate — the door tells the truth about itself first.
-     *  - BROKEN_TAMPER (a sideways kill observed): struck BROKEN;
-     *    tamper is never laundered into ajar.
+     *    plate — the door tells the truth about itself first — and
+     *    RELEASE THE PHONE IMMEDIATELY (R2-3): a dead seal holds
+     *    nothing; the failure face is testimony, never a gate, so
+     *    the shield stands down in the same act.
+     *  - BROKEN_TAMPER (a sideways kill observed): struck BROKEN
+     *    and likewise released; tamper is never laundered into
+     *    ajar, and a broken seal is not a lock either.
      *  - INTACT: re-raise the shield and re-arm the firings; the
      *    composition is NEVER recomposed here (B-10) — the stored
      *    day is re-shown as cut.
@@ -236,10 +240,14 @@ object StrongroomEngineBridge {
         val span = row.toSealSpan() ?: return
         val boot = bootCount(appContext)
         when (StrongroomRouting.classifyIntegrity(span, boot, sidewaysKillObserved)) {
-            StrongroomRouting.SealIntegrity.AJAR_BOOT_DEATH ->
+            StrongroomRouting.SealIntegrity.AJAR_BOOT_DEATH -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = false)
-            StrongroomRouting.SealIntegrity.BROKEN_TAMPER ->
+                MonolithShieldService.stopShield(appContext)
+            }
+            StrongroomRouting.SealIntegrity.BROKEN_TAMPER -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = true)
+                MonolithShieldService.stopShield(appContext)
+            }
             StrongroomRouting.SealIntegrity.INTACT -> {
                 MonolithShieldService.startShield(appContext)
                 armFirings(appContext, row.filingDateIso)

@@ -69,7 +69,13 @@ object StrongroomGuard {
      * [spentDateIso] / [spentMinutesThatDay]: the purse fact the
      * hard-stop rule reads, keyed by filing date — the store feeds
      * it from the day row; a spend on another filing date never
-     * blocks today's raise.
+     * blocks today's raise. [dayPurseTotalMinutes] is the standing
+     * day's OWN purse total when a day stands (-1 = no day stands):
+     * DF-8's cure — the hard stop is a fact of the day's purse
+     * (what the drum actually holds), not of the Guard allowance,
+     * and when the two diverge the day's purse governs, so D-1's
+     * stop is never breached at the seam while the drum is
+     * honestly stopped.
      */
     data class GuardState(
         val guardOn: Boolean = true,
@@ -79,7 +85,8 @@ object StrongroomGuard {
         val pendingOffFromMillis: Long = 0L,
         val stretchEndMillis: Long = 0L,
         val spentDateIso: String = "",
-        val spentMinutesThatDay: Int = 0
+        val spentMinutesThatDay: Int = 0,
+        val dayPurseTotalMinutes: Int = -1
     ) {
         init {
             require(allowanceMinutes >= 0) { "allowance cannot be negative" }
@@ -89,10 +96,15 @@ object StrongroomGuard {
             stretchEndMillis > 0L && nowMillis < stretchEndMillis
 
         /** The purse is spent when today's spend reached the
-         *  allowance in force. An allowance of 0 is spent by
-         *  definition (nothing may be drawn). */
-        fun purseSpentToday(todayIso: String): Boolean =
-            spentDateIso == todayIso && spentMinutesThatDay >= allowanceMinutes
+         *  purse that actually stands: the day's own purse total
+         *  when a day stands, else the allowance in force. A purse
+         *  of 0 is spent by definition (nothing may be drawn). */
+        fun purseSpentToday(todayIso: String): Boolean {
+            if (spentDateIso != todayIso) return false
+            val purseTotal = if (dayPurseTotalMinutes >= 0) dayPurseTotalMinutes
+            else allowanceMinutes
+            return spentMinutesThatDay >= purseTotal
+        }
     }
 
     // ------------------------------------------------------------------

@@ -162,6 +162,13 @@ class StrongroomMigrationP1Test {
                 assertTrue(cursor.moveToFirst())
                 assertEquals(25, cursor.getInt(0))
             }
+            // Read back BY NAME (VERIFY-SR-4's soft spot, closed):
+            // the carried app row is the row that was seeded, values
+            // and all — not merely a surviving count.
+            db.query("SELECT appName FROM blocked_apps WHERE packageName = 'com.video.app'").use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals("Video", cursor.getString(0))
+            }
             assertEquals(1, countRows(db, "blocked_apps"))
         } finally {
             helper.close()
@@ -341,20 +348,62 @@ class StrongroomMigrationP1Test {
                 isBlocked = true, blockTier = AppBlockTier.PEEK_2M.name
             )
         )
+        // Where his data holds NO lifting hour, the carry waits
+        // for his signing — it never invents the day's most
+        // important number (CRITIC-SR-6's cure).
+        assertNull(
+            LegacyCarry.deriveSigning(
+                filingDateIso = "2026-11-03",
+                blockedApps = apps,
+                guardSettings = GuardSettingsEntity(breakMinutes = 25),
+                activeSessionIntention = null,
+                guardAllowanceMinutes = 30,
+                activeSessionWindowEnd = null
+            )
+        )
         val signing = LegacyCarry.deriveSigning(
             filingDateIso = "2026-11-03",
             blockedApps = apps,
             guardSettings = GuardSettingsEntity(breakMinutes = 25),
-            activeSession = null,
+            activeSessionIntention = null,
             guardAllowanceMinutes = 30,
-            activeSessionWindowEnd = null
-        )
+            activeSessionWindowEnd = LocalTime.of(21, 30)
+        )!!
         // Only the LOCKED tier enters the locked set — peek and open
         // apps are not locked, and gaps never enter it at all.
         assertEquals(setOf("com.video.app"), signing.lockedPackages)
         assertEquals(25, signing.breakLengthMinutes) // his current break length, carried
         assertNull(signing.sentence) // no session stands: the kept place stands
-        assertEquals(LegacyCarry.DEFAULT_LIFTING_TIME, signing.liftingTime)
+        assertEquals(LocalTime.of(21, 30), signing.liftingTime) // HIS hour, carried — never an invented one
         assertEquals(30, signing.allowanceMinutes)
+    }
+
+    @Test
+    fun crank_ch1_clockMintedWeekSkipPastSpentMarker_floorsAtSpent() = runBlocking {
+        val db = Room.inMemoryDatabaseBuilder(context, MonolithDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val store = StrongroomStore(db.monolithDao())
+            val utc = ZoneId.of("UTC")
+            val wednesday = java.time.LocalDateTime.of(2026, 11, 4, 12, 0)
+                .atZone(utc).toInstant().toEpochMilli()
+            val weekMillis = 7L * 24 * 3_600_000L
+            // Spend this week's minute.
+            assertNotNull(store.spendCrank(wednesday, utc))
+            // The ADJACENT week stands fresh (the lawful rollover).
+            assertTrue(store.crankWeek(wednesday + weekMillis, utc).minuteAvailable)
+            // A clock minted three weeks forward, past the spent
+            // marker, is NOT believed: the crank floors at spent
+            // and no fresh row is born for the minted week.
+            val minted = wednesday + 3 * weekMillis
+            val floored = store.crankWeek(minted, utc)
+            assertFalse(floored.minuteAvailable)
+            assertTrue(floored.sealBroken)
+            val mintedAnchor = MonolithWeek.weekAnchorMillis(minted, utc)
+            assertNull(db.monolithDao().getStrongroomCrankWeek(mintedAnchor))
+        } finally {
+            db.close()
+        }
     }
 }

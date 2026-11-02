@@ -121,6 +121,35 @@ class StrongroomRoutingP2Test {
     }
 
     @Test
+    fun firings_bootGuard_noFiringInAnAjarDay() {
+        // CH-2: the break (and the lift) are firings of the span's
+        // own clock; when the boot died, that clock died — nothing
+        // fires in an ajar day.
+        val signing = StrongroomDay.SigningRecord(
+            filingDateIso = "2026-11-03",
+            lockedPackages = locked,
+            liftingTime = LocalTime.of(6, 0),
+            sentence = null,
+            breakLengthMinutes = 20,
+            breakFiresAtOffsetMillis = 3_600_000L,
+            allowanceMinutes = 30,
+            gaps = emptyList()
+        )
+        val seal = StrongroomDay.SealSpan(100_000L, 3, 10_800_000L)
+        val breakDueAt = 100_000L + 3_600_000L
+        assertEquals(
+            StrongroomRouting.FiringKind.BREAK_START,
+            StrongroomRouting.firingDue(signing, seal, breakDueAt, nowBootCount = 3)?.kind
+        )
+        assertNull(StrongroomRouting.firingDue(signing, seal, breakDueAt, nowBootCount = 4))
+        assertNull(
+            StrongroomRouting.firingDue(
+                signing, seal, seal.liftingAtElapsedMillis, nowBootCount = 4
+            )
+        )
+    }
+
+    @Test
     fun integrity_tamperOutranksAjar_bootDeathIsAjar_intactStands() {
         val seal = StrongroomDay.SealSpan(100_000L, 3, 10_800_000L)
         assertEquals(

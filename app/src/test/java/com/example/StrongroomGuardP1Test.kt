@@ -65,6 +65,23 @@ class StrongroomGuardP1Test {
         assertTrue(result2 is StrongroomGuard.RaiseRequest.Scheduled)
     }
 
+    @Test
+    fun hardStop_readsTheDaysOwnPurse_whenItDivergesFromTheGuardAllowance() {
+        // DF-8: the day's purse (10) is smaller than the Guard
+        // allowance (30). Ten spent minutes stop the DRUM — and the
+        // hard stop must read the day's purse, or a raise slips
+        // through the seam while the drum is honestly stopped.
+        val divergent = base.copy(
+            spentDateIso = today, spentMinutesThatDay = 10, dayPurseTotalMinutes = 10
+        )
+        val (_, result) = StrongroomGuard.requestRaise(divergent, 45, today, nextDayStart)
+        assertEquals(StrongroomGuard.RaiseRequest.BeyondHardStop, result)
+        // With no day standing (-1), the allowance in force governs.
+        val noDay = base.copy(spentDateIso = today, spentMinutesThatDay = 10)
+        val (_, result2) = StrongroomGuard.requestRaise(noDay, 45, today, nextDayStart)
+        assertTrue(result2 is StrongroomGuard.RaiseRequest.Scheduled)
+    }
+
     // ---------- rule 2: slow off ----------
 
     @Test

@@ -197,7 +197,8 @@ fun StrongroomPunchEntity.toPunch(): StrongroomDay.Punch = StrongroomDay.Punch(
 
 fun StrongroomGuardEntity.toGuardState(
     spentDateIso: String,
-    spentMinutesThatDay: Int
+    spentMinutesThatDay: Int,
+    dayPurseTotalMinutes: Int = -1
 ): StrongroomGuard.GuardState = StrongroomGuard.GuardState(
     guardOn = guardOn,
     allowanceMinutes = allowanceMinutes,
@@ -206,7 +207,8 @@ fun StrongroomGuardEntity.toGuardState(
     pendingOffFromMillis = pendingOffFromMillis,
     stretchEndMillis = stretchEndMillis,
     spentDateIso = spentDateIso,
-    spentMinutesThatDay = spentMinutesThatDay
+    spentMinutesThatDay = spentMinutesThatDay,
+    dayPurseTotalMinutes = dayPurseTotalMinutes
 )
 
 fun StrongroomGuard.GuardState.toEntity(): StrongroomGuardEntity = StrongroomGuardEntity(

@@ -604,4 +604,7 @@ interface MonolithDao {
 
     @Query("SELECT * FROM strongroom_crank_weeks WHERE weekAnchorMillis = :anchor LIMIT 1")
     suspend fun getStrongroomCrankWeek(anchor: Long): StrongroomCrankWeekEntity?
+
+    @Query("SELECT * FROM strongroom_crank_weeks WHERE weekAnchorMillis < :anchor ORDER BY weekAnchorMillis DESC LIMIT 1")
+    suspend fun getLatestStrongroomCrankWeekBefore(anchor: Long): StrongroomCrankWeekEntity?
 }

@@ -72,6 +72,11 @@ class StrongroomStore(private val dao: MonolithDao) {
         if (row.state == StrongroomDayEntity.STATE_SEALED ||
             row.state in StrongroomDayEntity.STRUCK_STATES
         ) return null
+        amendment.gaps?.let {
+            require(StrongroomDay.gapsFitAnySpan(it)) {
+                "in-span gaps must not overlap and must fit a day's span"
+            }
+        }
         val amended = com.example.domain.StrongroomComposition.amend(composed, amendment)
         dao.insertStrongroomDay(
             row.copy(
@@ -99,11 +104,12 @@ class StrongroomStore(private val dao: MonolithDao) {
      * the composed state. Sealing never consults either fact.
      */
     suspend fun sign(signing: StrongroomDay.SigningRecord, amended: Boolean = true) {
-        require(StrongroomDay.gapsAreLawful(signing.gaps, Long.MAX_VALUE)) {
-            // Overlap is checked against the real span at sealing;
-            // here only the shape law (positive, ordered) is cheap —
-            // sealing re-checks against the struck span.
-            "gaps must not overlap"
+        require(StrongroomDay.gapsFitAnySpan(signing.gaps)) {
+            // The calm-hour surface (CRITIC-SR-6 cure): in-span gaps
+            // that overlap, or that no span of a day could ever
+            // contain, are refused HERE — at signing — never
+            // discovered at the first sitting.
+            "in-span gaps must not overlap and must fit a day's span"
         }
         dao.insertStrongroomDay(
             signing.toEntity(amendedBySigning = amended).copy(
@@ -121,9 +127,8 @@ class StrongroomStore(private val dao: MonolithDao) {
      * The day may be COMPOSED (never signed) or SIGNED (amended):
      * the app never checks whether the evening happened (B-2), so
      * this function reads no signing fact. Returns the struck span,
-     * or null when no day stands or its gaps do not fit the struck
-     * span (a composition error surfaces, never a silently trimmed
-     * gap).
+     * or null only when no day stands — the swing itself never
+     * refuses (see the gap note at the strike below).
      */
     suspend fun seal(
         dateIso: String,
@@ -135,7 +140,16 @@ class StrongroomStore(private val dao: MonolithDao) {
         val row = dao.getStrongroomDay(dateIso) ?: return null
         val signing = row.toSigningRecord()
         val duration = StrongroomDay.spanDurationAtSealing(sealedAtWallMillis, signing.liftingTime, zone)
-        if (!StrongroomDay.gapsAreLawful(signing.gaps, duration)) return null
+        // The swing NEVER fails for a gap (CRITIC-SR-6 cure, with a
+        // named divergence from the prescribed form): the span's
+        // length is a function of the sealing instant, which no
+        // signing can compute without inventing a swing hour — so
+        // fit-at-signing is enforced only where it IS computable
+        // (overlap + the 24h bound, in sign/amend). Here, a hold
+        // made late seals what is left of the day (refit Beat 2):
+        // an in-span gap the shortened span never reaches is an
+        // unreached shape, inert by gapAt's own arithmetic — it
+        // opens nothing, strikes nothing, and the seal stands.
         dao.insertStrongroomDay(
             row.copy(
                 sealedAtWallMillis = sealedAtWallMillis,
@@ -264,6 +278,31 @@ class StrongroomStore(private val dao: MonolithDao) {
     ): StrongroomDay.GovernorCrankWeek {
         val anchor = MonolithWeek.weekAnchorMillis(nowMillis, zone)
         dao.getStrongroomCrankWeek(anchor)?.let { return it.toCrankWeek() }
+        // CH-1 (CRITIC-SR-5, riding to P2): the civil week anchor
+        // can be clock-minted forward — a wall clock jumped ahead
+        // must not mint a fresh minute against elapsed truth. The
+        // substrate's own law for the legacy token is
+        // TokenWeekGuard's: a week that SKIPS PAST a spent marker
+        // is not believed until the interval is corroborated. Here,
+        // with the crank rows as the marker: when the newest prior
+        // crank week stands SPENT and the claimed week begins more
+        // than one lawful week after it (a skip, not the adjacent
+        // rollover), the evaluation floors at the marker — the
+        // crank reads SPENT for the claimed week and no fresh row
+        // is born. Adjacent rollover and skips past an UNSPENT
+        // marker mint nothing and stand fresh, as TokenWeekGuard
+        // rules for the token.
+        dao.getLatestStrongroomCrankWeekBefore(anchor)?.let { prior ->
+            val oneWeekMillis = 7L * 24 * 3_600_000L
+            if (prior.sealBroken && anchor > prior.weekAnchorMillis + oneWeekMillis) {
+                return StrongroomDay.GovernorCrankWeek(
+                    weekAnchorMillis = anchor,
+                    spentSeconds = StrongroomDay.CRANK_SECONDS,
+                    sealBroken = true,
+                    spentAtWallMillis = prior.spentAtWallMillis
+                )
+            }
+        }
         val nextAnchor = MonolithWeek.nextWeekAnchorMillis(nowMillis, zone)
         val legacySpend = dao.getSpendsForWeek(anchor, nextAnchor)
             .firstOrNull {
@@ -329,7 +368,8 @@ class StrongroomStore(private val dao: MonolithDao) {
         }
         val fed = entity.toGuardState(
             spentDateIso = dayRow?.filingDateIso ?: "",
-            spentMinutesThatDay = dayRow?.allowanceSpentMinutes ?: 0
+            spentMinutesThatDay = dayRow?.allowanceSpentMinutes ?: 0,
+            dayPurseTotalMinutes = dayRow?.allowanceTotalMinutes ?: -1
         )
         val applied = StrongroomGuard.applyPending(fed, nowMillis)
         if (applied.toEntity() != entity) dao.insertStrongroomGuard(applied.toEntity())
@@ -423,37 +463,41 @@ class StrongroomStore(private val dao: MonolithDao) {
  *  - sentence ← the active session's intention when one stands
  *    (his own words for a day, carried — otherwise the kept place);
  *  - lifting hour ← the active session's window end when one
- *    stands, else 06:00 (named here as the carry's stated default:
- *    his timetable's first sitting follows the 03:30 day-start and
- *    the morning shapes; a fresh signing replaces it in a minute);
+ *    stands. WHERE HIS DATA HOLDS NO LIFTING HOUR, THE CARRY
+ *    WAITS FOR HIS SIGNING — it never invents the day's most
+ *    important number (CRITIC-SR-6's cure: the first form of this
+ *    carry defaulted to an invented 06:00, which would have lifted
+ *    a carried day mid-block; struck, not patched over);
  *  - allowance ← the Guard's standing allowance.
  *
  * Pure over plain inputs; the caller (first-signing flow / P9
  * migration proof) feeds it DAO snapshots and persists the result
  * with [StrongroomDayEntity.carriedFromSessionId] as provenance.
+ * Returns null when no lifting hour stands in his data: no
+ * carried day is composed that day — the standing order's
+ * composition (which carries its own composed hours) and his
+ * signing remain the day's sources, in their own rights.
  */
 object LegacyCarry {
-
-    val DEFAULT_LIFTING_TIME: LocalTime = LocalTime.of(6, 0)
 
     fun deriveSigning(
         filingDateIso: String,
         blockedApps: List<BlockedAppEntity>,
         guardSettings: GuardSettingsEntity?,
-        activeSession: FocusSessionEntity?,
+        activeSessionIntention: String?,
         guardAllowanceMinutes: Int,
         activeSessionWindowEnd: LocalTime?
-    ): StrongroomDay.SigningRecord {
+    ): StrongroomDay.SigningRecord? {
+        val lifting = activeSessionWindowEnd ?: return null
         val locked = blockedApps
             .filter { it.resolvedTier == AppBlockTier.LOCKED }
             .map { it.packageName }
             .toSet()
-        val sentence = activeSession?.intention?.takeIf { it.isNotBlank() }
         return StrongroomDay.SigningRecord(
             filingDateIso = filingDateIso,
             lockedPackages = locked,
-            liftingTime = activeSessionWindowEnd ?: DEFAULT_LIFTING_TIME,
-            sentence = sentence,
+            liftingTime = lifting,
+            sentence = activeSessionIntention?.takeIf { it.isNotBlank() },
             breakLengthMinutes = guardSettings?.breakMinutes ?: 10,
             breakFiresAtOffsetMillis = -1L,
             allowanceMinutes = guardAllowanceMinutes,

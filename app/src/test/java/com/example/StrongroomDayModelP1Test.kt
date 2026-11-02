@@ -120,6 +120,49 @@ class StrongroomDayModelP1Test {
         assertFalse(StrongroomDay.gapsAreLawful(overlapping, seal.spanDurationMillis))
     }
 
+    @Test
+    fun gapKinds_fiveShapes_threeMechanics_r2_2() {
+        // R2-2: all five names stand, with differing mechanics.
+        assertEquals(
+            StrongroomDay.GapPlacement.PRE_SWING,
+            StrongroomDay.GapKind.MEDITATION.placement
+        )
+        assertEquals(
+            StrongroomDay.GapPlacement.TERMINAL,
+            StrongroomDay.GapKind.SLEEP.placement
+        )
+        for (kind in listOf(
+            StrongroomDay.GapKind.GYM, StrongroomDay.GapKind.SADHANA, StrongroomDay.GapKind.MEAL
+        )) {
+            assertEquals(StrongroomDay.GapPlacement.IN_SPAN, kind.placement)
+        }
+        // Meditation is never inside the span: gapAt cannot answer
+        // it, and the span-fit law does not judge it.
+        val withMorning = signing.gaps + StrongroomDay.ShapedGap(
+            StrongroomDay.GapKind.MEDITATION, 0L, 3_600_000L
+        )
+        assertNull(StrongroomDay.gapAt(withMorning, 60_000L))
+        assertTrue(StrongroomDay.gapsAreLawful(withMorning, seal.spanDurationMillis))
+        // Sleep is terminal: it, too, is outside the span's law.
+        val withSleep = signing.gaps + StrongroomDay.ShapedGap(
+            StrongroomDay.GapKind.SLEEP, 0L, 28_800_000L
+        )
+        assertTrue(StrongroomDay.gapsAreLawful(withSleep, seal.spanDurationMillis))
+    }
+
+    @Test
+    fun seal_lateSwingSealsWhatIsLeft_gapFitNeverRefusesTheSwing() {
+        // The swing's law (store-level in StrongroomMigrationP1Test
+        // composition test): gaps are validated for shape at
+        // signing via the 24h bound — an in-span gap past any
+        // possible span is refused in the calm hour.
+        val absurd = listOf(
+            StrongroomDay.ShapedGap(StrongroomDay.GapKind.GYM, 0L, 25L * 3_600_000L)
+        )
+        assertFalse(StrongroomDay.gapsFitAnySpan(absurd))
+        assertTrue(StrongroomDay.gapsFitAnySpan(signing.gaps))
+    }
+
     // ---------- the purse ----------
 
     @Test

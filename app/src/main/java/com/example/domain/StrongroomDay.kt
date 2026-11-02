@@ -29,11 +29,13 @@ import java.time.ZoneId
  *    ONCE at sealing and only elapsed (monotonic) time advances it —
  *    the wall clock cannot move the lifting hour after the seal. A
  *    hold made late seals what is left of the day.
- *  - Gym / sadhana (the prayer) / the first meal are SHAPED GAPS
- *    INSIDE the seal — planned at the composition, never openings,
- *    never in the locked set: they were never put into the vault,
- *    so the door never opens for them. A gap carries no package
- *    name; by type it cannot be a locked app.
+ *  - The five SHAPED GAPS (C-2, ruled R2-2) stand each in its own
+ *    mechanic: meditation PRE-SWING (the morning hour, inside no
+ *    seal); gym / sadhana (the prayer) / the first meal IN_SPAN —
+ *    inside the seal, never openings, never in the locked set:
+ *    they were never put into the vault, so the door never opens
+ *    for them; sleep TERMINAL, after the lifting. A gap carries
+ *    no package name; by type it cannot be a locked app.
  *  - The door has exactly TWO openings: the lifting hour, and the
  *    governor's crank (the week's 60-second minute). The Break is a
  *    FIRING of the time-lock set at signing — invocable by no one,
@@ -126,23 +128,47 @@ object StrongroomDay {
     // Shaped gaps — inside the seal, never openings
     // ------------------------------------------------------------------
 
-    /**
-     * The shaped gaps INSIDE a standing seal, per the governing
-     * filings (refit Beat 2; day-map sealed span): gym, sadhana
-     * (the prayer), the first meal. MEDITATION IS NOT HERE: the
-     * morning meditation hour stands before the seal, inside no
-     * seal, and no gap value may be invented for it — a meditation
-     * inside the day after the swing is sadhana's shape, not this
-     * enum's to mint.
-     */
-    enum class GapKind { GYM, SADHANA, MEAL }
+    /** Where a shaped gap stands relative to the swing. */
+    enum class GapPlacement {
+        /** Before the swing: the morning's shape, inside no seal. */
+        PRE_SWING,
+        /** Inside the standing seal: never an opening. */
+        IN_SPAN,
+        /** After the lifting: the day's closing shape. */
+        TERMINAL
+    }
 
     /**
-     * A shaped gap inside the seal: a named shape of his day
-     * (meditation, gym, sadhana, a meal) that the seal SPANS — the
-     * phone stays sealed through it; it is not an opening, carries
-     * no package, and can never enter the locked set. Offsets are
-     * elapsed offsets into the span, like everything in the seal.
+     * The five shaped gaps (ledger C-2 as ruled in Coordinator
+     * Rulings Round 2, R2-2 — all five names stand, with differing
+     * mechanics):
+     *  - MEDITATION is PRE_SWING: the morning hour, before the
+     *    swing, inside no seal — it composes with the day but the
+     *    span never contains it, and [gapAt] never answers it.
+     *  - GYM · SADHANA (the prayer) · MEAL are IN_SPAN: inside the
+     *    standing seal, never openings, never in the locked set.
+     *  - SLEEP is TERMINAL: after the lifting, the closing shape —
+     *    no seal stands over sleep (day-map M-02's law).
+     * A gap carries no package name; by type it cannot be a
+     * locked app.
+     */
+    enum class GapKind(val placement: GapPlacement) {
+        MEDITATION(GapPlacement.PRE_SWING),
+        GYM(GapPlacement.IN_SPAN),
+        SADHANA(GapPlacement.IN_SPAN),
+        MEAL(GapPlacement.IN_SPAN),
+        SLEEP(GapPlacement.TERMINAL)
+    }
+
+    /**
+     * A shaped gap: a named shape of his day standing in its
+     * kind's placement (see [GapKind]). For IN_SPAN kinds the seal
+     * SPANS it — the phone stays sealed through it; it is not an
+     * opening, carries no package, and can never enter the locked
+     * set. Offsets are elapsed offsets into the span for IN_SPAN
+     * kinds; for PRE_SWING / TERMINAL kinds the offsets record the
+     * shape's place in the composed day and are never read against
+     * the span.
      */
     data class ShapedGap(
         val kind: GapKind,
@@ -156,20 +182,39 @@ object StrongroomDay {
         val endOffsetMillis: Long get() = startOffsetMillis + durationMillis
     }
 
-    /** True when [offsetMillis] falls inside a shaped gap. Inside a
-     *  gap the seal still stands — this answers "which shape of the
-     *  day is this", never "is the door open". */
+    /** True when [offsetMillis] falls inside an IN_SPAN shaped
+     *  gap. Inside a gap the seal still stands — this answers
+     *  "which shape of the sealed day is this", never "is the door
+     *  open". Pre-swing and terminal shapes are never answered
+     *  here: the span does not contain them. */
     fun gapAt(gaps: List<ShapedGap>, offsetMillis: Long): ShapedGap? =
-        gaps.firstOrNull { offsetMillis >= it.startOffsetMillis && offsetMillis < it.endOffsetMillis }
+        gaps.firstOrNull {
+            it.kind.placement == GapPlacement.IN_SPAN &&
+                offsetMillis >= it.startOffsetMillis && offsetMillis < it.endOffsetMillis
+        }
 
-    /** Every gap must lie inside the span and gaps never overlap:
-     *  a shape outside the seal, or two shapes on one hour, is a
-     *  signing error, refused at signing. */
+    /** The in-span shapes of a composition, in order. */
+    fun inSpanGaps(gaps: List<ShapedGap>): List<ShapedGap> =
+        gaps.filter { it.kind.placement == GapPlacement.IN_SPAN }
+
+    /** Every IN_SPAN gap must lie inside the span and in-span gaps
+     *  never overlap: two shapes on one sealed hour is a signing
+     *  error. Pre-swing and terminal shapes stand outside the
+     *  span's arithmetic entirely and are not judged here. */
     fun gapsAreLawful(gaps: List<ShapedGap>, spanDurationMillis: Long): Boolean {
-        if (gaps.any { it.endOffsetMillis > spanDurationMillis }) return false
-        val sorted = gaps.sortedBy { it.startOffsetMillis }
+        val inSpan = inSpanGaps(gaps)
+        if (inSpan.any { it.endOffsetMillis > spanDurationMillis }) return false
+        val sorted = inSpan.sortedBy { it.startOffsetMillis }
         return sorted.zipWithNext().all { (a, b) -> a.endOffsetMillis <= b.startOffsetMillis }
     }
+
+    /** The calm-hour surface for absurd compositions: no span can
+     *  exceed a day, so an in-span gap ending past 24h of offsets
+     *  is refused at signing — the error is named in the calm hour,
+     *  never discovered at the first sitting. */
+    fun gapsFitAnySpan(gaps: List<ShapedGap>): Boolean =
+        inSpanGaps(gaps).all { it.endOffsetMillis <= 24L * 3_600_000L } &&
+            gapsAreLawful(gaps, 24L * 3_600_000L)
 
     // ------------------------------------------------------------------
     // The Seal — an elapsed-time span
