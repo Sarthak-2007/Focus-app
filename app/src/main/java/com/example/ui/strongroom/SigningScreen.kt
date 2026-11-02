@@ -33,6 +33,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
+import com.example.ui.strongroom.layout.DoorwayLayout
+import com.example.ui.strongroom.layout.OpenDoorProportion
+import com.example.ui.strongroom.layout.RoomGrid
+import com.example.ui.strongroom.layout.SigningPlaceLayout
+import com.example.ui.strongroom.layout.SigningSlot
 import com.example.ui.theme.InkGold
 import com.example.ui.theme.InkLine
 import com.example.ui.theme.SigningBodyStyle
@@ -96,76 +101,167 @@ fun SigningScreen(
     val roomDeep = InkLine
     val roomShade = StrongroomGround.reliefShade(RelightState.SIGNING)
 
+    // STAGE 8 COMPOSITION (BUILD-SR-16): the signing place stands
+    // in BUILD-SR-7's layout primitives — the law as structure.
+    // The arrival at the open door is the DOORWAY (B-17, count of
+    // four): the composition as received · one plain line · the
+    // held waiting · the striking. The amending steps that follow
+    // stand in the SIGNING PLACE's eight slots (C-4: the slot
+    // order is the sequence's skeleton — composition amended in
+    // its slot, the clause only in its slot, the break only in
+    // its slot, the spin only in its slot, the door's telling
+    // last). Tray/signing separation is enforced by absence: no
+    // slot in either primitive can carry the tray.
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(roomShade, roomDeep)))
-            .padding(horizontal = 24.dp, vertical = 28.dp)
             .testTag("signing_surface")
     ) {
         Text(
             text = "THE SIGNING",
             style = SigningHeadStyle,
-            color = ink
+            color = ink,
+            modifier = Modifier.padding(
+                start = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp,
+                top = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp
+            )
         )
-        Text(
-            text = "Tomorrow, as composed — ${draft.dayShapeName}",
-            style = SigningQuietStyle,
-            color = quietInk
-        )
-        Spacer(Modifier.height(18.dp))
 
         when (flow.step) {
-            SigningStep.COMPOSITION -> CompositionStep(
-                flow = flow,
-                ink = ink,
-                quietInk = quietInk,
-                onToggle = { flow = flow.toggleApp(it) },
-                onContinue = { flow = flow.advance() }
-            )
-            SigningStep.HOUR -> HourStep(
-                flow = flow,
-                ink = ink,
-                quietInk = quietInk,
-                onHour = { flow = flow.setHour(it) },
-                onBreak = { flow = flow.setBreakMinutes(it) },
-                onContinue = { flow = flow.advance() }
-            )
-            SigningStep.SENTENCE -> SentenceStep(
-                flow = flow,
-                ink = ink,
-                quietInk = quietInk,
-                onSentence = { flow = flow.setSentence(it) },
-                onTaskLine = { flow = flow.setTaskLine(it) },
-                onContinue = { flow = flow.advance() }
-            )
-            SigningStep.COMBINATION -> CombinationStep(
-                flow = flow,
-                dials = dials,
-                ink = ink,
-                quietInk = quietInk,
-                onDial = { index, delta ->
-                    if (!flow.signatureBegun) flow = flow.beginSignature()
-                    dials = dials.mapIndexed { i, d ->
-                        if (i == index) (d + delta).mod(10) else d
-                    }
-                    onDetent()
+            SigningStep.COMPOSITION -> DoorwayLayout(
+                modifier = Modifier.weight(1f),
+                compositionAtOpenDoor = {
+                    CompositionStep(
+                        flow = flow,
+                        ink = ink,
+                        quietInk = quietInk,
+                        onToggle = { flow = flow.toggleApp(it) }
+                    )
                 },
-                onSign = {
-                    onLatch()
-                    flow = flow.completeSignature()
-                    dials = listOf(0, 0, 0)
+                onePlainLine = {
+                    // The doorway's one plain line: tomorrow as
+                    // resolved — information only, exactly one line.
+                    Text(
+                        text = "Tomorrow, as composed — ${draft.dayShapeName}",
+                        style = SigningQuietStyle,
+                        color = quietInk,
+                        maxLines = OpenDoorProportion.PLAIN_LINE_LINES
+                    )
+                },
+                heldWaiting = {
+                    // The held waiting, told at the door: on a
+                    // spent day the held codes wait tonight (B-4).
+                    // The slot's conditionality is the law's own —
+                    // SigningSlot.stands gates it, and an ordinary
+                    // day contributes nothing here.
+                    if (SigningSlot.stands(SigningSlot.SPENT_DAY_TELLING, draft.spentDay)) {
+                        Text(
+                            text = SigningWords.CODES_WAIT_LINE,
+                            style = SigningBodyStyle,
+                            color = ink,
+                            modifier = Modifier.testTag("signing_codes_wait")
+                        )
+                    }
+                },
+                striking = {
+                    // The striking set in motion: the act that
+                    // sends the composed day toward its seal.
+                    SigningContinue(
+                        label = "SET THE HOUR",
+                        ink = ink,
+                        onClick = { flow = flow.advance() }
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    DoorTellingLine(quietInk)
                 }
             )
-            SigningStep.READY -> ReadyStep(
-                flow = flow,
-                ink = ink,
-                quietInk = quietInk,
-                onDone = { flow.result?.let(onSigned) }
+            else -> SigningPlaceLayout(
+                modifier = Modifier.weight(1f),
+                headTomorrowAsResolved = {
+                    Text(
+                        text = "Tomorrow, as composed — ${draft.dayShapeName}",
+                        style = SigningQuietStyle,
+                        color = quietInk,
+                        maxLines = OpenDoorProportion.PLAIN_LINE_LINES
+                    )
+                },
+                compositionAsReceived = {
+                    when (flow.step) {
+                        SigningStep.HOUR -> HourChoice(
+                            flow = flow,
+                            ink = ink,
+                            quietInk = quietInk,
+                            onHour = { flow = flow.setHour(it) },
+                            onContinue = { flow = flow.advance() }
+                        )
+                        SigningStep.SENTENCE -> SentenceStep(
+                            flow = flow,
+                            ink = ink,
+                            quietInk = quietInk,
+                            onSentence = { flow = flow.setSentence(it) },
+                            onTaskLine = { flow = flow.setTaskLine(it) },
+                            onContinue = { flow = flow.advance() }
+                        )
+                        else -> Unit
+                    }
+                },
+                // The spent-day telling stands at the doorway, at
+                // the composition step, before anything seals
+                // (B-4) — by the time the signing walks its slots
+                // it has been said; the slot is null here, and
+                // null contributes nothing (the law's own form).
+                spentDayTelling = null,
+                clauseAsTerm = {
+                    if (flow.step == SigningStep.COMBINATION) {
+                        CombinationClause(ink = ink, quietInk = quietInk)
+                    }
+                },
+                breakChoice = {
+                    if (flow.step == SigningStep.HOUR) {
+                        BreakChoice(
+                            flow = flow,
+                            ink = ink,
+                            quietInk = quietInk,
+                            onBreak = { flow = flow.setBreakMinutes(it) }
+                        )
+                    }
+                },
+                footRule = {
+                    if (flow.step == SigningStep.READY) {
+                        ReadyStep(
+                            flow = flow,
+                            ink = ink,
+                            quietInk = quietInk,
+                            onDone = { flow.result?.let(onSigned) }
+                        )
+                    }
+                },
+                combinationSpin = {
+                    if (flow.step == SigningStep.COMBINATION) {
+                        CombinationSpin(
+                            flow = flow,
+                            dials = dials,
+                            ink = ink,
+                            quietInk = quietInk,
+                            onDial = { index, delta ->
+                                if (!flow.signatureBegun) flow = flow.beginSignature()
+                                dials = dials.mapIndexed { i, d ->
+                                    if (i == index) (d + delta).mod(10) else d
+                                }
+                                onDetent()
+                            },
+                            onSign = {
+                                onLatch()
+                                flow = flow.completeSignature()
+                                dials = listOf(0, 0, 0)
+                            }
+                        )
+                    }
+                },
+                doorTelling = { DoorTellingLine(quietInk) }
             )
         }
-
-        Spacer(Modifier.weight(1f))
 
         if (flow.canLeave) {
             Text(
@@ -178,19 +274,29 @@ fun SigningScreen(
                         indication = null,
                         onClick = onLeave
                     )
-                    .padding(vertical = 8.dp)
+                    .padding(
+                        start = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp,
+                        bottom = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp,
+                        top = 8.dp,
+                        end = 8.dp
+                    )
                     .testTag("signing_leave")
             )
         }
-        // B-19: the telling, standing at every signing — told
-        // once, quiet, never announced.
-        Text(
-            text = SigningWords.TELLING_LINE,
-            style = SigningQuietStyle,
-            color = quietInk.copy(alpha = 0.8f),
-            modifier = Modifier.testTag("signing_telling")
-        )
     }
+}
+
+/** B-19: the telling, standing at the foot of the signing —
+ *  told once, quiet, never announced. Its lawful home is the
+ *  signing place (SigningOnlyLaw): it travels nowhere else. */
+@Composable
+private fun DoorTellingLine(quietInk: androidx.compose.ui.graphics.Color) {
+    Text(
+        text = SigningWords.TELLING_LINE,
+        style = SigningQuietStyle,
+        color = quietInk.copy(alpha = 0.8f),
+        modifier = Modifier.testTag("signing_telling")
+    )
 }
 
 /**
@@ -225,10 +331,11 @@ private fun CompositionStep(
     flow: SigningState,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
-    onToggle: (String) -> Unit,
-    onContinue: () -> Unit
+    onToggle: (String) -> Unit
 ) {
-    // B-1 / TI-01: the purpose sentence, at the signing.
+    // B-1 / TI-01: the purpose sentence, at the head of the
+    // composition as received (the composition slot's internal
+    // order, B-3).
     Text(
         text = SigningWords.PURPOSE_LINE,
         style = SigningBodyStyle,
@@ -246,17 +353,9 @@ private fun CompositionStep(
             modifier = Modifier.testTag("signing_teaching")
         )
     }
-    if (flow.draft.spentDay) {
-        Spacer(Modifier.height(12.dp))
-        // B-4: the spent-day telling, in plain words, verbatim —
-        // this surface says it itself, before the seal.
-        Text(
-            text = SigningWords.CODES_WAIT_LINE,
-            style = SigningBodyStyle,
-            color = ink,
-            modifier = Modifier.testTag("signing_codes_wait")
-        )
-    }
+    // B-4's spent-day telling stands in the doorway's
+    // held-waiting slot (see SigningScreen) — said by this
+    // surface itself, before the seal, gated by the slot law.
     Spacer(Modifier.height(18.dp))
     flow.draft.appOptions.forEach { option ->
         val locked = option.packageName in flow.lockedPackages
@@ -286,17 +385,18 @@ private fun CompositionStep(
             )
         }
     }
-    Spacer(Modifier.height(20.dp))
-    SigningContinue(label = "SET THE HOUR", ink = ink, onClick = onContinue)
 }
 
+/** The lifting-hour choice — an amendment of the composition in
+ *  its slot (the composition slot's internal order carries the
+ *  lifting-hour line, B-3). The break choice stands in its own
+ *  slot below ([BreakChoice], SigningSlot.BREAK_CHOICE). */
 @Composable
-private fun HourStep(
+private fun HourChoice(
     flow: SigningState,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
     onHour: (String) -> Unit,
-    onBreak: (Int) -> Unit,
     onContinue: () -> Unit
 ) {
     val parts = flow.liftingHour.split(":")
@@ -324,11 +424,22 @@ private fun HourStep(
         SigningStepper("MIN −", quietInk, "signing_minute_down") { emit(hour, minute - 5) }
         SigningStepper("MIN +", quietInk, "signing_minute_up") { emit(hour, minute + 5) }
     }
-    Spacer(Modifier.height(22.dp))
-    // The break's span, chosen HERE (ruling C-4: the choosing
-    // moment is the signing; the firing itself is invocable by
-    // no one inside the day). Free to the minute — the preset
-    // row is one-tap shortcuts, never the ceiling (S-6/D-6).
+    Spacer(Modifier.height(20.dp))
+    SigningContinue(label = "SET THE SENTENCE", ink = ink, onClick = onContinue)
+}
+
+/** The break choice, in its own slot (SigningSlot.BREAK_CHOICE,
+ *  D-6). The break's span, chosen HERE (ruling C-4: the choosing
+ *  moment is the signing; the firing itself is invocable by no
+ *  one inside the day). Free to the minute — the preset row is
+ *  one-tap shortcuts, never the ceiling (S-6/D-6). */
+@Composable
+private fun BreakChoice(
+    flow: SigningState,
+    ink: androidx.compose.ui.graphics.Color,
+    quietInk: androidx.compose.ui.graphics.Color,
+    onBreak: (Int) -> Unit
+) {
     Text(
         text = "The break — its span is set now, and fires by the lock",
         style = SigningBodyStyle,
@@ -370,8 +481,6 @@ private fun HourStep(
             modifier = Modifier.padding(top = 10.dp)
         )
     }
-    Spacer(Modifier.height(20.dp))
-    SigningContinue(label = "SET THE SENTENCE", ink = ink, onClick = onContinue)
 }
 
 @Composable
@@ -423,17 +532,15 @@ private fun SentenceStep(
     SigningContinue(label = "TO THE SIGNATURE", ink = ink, onClick = onContinue)
 }
 
+/** The clause as a term, in its slot (SigningSlot.CLAUSE_AS_TERM,
+ *  B-5): spoken whole at the signing — here, and nowhere else in
+ *  the app (SigningOnlyLaw: it travels nowhere). Stood under,
+ *  never gated. */
 @Composable
-private fun CombinationStep(
-    flow: SigningState,
-    dials: List<Int>,
+private fun CombinationClause(
     ink: androidx.compose.ui.graphics.Color,
-    quietInk: androidx.compose.ui.graphics.Color,
-    onDial: (Int, Int) -> Unit,
-    onSign: () -> Unit
+    quietInk: androidx.compose.ui.graphics.Color
 ) {
-    // B-5: the clause, spoken whole at the signing — here, and
-    // nowhere else in the app.
     Text(
         text = SigningWords.SIGNING_CLAUSE,
         style = SigningBodyStyle,
@@ -446,7 +553,21 @@ private fun CombinationStep(
         style = SigningQuietStyle,
         color = quietInk
     )
-    Spacer(Modifier.height(20.dp))
+}
+
+/** The combination spin, in its slot (SigningSlot.COMBINATION_SPIN,
+ *  A-2): gesture-in, signed-fact-out — spun, never typed; there is
+ *  no text-field slot in this zone by construction. */
+@Composable
+private fun CombinationSpin(
+    flow: SigningState,
+    dials: List<Int>,
+    ink: androidx.compose.ui.graphics.Color,
+    quietInk: androidx.compose.ui.graphics.Color,
+    onDial: (Int, Int) -> Unit,
+    onSign: () -> Unit
+) {
+    Spacer(Modifier.height(4.dp))
     Row(
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxWidth()

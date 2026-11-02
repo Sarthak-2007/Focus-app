@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.domain.LiftingPlate
+import com.example.ui.strongroom.layout.RoomGrid
 import com.example.ui.theme.PlateDarkRoom
 import com.example.ui.theme.PlateDoorGround
 import com.example.ui.theme.PlateInkGold
@@ -156,7 +157,10 @@ fun LiftingScreen(
             .fillMaxSize()
             .background(PlateDarkRoom)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 28.dp)
+            .padding(
+                horizontal = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp,
+                vertical = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp
+            )
             .testTag("lifting_screen")
     ) {
         if (failure) {
@@ -171,7 +175,7 @@ fun LiftingScreen(
 
         // The plate: readable only where the machine allows it.
         if (plate != null && ceremony.plateReadable) {
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(RoomGrid.dp(RoomGrid.SECOND_STEP_BAND_STEPS).dp))
             Box(
                 Modifier
                     .clickable(

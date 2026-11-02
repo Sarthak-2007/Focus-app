@@ -32,6 +32,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
+import com.example.ui.strongroom.layout.AntechamberLayout
+import com.example.ui.strongroom.layout.AntechamberRoomLayout
+import com.example.ui.strongroom.layout.HeldPileLayout
+import com.example.ui.strongroom.layout.RoomGrid
 import com.example.ui.theme.RelightState
 import com.example.ui.theme.InkGold
 import com.example.ui.theme.InkLine
@@ -50,11 +54,11 @@ import com.example.ui.theme.reliefShade
  *
  * The room behind P3's grille plate — reached by the deliberate
  * second touch, left by the same door. Its arrangement is the
- * list law (ledger B-9), consumed from [AntechamberModel] and
- * coordinated with BUILD-SR-7's layout lane by letter (their
- * AntechamberLayout primitive, PR #843, is consumed at
- * composition; Slice 2 re-arranges on it — the law does not
- * move).
+ * list law (ledger B-9), consumed from [AntechamberModel] and —
+ * since Stage 8/10 composition (BUILD-SR-16) — composed through
+ * BUILD-SR-7's AntechamberLayout primitive (PR #843) and
+ * BUILD-SR-10's room/shelf primitives (PR #853): the law is
+ * structure now, not this surface's own column.
  *
  * TWO SETS, SURFACED DISTINCTLY (ruling C-3):
  *  - SET 1 — the signed allowed set: plain words exactly as
@@ -108,7 +112,6 @@ fun AntechamberScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Brush.verticalGradient(listOf(lampShade, InkLine)))
-            .padding(horizontal = 24.dp, vertical = 28.dp)
             .testTag("antechamber")
     ) {
         if (inPile) {
@@ -208,8 +211,22 @@ fun AntechamberRoute(
     )
 }
 
+/**
+ * The list view, composed through Stage 8's primitives at
+ * composition (BUILD-SR-16): BUILD-SR-7's [AntechamberLayout]
+ * carries B-9's order AS STRUCTURE — calling out · allowed as
+ * signed · held pile behind its second step, no spent slot
+ * anywhere — and BUILD-SR-10's [AntechamberRoomLayout] seats the
+ * drum housing as a SIBLING of the list column under one room
+ * root (Seam S-B ruled (b)): the drum is a zone of the room
+ * (Z3, the machine wall), never a row in the list, and no
+ * parameter of the list primitive can pass it in. The room's
+ * foot furniture (the read-only day-as-set face, the leave line)
+ * rides in the housing band, below the list — the room's foot,
+ * as Slice 1 stood it.
+ */
 @Composable
-private fun ColumnScope.AntechamberListView(
+private fun AntechamberListView(
     room: AntechamberState,
     readOnlyLines: List<String>,
     ink: Color,
@@ -220,160 +237,176 @@ private fun ColumnScope.AntechamberListView(
     onOpenPile: () -> Unit,
     onLeave: () -> Unit
 ) {
-    Text(text = "THE ANTECHAMBER", style = SigningHeadStyle, color = ink)
-
-    // B-9.1 — calling out, first and biggest.
-    if (room.callingOut.isNotEmpty()) {
-        Spacer(Modifier.height(16.dp))
-        Text(text = "CALLING OUT", style = SigningQuietStyle, color = quietInk)
-        room.callingOut.forEach { name ->
-            Text(
-                text = name,
-                style = SigningHeadStyle,
-                color = ink,
-                modifier = Modifier.testTag("antechamber_calling_out")
-            )
-        }
-    }
-
-    // The open minute, while one stands open — from either set.
-    if (room.openApp != null) {
-        Spacer(Modifier.height(18.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = if (room.openViaDrum) {
-                    "OPEN BY THE DRUM — ${room.openApp}"
-                } else {
-                    "OPEN — ${room.openApp}"
+    AntechamberRoomLayout(
+        listColumn = {
+            AntechamberLayout(
+                callingOut = {
+                    Text(text = "THE ANTECHAMBER", style = SigningHeadStyle, color = ink)
+                    // B-9.1 — calling out, first and biggest.
+                    if (room.callingOut.isNotEmpty()) {
+                        Spacer(Modifier.height(16.dp))
+                        Text(text = "CALLING OUT", style = SigningQuietStyle, color = quietInk)
+                        room.callingOut.forEach { name ->
+                            Text(
+                                text = name,
+                                style = SigningHeadStyle,
+                                color = ink,
+                                modifier = Modifier.testTag("antechamber_calling_out")
+                            )
+                        }
+                    }
                 },
-                style = SigningBodyStyle,
-                color = ink,
-                modifier = Modifier.weight(1f)
-            )
-            AntechamberHandle("TURN BACK", ink, "antechamber_turn_back", onReturn)
-        }
-    }
-
-    // SET 1 (B-9.2, ruling C-3) — the signed allowed set, plain
-    // words exactly as signed, opening directly. They stand at
-    // every purse state; the purse is never consulted here.
-    Spacer(Modifier.height(18.dp))
-    room.visibleAllowed.forEach { name ->
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp)
-                .testTag("antechamber_allowed_$name"),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = name,
-                style = SigningBodyStyle,
-                color = ink,
-                modifier = Modifier.weight(1f)
-            )
-            AntechamberHandle("OPEN", ink, "antechamber_open_$name") {
-                onOpenSigned(name)
-            }
-        }
-    }
-
-    // SET 2 — THE DRUM, its own band, never a row in the list.
-    // Its stock is the mechanism's own form: a strip of
-    // minute-marks that depletes (R2-4 — never a number).
-    Spacer(Modifier.height(20.dp))
-    Text(text = "THE DRUM — BEYOND THE SIGNED SET", style = SigningQuietStyle, color = quietInk)
-    Spacer(Modifier.height(8.dp))
-    if (room.purseSpent) {
-        Text(
-            text = "The purse is spent — the crank will not turn.",
-            style = SigningBodyStyle,
-            color = ink,
-            modifier = Modifier.testTag("antechamber_purse_spent")
-        )
-    } else {
-        DrumStockStrip(
-            minutes = room.purseMinutes,
-            ink = InkGold,
-            modifier = Modifier.testTag("antechamber_drum_stock")
-        )
-        Spacer(Modifier.height(8.dp))
-        room.visibleDrumStock.forEach { name ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 10.dp)
-                    .testTag("antechamber_drum_$name"),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = name,
-                    style = SigningBodyStyle,
-                    color = ink,
-                    modifier = Modifier.weight(1f)
-                )
-                AntechamberHandle("CRANK", ink, "antechamber_crank_$name") {
-                    onCrank(name)
+                allowedAsSigned = {
+                    // The open minute, while one stands open — from either set.
+                    if (room.openApp != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (room.openViaDrum) {
+                                    "OPEN BY THE DRUM — ${room.openApp}"
+                                } else {
+                                    "OPEN — ${room.openApp}"
+                                },
+                                style = SigningBodyStyle,
+                                color = ink,
+                                modifier = Modifier.weight(1f)
+                            )
+                            AntechamberHandle("TURN BACK", ink, "antechamber_turn_back", onReturn)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    // SET 1 (B-9.2, ruling C-3) — the signed allowed
+                    // set, plain words exactly as signed, opening
+                    // directly. They stand at every purse state;
+                    // the purse is never consulted here.
+                    room.visibleAllowed.forEach { name ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp)
+                                .testTag("antechamber_allowed_$name"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = name,
+                                style = SigningBodyStyle,
+                                color = ink,
+                                modifier = Modifier.weight(1f)
+                            )
+                            AntechamberHandle("OPEN", ink, "antechamber_open_$name") {
+                                onOpenSigned(name)
+                            }
+                        }
+                    }
+                },
+                heldPileSecondStep = {
+                    // B-9.3 — the held pile, behind its own second step.
+                    if (room.heldCount > 0) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .border(1.dp, InkGold.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = onOpenPile
+                                )
+                                .padding(horizontal = 14.dp, vertical = 14.dp)
+                                .testTag("antechamber_pile_entry"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "THE HELD PILE",
+                                style = SigningHandleStyle,
+                                color = ink,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = room.heldCount.toString(),
+                                style = SigningFiguresStyle,
+                                color = quietInk
+                            )
+                        }
+                    }
                 }
+            )
+        },
+        drumHousing = {
+            Column(
+                modifier = Modifier.padding(
+                    horizontal = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp
+                )
+            ) {
+                // SET 2 — THE DRUM, in its housing: its own band
+                // of the room, never a row in the list above. Its
+                // stock is the mechanism's own form: a strip of
+                // minute-marks that depletes (R2-4 — never a number).
+                Text(
+                    text = "THE DRUM — BEYOND THE SIGNED SET",
+                    style = SigningQuietStyle,
+                    color = quietInk
+                )
+                Spacer(Modifier.height(8.dp))
+                if (room.purseSpent) {
+                    Text(
+                        text = "The purse is spent — the crank will not turn.",
+                        style = SigningBodyStyle,
+                        color = ink,
+                        modifier = Modifier.testTag("antechamber_purse_spent")
+                    )
+                } else {
+                    DrumStockStrip(
+                        minutes = room.purseMinutes,
+                        ink = InkGold,
+                        modifier = Modifier.testTag("antechamber_drum_stock")
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    room.visibleDrumStock.forEach { name ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp)
+                                .testTag("antechamber_drum_$name"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = name,
+                                style = SigningBodyStyle,
+                                color = ink,
+                                modifier = Modifier.weight(1f)
+                            )
+                            AntechamberHandle("CRANK", ink, "antechamber_crank_$name") {
+                                onCrank(name)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                // The read-only face: the day as set. No clickable
+                // exists in this block — reading is all it is for.
+                Column(modifier = Modifier.testTag("antechamber_readonly")) {
+                    Text(text = "THE DAY AS SET", style = SigningQuietStyle, color = quietInk)
+                    Spacer(Modifier.height(6.dp))
+                    readOnlyLines.forEach { line ->
+                        Text(text = line, style = SigningBodyStyle, color = quietInk)
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "BACK THROUGH THE GRILLE",
+                    style = SigningQuietStyle,
+                    color = quietInk,
+                    modifier = Modifier
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onLeave
+                        )
+                        .padding(vertical = 8.dp)
+                        .testTag("antechamber_leave")
+                )
             }
         }
-    }
-
-    // B-9.3 — the held pile, behind its own second step.
-    if (room.heldCount > 0) {
-        Spacer(Modifier.height(18.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .border(1.dp, InkGold.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onOpenPile
-                )
-                .padding(horizontal = 14.dp, vertical = 14.dp)
-                .testTag("antechamber_pile_entry"),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "THE HELD PILE",
-                style = SigningHandleStyle,
-                color = ink,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                text = room.heldCount.toString(),
-                style = SigningFiguresStyle,
-                color = quietInk
-            )
-        }
-    }
-
-    Spacer(Modifier.weight(1f))
-
-    // The read-only face: the day as set. No clickable exists
-    // in this block — reading is all it is for.
-    Column(modifier = Modifier.testTag("antechamber_readonly")) {
-        Text(text = "THE DAY AS SET", style = SigningQuietStyle, color = quietInk)
-        Spacer(Modifier.height(6.dp))
-        readOnlyLines.forEach { line ->
-            Text(text = line, style = SigningBodyStyle, color = quietInk)
-        }
-    }
-    Spacer(Modifier.height(14.dp))
-    Text(
-        text = "BACK THROUGH THE GRILLE",
-        style = SigningQuietStyle,
-        color = quietInk,
-        modifier = Modifier
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onLeave
-            )
-            .padding(vertical = 8.dp)
-            .testTag("antechamber_leave")
     )
 }
 
@@ -409,6 +442,15 @@ private fun DrumStockStrip(minutes: Int, ink: Color, modifier: Modifier = Modifi
     }
 }
 
+/**
+ * The held pile's chamber, composed through BUILD-SR-10's
+ * [HeldPileLayout] at Stage 10 composition (BUILD-SR-16): the
+ * shelves in [HeldPileShelf]'s ruled order, in the order a reach
+ * meets them — WAITING (what waits: the numbers, shown whole) ·
+ * DIGITS_LINE (one code's digits, with the hour, alone — B-18:
+ * digits only, no words shelf exists in this chamber) · TAKING
+ * (the per-call choice: take it, or leave it waiting at no cost).
+ */
 @Composable
 private fun HeldPileView(
     room: AntechamberState,
@@ -419,84 +461,106 @@ private fun HeldPileView(
     onLeaveCall: (HeldCall) -> Unit,
     onShow: (HeldCode) -> Unit
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "THE HELD PILE",
-            style = SigningHeadStyle,
-            color = ink,
-            modifier = Modifier.weight(1f)
-        )
-        AntechamberHandle("BACK", ink, "pile_back", onBack)
-    }
-    Spacer(Modifier.height(16.dp))
-
-    // Held calls: the number whole, his choice per call —
-    // TAKE IT / LEAVE IT, two handles, neither the lesser (TI-35).
-    room.heldCalls.forEach { call ->
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp)
-                .testTag("pile_call_${call.id}")
-        ) {
-            Text(text = call.number, style = SigningFiguresStyle, color = ink)
-            Text(text = call.hour, style = SigningQuietStyle, color = quietInk)
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                AntechamberHandle("TAKE IT", ink, "pile_take_${call.id}") { onTake(call) }
-                AntechamberHandle("LEAVE IT", ink, "pile_leave_${call.id}") {
-                    onLeaveCall(call)
-                }
-            }
-        }
-    }
-
-    // Held codes: the digits fork (B-18). Unshown, a code is an
-    // hour, its price stated AT the taking (R2-4), and a handle.
-    // Shown, its line is digits alone with the hour — no name,
-    // no words around, no way onward.
-    room.heldCodes.forEach { code ->
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp)
-                .testTag("pile_code_${code.id}")
-        ) {
-            if (room.openShowingId == code.id) {
+    HeldPileLayout(
+        waiting = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = code.digits,
-                    style = SigningDigitsStyle,
+                    text = "THE HELD PILE",
+                    style = SigningHeadStyle,
                     color = ink,
-                    modifier = Modifier.testTag("pile_digits_${code.id}")
+                    modifier = Modifier.weight(1f)
                 )
-                Text(text = code.hour, style = SigningFiguresStyle, color = quietInk)
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = code.hour, style = SigningFiguresStyle, color = ink)
+                AntechamberHandle("BACK", ink, "pile_back", onBack)
+            }
+            Spacer(Modifier.height(16.dp))
+            // What waits: held calls, the number whole, on this
+            // surface only.
+            room.heldCalls.forEach { call ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp)
+                        .testTag("pile_call_${call.id}")
+                ) {
+                    Text(text = call.number, style = SigningFiguresStyle, color = ink)
+                    Text(text = call.hour, style = SigningQuietStyle, color = quietInk)
+                }
+            }
+        },
+        digitsLine = {
+            // Held codes: the digits fork (B-18). Unshown, a code
+            // is an hour, its price stated AT the taking (R2-4),
+            // and a handle. Shown, its line is digits alone with
+            // the hour — no name, no words around, no way onward.
+            room.heldCodes.forEach { code ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp)
+                        .testTag("pile_code_${code.id}")
+                ) {
+                    if (room.openShowingId == code.id) {
                         Text(
-                            text = "A SHOWING COSTS ONE MINUTE",
-                            style = SigningQuietStyle,
-                            color = quietInk,
-                            modifier = Modifier.testTag("pile_price_${code.id}")
+                            text = code.digits,
+                            style = SigningDigitsStyle,
+                            color = ink,
+                            modifier = Modifier.testTag("pile_digits_${code.id}")
                         )
-                    }
-                    AntechamberHandle("SHOW", ink, "pile_show_${code.id}") {
-                        onShow(code)
+                        Text(text = code.hour, style = SigningFiguresStyle, color = quietInk)
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = code.hour, style = SigningFiguresStyle, color = ink)
+                                Text(
+                                    text = "A SHOWING COSTS ONE MINUTE",
+                                    style = SigningQuietStyle,
+                                    color = quietInk,
+                                    modifier = Modifier.testTag("pile_price_${code.id}")
+                                )
+                            }
+                            AntechamberHandle("SHOW", ink, "pile_show_${code.id}") {
+                                onShow(code)
+                            }
+                        }
                     }
                 }
             }
+        },
+        taking = {
+            // The taking: per call, TAKE IT / LEAVE IT — two
+            // handles, neither the lesser (TI-35); leaving costs
+            // nothing and the call keeps waiting.
+            room.heldCalls.forEach { call ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        text = call.number,
+                        style = SigningFiguresStyle,
+                        color = quietInk,
+                        modifier = Modifier.weight(1f)
+                    )
+                    AntechamberHandle("TAKE IT", ink, "pile_take_${call.id}") { onTake(call) }
+                    AntechamberHandle("LEAVE IT", ink, "pile_leave_${call.id}") {
+                        onLeaveCall(call)
+                    }
+                }
+            }
+            if (room.purseSpent && room.heldCodes.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = "The purse is spent — codes wait for the lift.",
+                    style = SigningBodyStyle,
+                    color = quietInk,
+                    modifier = Modifier.testTag("pile_codes_wait")
+                )
+            }
         }
-    }
-    if (room.purseSpent && room.heldCodes.isNotEmpty()) {
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = "The purse is spent — codes wait for the lift.",
-            style = SigningBodyStyle,
-            color = quietInk,
-            modifier = Modifier.testTag("pile_codes_wait")
-        )
-    }
+    )
 }
 
 @Composable

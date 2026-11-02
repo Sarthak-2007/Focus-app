@@ -18,6 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -27,14 +28,14 @@ import com.example.domain.LiftingPlate
 import com.example.ui.theme.PlateBodyStyle
 import com.example.ui.theme.PlateBrass
 import com.example.ui.theme.PlateBrassDark
-import com.example.ui.theme.PlateBrassHigh
 import com.example.ui.theme.PlateDarkRoom
 import com.example.ui.theme.PlateDoorGround
 import com.example.ui.theme.PlateHeadingStyle
-import com.example.ui.theme.PlateHoleDepth
 import com.example.ui.theme.PlateInkGold
 import com.example.ui.theme.PlateLineWork
-import com.example.ui.theme.punchDiameter
+import com.example.ui.strongroom.grade.PlateGradeRender
+import com.example.ui.strongroom.grade.asComposeColor
+import com.example.ui.strongroom.grade.asHoleKind
 
 /**
  * P6 — THE DAY PLATE, RENDERED (BUILD-SR-4, Slice 1).
@@ -82,14 +83,59 @@ fun DayPlateView(
 ) {
     val truth = plate.truth
     val brass = if (truth.isFailure) PlateBrassDark else PlateBrass
-    Column(
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .background(brass, RoundedCornerShape(6.dp))
-            .border(1.dp, PlateLineWork.copy(alpha = 0.65f), RoundedCornerShape(6.dp))
-            .padding(horizontal = 20.dp, vertical = 18.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(brass)
             .testTag("day_plate")
     ) {
+        // DESIGNER-SR-4 §1 at Stage 10 composition (BUILD-SR-16):
+        // the grain (fine horizontal striations, ±0.03 of the line
+        // ink, 1 dp period — deterministic in y, never animated),
+        // the chamfer (a light line on the top/left at the raised
+        // tone, a dark line on the bottom/right — the flat uniform
+        // border of Slice 1 is replaced by it), and the thickness
+        // band (3 dp of deep brass along the bottom: the plate is
+        // a slab lying in the tray, not a card). All tones arrive
+        // from the grade pipeline's ladder — gold alone, descended.
+        Canvas(Modifier.matchParentSize()) {
+            val line = PlateLineWork
+            var y = 0f
+            val period = 1.dp.toPx()
+            var stripe = 0
+            while (y < size.height) {
+                drawRect(
+                    color = line.copy(alpha = PlateGradeRender.GRAIN_ALPHA),
+                    topLeft = Offset(0f, y),
+                    size = androidx.compose.ui.geometry.Size(
+                        size.width, if (stripe % 2 == 0) period else 0f
+                    )
+                )
+                y += period * 2
+                stripe++
+            }
+            val raised = PlateGradeRender.BRASS_RAISED.asComposeColor()
+            val deep = PlateGradeRender.BRASS_DEEP.asComposeColor()
+            // Chamfer: light on top + left, dark on bottom + right.
+            drawLine(raised, Offset(0f, 1f), Offset(size.width, 1f), strokeWidth = 2f)
+            drawLine(raised, Offset(1f, 0f), Offset(1f, size.height), strokeWidth = 2f)
+            drawLine(deep, Offset(0f, size.height - 1f), Offset(size.width, size.height - 1f), strokeWidth = 2f)
+            drawLine(deep, Offset(size.width - 1f, 0f), Offset(size.width - 1f, size.height), strokeWidth = 2f)
+            // The thickness band.
+            drawRect(
+                color = deep,
+                topLeft = Offset(0f, size.height - PlateGradeRender.PLATE_THICKNESS_DP.dp.toPx()),
+                size = androidx.compose.ui.geometry.Size(
+                    size.width, PlateGradeRender.PLATE_THICKNESS_DP.dp.toPx()
+                )
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 18.dp)
+        ) {
         // 1 · The day and the hours held.
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -115,7 +161,7 @@ fun DayPlateView(
         for (kind in LiftingPlate.PunchKind.values()) {
             val punches = truth.punchesOf(kind)
             if (punches.isEmpty()) continue
-            PunchRow(kind = kind, count = punches.size)
+            PunchRow(kind = kind, count = punches.size, inDark = truth.isFailure)
             Spacer(Modifier.height(8.dp))
         }
 
@@ -164,13 +210,14 @@ fun DayPlateView(
                 modifier = Modifier.testTag("day_plate_confession")
             )
         }
+        }
     }
 }
 
 /** One kind's holes: the kind's name in the plate's hand, then its
  *  holes at the kind's graded diameter, in striking order. */
 @Composable
-private fun PunchRow(kind: LiftingPlate.PunchKind, count: Int) {
+private fun PunchRow(kind: LiftingPlate.PunchKind, count: Int, inDark: Boolean = false) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(
             text = when (kind) {
@@ -187,39 +234,61 @@ private fun PunchRow(kind: LiftingPlate.PunchKind, count: Int) {
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.testTag("day_plate_punches_${kind.name.lowercase()}")
         ) {
-            repeat(count) { PunchedHole(kind.grade) }
+            repeat(count) { PunchedHole(kind.grade, inDark = inDark) }
         }
     }
 }
 
-/** A single punched hole: deep centre, raised lip toward the
- *  light (upper left, the RELIGHT direction the faces lane
- *  carries), no flat fill anywhere. */
+/** A single punched hole, AT GRADE (DESIGNER-SR-4 §2, consumed
+ *  from BUILD-SR-10's grade pipeline at Stage 10 composition,
+ *  BUILD-SR-16): the four concentric facts — raised lip toward the
+ *  light · the wall · the through-dark (the punch went THROUGH;
+ *  the centre is the darkness behind the plate, not a floor) ·
+ *  the far rim in day presentation — at the corrected ladder
+ *  (17.6 / 12.6 / 9.5 dp via [punchDiameter]'s re-point). Slice 1's
+ *  two-circle hole (ember-lit lip at 20/13/8) is retired whole:
+ *  ember is off brass (BR-06) and depth is not graded (SL-3) —
+ *  diameter alone carries the kind. A failure plate's holes stand
+ *  in the dark presentation: no far rim, exactly as struck. */
 @Composable
-private fun PunchedHole(grade: LiftingPlate.PunchGrade) {
-    val d = punchDiameter(grade)
-    Canvas(Modifier.size(d)) {
-        val r = size.minDimension / 2f
-        // The raised lip: a brass-high crescent offset to the light.
-        drawCircle(
-            color = PlateBrassHigh,
-            radius = r,
-            center = Offset(center.x - r * 0.14f, center.y - r * 0.14f)
-        )
-        // The hole itself: punched depth, inset from the lip.
-        drawCircle(
-            color = PlateHoleDepth,
-            radius = r * 0.82f,
-            center = Offset(center.x + r * 0.07f, center.y + r * 0.07f)
-        )
-    }
+private fun PunchedHole(grade: LiftingPlate.PunchGrade, inDark: Boolean = false) {
+    com.example.ui.strongroom.grade.PunchedHoleGrade(
+        kind = grade.asHoleKind(),
+        inDark = inDark
+    )
 }
 
 /** The seal's mark: WHOLE = an unbroken ring in line-work;
  *  BROKEN / AJAR = the same ring cracked through by a jagged
- *  line. Drawn, never a stock icon. */
+ *  line. Drawn, never a stock icon.
+ *
+ *  THE FAILURE PLATE'S SEAL PLACE (DESIGNER-SR-4 §4, Stage 10
+ *  composition, BUILD-SR-16): on a fallen day the place stands
+ *  UNSTRUCK — an empty struck circle in the recess tone, no ring,
+ *  no crack. B-11's law is subtraction (the seal gone, and NOTHING
+ *  added); a crack is a pictogram explaining the failure, and
+ *  Slice 1 drew one. The crack form survives only where the seal
+ *  broke on a day that otherwise stands (a non-failure broken
+ *  truth) — the failure plate itself carries absence in the exact
+ *  shape of the thing that is absent. */
 @Composable
 private fun SealMark(truth: LiftingPlate.PlateTruth) {
+    if (truth.isFailure) {
+        Canvas(
+            Modifier
+                .size(30.dp)
+                .testTag("day_plate_seal_place_empty")
+        ) {
+            val r = size.minDimension / 2f - 2f
+            drawCircle(
+                color = PlateGradeRender.BRASS_RECESS.asComposeColor(),
+                radius = r,
+                center = center,
+                style = Stroke(width = 2.5f)
+            )
+        }
+        return
+    }
     val broken = truth.sealTruth != LiftingPlate.SealTruth.WHOLE
     Canvas(
         Modifier
