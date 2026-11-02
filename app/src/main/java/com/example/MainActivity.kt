@@ -492,6 +492,33 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     LaunchedEffect(doorwayRefreshTick.value) {
         liftingState = loadLiftingState(appContext, finishForLifting?.e0Mono)
     }
+    // NAV-ALL (the lifting's Strongroom standing): the shell
+    // stands LIFTING for a Strongroom day whose lift has fired —
+    // the newest struck day is today's filing day and no seal
+    // stands (the derivation the FLOW-SEAT walk found missing:
+    // the place read the legacy finish alone). The standing is
+    // per-process dismissible: once he has walked through the
+    // ceremony (the host's way through, or Back), the doorway
+    // owns the place again until another day strikes. A newly
+    // struck day re-arms it.
+    var strongroomLiftDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(liftingState?.plate?.filingDateIso) {
+        strongroomLiftDismissed = false
+    }
+    // The facts poll: a firing that lands while the app stands
+    // open (the morning lift, struck service-side through the
+    // bridge) re-reads the standing facts on a slow beat, so the
+    // places turn over without waiting for a resume.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5_000L)
+            doorwayRefreshTick.value++
+        }
+    }
+    val strongroomLiftingStanding = !strongroomLiftDismissed &&
+        sealedFaceState == null &&
+        liftingState?.plate?.filingDateIso ==
+            StrongroomDay.filingDateIso(System.currentTimeMillis())
     val sealedFaceActions = SealedFaceActions(
         // The knock's sound/haptic substance rides through this
         // seam (collected by the SOUND seat, 2026-11-03): a rap on
@@ -528,6 +555,12 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
     }
+    // NAV-ALL: Back at the open drawer closes the drawer. The
+    // drawer stands inside the doorway place, where the shell's
+    // own Back law is disabled — without this handler the system
+    // Back would leave the app from inside the open drawer, a
+    // dead end with the furniture standing open.
+    BackHandler(enabled = drawerOpen) { drawerOpen = false }
 
     // Watch Store residency (census §2c, re-carried): the old
     // composition stamped residency on DECK entry; the host has
@@ -598,6 +631,12 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // the BREAK place for a Strongroom day.
         strongroomBreakStanding = strongroomBreakStanding,
         crankMinuteStanding = crankMinuteStanding,
+        // THE LIFTING'S STRONGROOM STANDING (NAV-ALL cure): the
+        // struck-today derivation above — the shell stands the
+        // ceremony for a Strongroom day's own lift, and Back at
+        // it walks through to the doorway (the dismissal).
+        strongroomLiftingStanding = strongroomLiftingStanding,
+        onBackFromLifting = { strongroomLiftDismissed = true },
         doorwayContent = {
             // While a Strongroom seal stands, the doorway place
             // itself stands as the sealed face (BUILD-SR-37;
@@ -817,7 +856,43 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // whole from the store's struck rows. A fallen day
             // stands here as the failure face (C-18). When no
             // struck day stands, nothing stands (B-14).
-            liftingState?.let { state -> Lifting(state = state) }
+            // NAV-ALL: when the place stands on the Strongroom
+            // day's own lift (not the legacy finish), the host
+            // carries the way through over the ceremony — the
+            // same plain row the signing place carries — and
+            // taking it (or Back, through the shell) dismisses
+            // the standing and lands at the doorway.
+            liftingState?.let { state ->
+                if (strongroomLiftingStanding) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                    ) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    strongroomLiftDismissed = true
+                                }
+                                .padding(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            androidx.compose.material3.Text(
+                                text = "‹ THE DOOR",
+                                style = com.example.ui.foundation
+                                    .StrongroomType.Anon2,
+                                color = com.example.ui.foundation
+                                    .StrongroomInks.Gold
+                            )
+                        }
+                        androidx.compose.foundation.layout.Box(
+                            modifier = androidx.compose.ui.Modifier.weight(1f)
+                        ) {
+                            Lifting(state = state)
+                        }
+                    }
+                } else {
+                    Lifting(state = state)
+                }
+            }
         }
     )
 }
