@@ -342,7 +342,7 @@ class MainActivity : ComponentActivity() {
     // ViewModel's engine — on every rotation, killing all sound
     // until process death. The ViewModel stops its engine in
     // onCleared(), the one true end of its life.
-
+}
 
 /**
  * THE MINIMUM HOST — everything this composable is, stated plainly:
