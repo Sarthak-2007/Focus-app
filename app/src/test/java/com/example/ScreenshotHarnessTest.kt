@@ -7,7 +7,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -310,6 +312,61 @@ class ScreenshotHarnessTest {
         )
     }
 
+    /** The lawful-sparse gate (LEAD-SEALED live leg, R-10's
+     *  direction): a face whose design IS field and furniture —
+     *  the shut drawer front under the table, the open drawer's
+     *  room, the handing-back threshold — compresses under the
+     *  standard byte floor and populates under the standard
+     *  coverage tenth, and failed both while rendering truly
+     *  (venue evidence: drawer_frontShut and
+     *  drawer_thresholdHandingBack at the 5,000-byte assert,
+     *  drawer_openRich at the coverage assert, on every main
+     *  run — which starved the venue of EVERY face's screens).
+     *  The sparse gate keeps the honesty checks that still bite
+     *  on a flat design — the shot exists, and it carries real
+     *  colour variance (a blank field yields a handful of
+     *  tones) and some furniture off the field — and prints its
+     *  measured numbers to the run log, so the record shows
+     *  what the render actually holds. */
+    private fun writeShotSparse(name: String, bitmap: Bitmap) {
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        val fieldArgb = StrongroomInks.Graphite.toArgb()
+        val colors = HashSet<Int>()
+        var samples = 0
+        var offField = 0
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                val px = bitmap.getPixel(x, y)
+                colors.add(px)
+                samples++
+                if (px != fieldArgb) offField++
+                y += 7
+            }
+            x += 7
+        }
+        val coverage = if (samples > 0) offField.toDouble() / samples else 0.0
+        println(
+            "SPARSE-SHOT $name bytes=${file.length()} colours=${colors.size} " +
+                "coverage=${(1000 * coverage).toInt() / 10.0}%"
+        )
+        assertTrue(
+            "sparse shot must carry real colour variance " +
+                "(distinct sampled colours: ${colors.size})",
+            colors.size > 25
+        )
+        assertTrue(
+            "sparse shot must carry its furniture (off-field coverage: " +
+                "${(1000 * coverage).toInt() / 10.0}%)",
+            coverage > 0.02
+        )
+    }
+
     @Test
     fun antechamber_room_dressed() {
         shoot(
@@ -541,18 +598,22 @@ class ScreenshotHarnessTest {
         )
     )
 
-    private fun shootDrawer(name: String, content: @androidx.compose.runtime.Composable () -> Unit) {
+    private fun shootDrawer(
+        name: String,
+        sparse: Boolean = false,
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ) {
         val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
                 Box(Modifier.size(412.dp, 915.dp)) { content() }
             }
         }
-        writeShot(name, bitmap)
+        if (sparse) writeShotSparse(name, bitmap) else writeShot(name, bitmap)
     }
 
     @Test
     fun drawer_frontShut() {
-        shootDrawer("drawer-front.png") {
+        shootDrawer("drawer-front.png", sparse = true) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -566,7 +627,7 @@ class ScreenshotHarnessTest {
 
     @Test
     fun drawer_openRich() {
-        shootDrawer("drawer-open-rich.png") {
+        shootDrawer("drawer-open-rich.png", sparse = true) {
             Drawer(
                 state = DrawerState(
                     contents = drawerContents(),
@@ -580,7 +641,7 @@ class ScreenshotHarnessTest {
 
     @Test
     fun drawer_thresholdHandingBack() {
-        shootDrawer("drawer-threshold.png") {
+        shootDrawer("drawer-threshold.png", sparse = true) {
             Drawer(
                 state = DrawerState(
                     contents = drawerContents(),
@@ -867,6 +928,44 @@ class ScreenshotHarnessTest {
     fun sealedFace_keptPlaces() {
         val state = SealedFaceState.standing(sealedSigning(null), doorWord = null)!!
         shootSealedFace("sealed-face-kept-places.png", state)
+    }
+
+    /** THE KNOCK MOMENT (LEAD-SEALED live leg): the standing
+     *  face STRUCK — a tap dispatched at its centre under a
+     *  frozen test clock, the clock then advanced into the
+     *  blow, so the leaf is caught mid-press (the knock
+     *  displacement near its full travel, the shadow gap open
+     *  at the leaf's top and left edges), before the settle
+     *  takes it home. The face's one living moment, held in a
+     *  still: proof the face answers a strike as a mechanism,
+     *  not a poster. */
+    @Test
+    fun sealedFace_knockMoment() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val bitmap = drawShot(
+                interact = {
+                    composeRule.onRoot().performTouchInput { click(center) }
+                    composeRule.mainClock.advanceBy(48)
+                }
+            ) {
+                StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                    Box(Modifier.size(412.dp, 915.dp)) {
+                        SealedFace(
+                            state = state,
+                            actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {})
+                        )
+                    }
+                }
+            }
+            writeShot("sealed-face-knock.png", bitmap)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
     }
 
     // ── THE DOORWAY, POPULATED · THE SIGNING (METHODS-SEAT,

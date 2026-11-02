@@ -460,6 +460,9 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // voice the bridge's platform-edge reach fires, once per
         // rap, never twice (the reach and the rap are different
         // acts). The face itself changes nothing in answer.
+        // (LEAD-SEALED's live leg reached the same wiring by its
+        // own route and yielded to this one at the rebase — one
+        // bus, one voice, whoever holds the pen.)
         onKnock = {
             StrongroomEngineBridge.fireSurfaceEvent(
                 appContext, HapticEvent.KNOCK
