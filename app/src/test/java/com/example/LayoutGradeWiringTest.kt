@@ -27,12 +27,14 @@ import org.junit.Test
 class LayoutGradeWiringTest {
 
     // DESIGNER-SR-4's ladder, consumed: 17.6 / 12.6 / 9.5 dp —
-    // Slice 1's 20/13/8 dp are dead at this seam.
+    // Slice 1's 20/13/8 dp are dead at this seam. (Tolerance:
+    // the figures multiply in float — 2.8f × 6.3f is the filed
+    // product, not a decimal literal.)
     @Test
     fun plateLadder_isDesignerSr4sFigures_notSlice1s() {
-        assertEquals(17.64.dp, punchDiameter(LiftingPlate.PunchGrade.LARGE))
-        assertEquals(12.6.dp, punchDiameter(LiftingPlate.PunchGrade.MEDIUM))
-        assertEquals(9.45.dp, punchDiameter(LiftingPlate.PunchGrade.SMALL))
+        assertEquals(17.64f, punchDiameter(LiftingPlate.PunchGrade.LARGE).value, 0.01f)
+        assertEquals(12.6f, punchDiameter(LiftingPlate.PunchGrade.MEDIUM).value, 0.01f)
+        assertEquals(9.45f, punchDiameter(LiftingPlate.PunchGrade.SMALL).value, 0.01f)
     }
 
     @Test
