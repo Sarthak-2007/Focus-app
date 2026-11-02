@@ -100,7 +100,21 @@ fun AntechamberScreen(
     onTakeCall: (HeldCall) -> Unit,
     onReturned: () -> Unit,
     onLeave: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    // BUILD-SR-28 (the W-7 cure — the P5 contract change
+    // BUILD-SR-21's R-1 named as send-back-shaped, made by
+    // CRITIC-SR-8's send-back): the crank's outcome alone could
+    // never launch anything, because the turned app's name died
+    // in this surface's local state. A TURNED crank now carries
+    // the app OUT with it, and a SHOWN code carries itself out,
+    // so the host can do the acts the room promises: launch the
+    // app for its minute, and land the minute's spend in the
+    // store at the taking (the same one purse, R2-4).
+    onDrumTurned: (String) -> Unit = {},
+    onShowingTaken: (HeldCode) -> Unit = {},
+    // His LEAVE act on a held call, carried out beside TAKE so
+    // the host can persist the choice in the held record.
+    onLeaveCall: (HeldCall) -> Unit = {}
 ) {
     var room by remember(initialState) { mutableStateOf(initialState) }
     var inPile by remember { mutableStateOf(false) }
@@ -128,10 +142,16 @@ fun AntechamberScreen(
                     room = room.takeCall(call.id)
                     onTakeCall(call)
                 },
-                onLeaveCall = { call -> room = room.leaveCall(call.id) },
+                onLeaveCall = { call ->
+                    room = room.leaveCall(call.id)
+                    onLeaveCall(call)
+                },
                 onShow = { code ->
                     val (next, outcome) = room.showCode(code.id)
                     room = next
+                    if (outcome == ShowingOutcome.SHOWN) {
+                        onShowingTaken(code)
+                    }
                     onShowingOutcome(outcome)
                 }
             )
@@ -152,6 +172,9 @@ fun AntechamberScreen(
                 onCrank = { app ->
                     val (next, outcome) = room.crankTo(app)
                     room = next
+                    if (outcome == CrankOutcome.TURNED) {
+                        onDrumTurned(app)
+                    }
                     onCrankOutcome(outcome)
                 },
                 onReturn = {

@@ -265,6 +265,99 @@ object StrongroomEngineBridge {
             else StrongroomRouting.CallerClass.UNKNOWN
         )
 
+    /**
+     * THE HELD ARRIVAL, RECORDED (BUILD-SR-28, the W-6 cure).
+     * Before this cure [callDecision] was a verdict with no
+     * production caller and no home: the routing held an unknown
+     * call "quietly" into nothing, and the antechamber's pile —
+     * built from no store — was empty by construction. Now the
+     * listener's Strongroom path calls here at the arrival:
+     * a CONTACT rings through and records nothing; an UNKNOWN
+     * under a standing seal is written to the day's held record
+     * (strongroom_held_arrivals) and struck as a HELD punch at
+     * its offset, so the plate carries the held hole (B-13/A-10)
+     * and the pile renders the real arrival. No seal stands →
+     * nothing is held and nothing is written: the phone's own
+     * lists own the call, exactly as on an unsealed phone.
+     * Returns true when the arrival was recorded as held.
+     */
+    suspend fun recordHeldCallIfUnknown(
+        context: Context,
+        number: String,
+        isContact: Boolean,
+        arrivedAtWallMillis: Long
+    ): Boolean {
+        if (callDecision(isContact) != StrongroomRouting.CallDecision.HELD_QUIETLY) {
+            return false
+        }
+        val store = store(context.applicationContext)
+        val row = store.sealedDay() ?: return false
+        store.recordHeldArrival(
+            dateIso = row.filingDateIso,
+            kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CALL,
+            line = number,
+            arrivedAtWallMillis = arrivedAtWallMillis
+        )
+        val offset = (nowElapsedMillis() - row.sealedAtElapsedMillis).coerceAtLeast(0L)
+        store.punch(
+            row.filingDateIso,
+            StrongroomDay.Punch(StrongroomDay.PunchKind.HELD, offset, "")
+        )
+        return true
+    }
+
+    /**
+     * A held CODE, recorded (BUILD-SR-28, W-6's other half): the
+     * digits alone, into the same held record, under the same
+     * standing-seal condition. The message the code arrived in
+     * is never read into any store (Issue #100's cut); [digits]
+     * is extracted by the caller from the notification it held,
+     * and this record is the digits' only home inside the seal
+     * (B-18 / UX-SR-3 X-3). Struck as a HELD punch, like a call.
+     */
+    suspend fun recordHeldCode(
+        context: Context,
+        digits: String,
+        arrivedAtWallMillis: Long
+    ): Boolean {
+        if (digits.isBlank()) return false
+        val store = store(context.applicationContext)
+        val row = store.sealedDay() ?: return false
+        store.recordHeldArrival(
+            dateIso = row.filingDateIso,
+            kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CODE,
+            line = digits,
+            arrivedAtWallMillis = arrivedAtWallMillis
+        )
+        val offset = (nowElapsedMillis() - row.sealedAtElapsedMillis).coerceAtLeast(0L)
+        store.punch(
+            row.filingDateIso,
+            StrongroomDay.Punch(StrongroomDay.PunchKind.HELD, offset, "")
+        )
+        return true
+    }
+
+    /** The digits of a held code, from a notification's own
+     *  words: the first run of 4–8 digits standing alone. Pure,
+     *  so the extraction is unit-tested without a Notification.
+     *  A chat full of numbers is not a code — the caller gates
+     *  this on the code-word sniff (NotificationCapturePolicy
+     *  .looksLikeOneTimeCode), never on digits alone. */
+    fun extractHeldCodeDigits(text: String): String? =
+        Regex("""(?<!\d)(\d{4,8})(?!\d)""").find(text)?.groupValues?.get(1)
+
+    /** The number a call notification names: the first digit run
+     *  (with a leading +) long enough to be a number, from the
+     *  notification's title/text. Pure, unit-tested. A contact's
+     *  call notification names the contact — no such run stands
+     *  in it — so a null here already leans contact; the caller
+     *  still confirms with the phone's own contact lookup when
+     *  it may. */
+    fun extractCallerNumber(text: String): String? =
+        Regex("""(\+?\d[\d\s-]{6,}\d)""").find(text)?.groupValues?.get(1)
+            ?.replace(Regex("""[\s-]"""), "")
+            ?.takeIf { it.removePrefix("+").length in 7..15 }
+
     // ------------------------------------------------------------------
     // Firing consumption + boot
     // ------------------------------------------------------------------

@@ -725,7 +725,12 @@ private fun SigningPlace(
                     sentence = composed.sentence,
                     breakLengthMinutes = composed.breakLengthMinutes,
                     spentDay = store.guardState(System.currentTimeMillis())
-                        .purseSpentToday(tomorrowIso)
+                        .purseSpentToday(tomorrowIso),
+                    // R2-8 (BUILD-SR-28, K1 cure): the first
+                    // signing is a fact of the store — no signing
+                    // record stands before it — read fresh at the
+                    // draft's building, never remembered.
+                    firstSigning = store.isFirstSigning()
                 )
             } else {
                 null
@@ -765,15 +770,43 @@ private fun AntechamberPlace(
     onLeave: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val nameByPackage = remember(allApps) { allApps.associate { it.packageName to it.appName } }
     val packageByName = remember(allApps) { allApps.associate { it.appName to it.packageName } }
-    val initial = remember(row.filingDateIso, row.allowanceSpentMinutes, allApps) {
+    // The room's facts are re-read from the STORE on every entry
+    // (BUILD-SR-28, K2/K3 cures): the purse is the day row's own
+    // spent minutes — never a local full-purse copy — and the
+    // pile is the day's recorded held arrivals. A spend or a
+    // choice made in the room is written to the store at the
+    // act, so leaving and re-entering can resurrect neither.
+    var heldArrivals by remember(row.filingDateIso) {
+        mutableStateOf<List<com.example.data.StrongroomHeldArrivalEntity>>(emptyList())
+    }
+    var arrivalsLoaded by remember(row.filingDateIso) { mutableStateOf(false) }
+    LaunchedEffect(row.filingDateIso) {
+        heldArrivals = withContext(Dispatchers.IO) { store.heldArrivals(row.filingDateIso) }
+        arrivalsLoaded = true
+    }
+    if (!arrivalsLoaded) {
+        // One frame of the room's ground while the store is read —
+        // the room never renders a pile or a purse it invented.
+        Box(Modifier.fillMaxSize().background(PlateDarkRoom))
+        return
+    }
+    val initial = remember(row.filingDateIso, row.allowanceSpentMinutes, allApps, heldArrivals) {
         StrongroomFlowModel.antechamberState(
             signing = signing,
             purseRemainingMinutes = row.allowanceTotalMinutes - row.allowanceSpentMinutes,
             nameOf = { pkg -> nameByPackage[pkg] ?: pkg },
-            cataloguePackages = allApps.map { it.packageName }
+            cataloguePackages = allApps.map { it.packageName },
+            heldArrivals = heldArrivals
         )
+    }
+    fun launchPackage(pkg: String) {
+        context.packageManager.getLaunchIntentForPackage(pkg)?.let { intent ->
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(intent) }
+        }
     }
     AntechamberScreen(
         initialState = initial,
@@ -786,14 +819,31 @@ private fun AntechamberPlace(
                 else -> Unit
             }
         },
-        onSignedOpen = { name ->
-            engine.playMechanicalLatch(engaged = true)
-            packageByName[name]?.let { pkg ->
-                context.packageManager.getLaunchIntentForPackage(pkg)?.let { intent ->
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    runCatching { context.startActivity(intent) }
+        onDrumTurned = { name ->
+            // THE DRUM'S ACT, WHOLE (BUILD-SR-28, K2 cure): the
+            // turned app LAUNCHES through the antechamber's own
+            // lawful exit — the same launch the signed set uses;
+            // the seal stands, the session stays sealed, only the
+            // app is his for its minute — and the minute's spend
+            // LANDS IN THE STORE at the taking (spendAllowance
+            // gains its production caller), priced as the surface
+            // stated it at the taking: one minute (R2-4).
+            val pkg = StrongroomFlowModel.drumPackageFor(
+                signing = signing,
+                cataloguePackages = allApps.map { it.packageName },
+                nameOf = { p -> nameByPackage[p] ?: p },
+                turnedName = name
+            ) ?: packageByName[name]
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    store.spendAllowance(row.filingDateIso, 1)
                 }
             }
+            if (pkg != null) launchPackage(pkg)
+        },
+        onSignedOpen = { name ->
+            engine.playMechanicalLatch(engaged = true)
+            packageByName[name]?.let { pkg -> launchPackage(pkg) }
         },
         onShowingOutcome = { outcome ->
             when (outcome) {
@@ -802,7 +852,59 @@ private fun AntechamberPlace(
                 else -> Unit
             }
         },
-        onTakeCall = { engine.playMechanicalLatch(engaged = true) },
+        onShowingTaken = {
+            // The showing's minute, from the SAME one purse
+            // (R2-4), persisted at the taking like the drum's —
+            // and struck as a SHOWING punch for the plate (the
+            // plate strikes the showing, never a digit, B-18).
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    store.spendAllowance(row.filingDateIso, 1)
+                    val offset = (SystemClock.elapsedRealtime() - row.sealedAtElapsedMillis)
+                        .coerceAtLeast(0L)
+                    store.punch(
+                        row.filingDateIso,
+                        StrongroomDay.Punch(StrongroomDay.PunchKind.SHOWING, offset, "")
+                    )
+                }
+            }
+        },
+        onTakeCall = { call ->
+            engine.playMechanicalLatch(engaged = true)
+            // TAKE, the ruled act (UX-SR-3 §2.5): the held call
+            // never rang, so there is nothing to "answer" — TAKE
+            // places a native outgoing call to that number, and
+            // that act discharges THIS line only: the seal stands,
+            // the other lines stand, the purse stands
+            // (StrongroomRouting.resolveHeldCall: connects this
+            // call only, door closed, session sealed). The
+            // discharge is persisted in the held record.
+            call.id.toIntOrNull()?.let { arrivalId ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        store.resolveHeldArrival(arrivalId, taken = true)
+                    }
+                }
+            }
+            val dial = Intent(
+                Intent.ACTION_DIAL,
+                android.net.Uri.parse("tel:${call.number}")
+            )
+            dial.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(dial) }
+        },
+        onLeaveCall = { call ->
+            // LEAVE, persisted: his choice per call, in the
+            // record — the line leaves the pile and does not
+            // return on re-entry.
+            call.id.toIntOrNull()?.let { arrivalId ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        store.resolveHeldArrival(arrivalId, taken = false)
+                    }
+                }
+            }
+        },
         onReturned = { engine.playMechanicalLatch(engaged = false) },
         onLeave = onLeave
     )
@@ -818,6 +920,13 @@ private fun LiftingPlace(
     val context = LocalContext.current
     var plate by remember(row.filingDateIso) {
         mutableStateOf<LiftingPlate.StruckPlate?>(null)
+    }
+    // The handing-back's waiting people (BUILD-SR-28, K3 cure):
+    // the struck day's still-WAITING held calls, read from the
+    // held record — before this cure the preparation stood on an
+    // empty list by construction, because no record existed.
+    var waitingPeople by remember(row.filingDateIso) {
+        mutableStateOf<List<LiftingPlate.WaitingPerson>>(emptyList())
     }
     var settled by remember(row.filingDateIso) { mutableStateOf(false) }
     val failure = row.state != StrongroomDay.SealState.LIFTED.name
@@ -845,6 +954,19 @@ private fun LiftingPlace(
         // onFiringWake cancels at the lifting (PR #856), the
         // surviving home (E-4 stands: the one line's life ends at
         // the lifting, fired by the bridge, not the host).
+        waitingPeople = withContext(Dispatchers.IO) {
+            store.heldArrivals(row.filingDateIso)
+                .filter {
+                    it.kind == com.example.data.StrongroomHeldArrivalEntity.KIND_CALL &&
+                        it.state == com.example.data.StrongroomHeldArrivalEntity.STATE_WAITING
+                }
+                .map { arrival ->
+                    LiftingPlate.WaitingPerson(
+                        displayName = arrival.line,
+                        ownListRef = arrival.line
+                    )
+                }
+        }
         plate = withContext(Dispatchers.IO) {
             val dayPlate = store.strikePlate(
                 row.filingDateIso,
@@ -864,7 +986,7 @@ private fun LiftingPlace(
         Box(Modifier.weight(1f)) {
             LiftingScreen(
                 plate = plate,
-                handingBack = LiftingPlate.HandingBack.prepare(emptyList()),
+                handingBack = LiftingPlate.HandingBack.prepare(waitingPeople),
                 failure = failure,
                 failureFace = failureFace,
                 onHandedBack = {

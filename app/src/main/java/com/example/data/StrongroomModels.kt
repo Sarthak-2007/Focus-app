@@ -234,6 +234,56 @@ fun StrongroomGuard.GuardState.toEntity(): StrongroomGuardEntity = StrongroomGua
     stretchEndMillis = stretchEndMillis
 )
 
+/**
+ * One HELD ARRIVAL, recorded at its arrival (BUILD-SR-28, the
+ * send-back cure for CRITIC-SR-8's W-6 kill: the held pile had no
+ * production source — no store recorded a held arrival, so the
+ * pile was empty by construction).
+ *
+ * The pile's lawful contents in this slice's model are exactly
+ * two kinds, and this row carries exactly their facts:
+ *  - KIND_CALL — an unknown number's call, held quietly (D-5):
+ *    [line] is the number as it arrived. No name exists for a
+ *    stranger, so none is stored.
+ *  - KIND_CODE — a held code (B-18's digits fork): [line] is the
+ *    digits alone. No sender name, no message words — the
+ *    message's body is NEVER stored anywhere in this app (Issue
+ *    #100's cut stands); the digits' only lawful home inside
+ *    the seal is this record (UX-SR-3 X-3), and the plate
+ *    strikes the SHOWING, never a digit.
+ *
+ * [state] is the per-arrival choice's standing: WAITING (no
+ * choice made — handed back at the lift), TAKEN (his TAKE act
+ * discharged this line only), LEFT (his LEAVE act — the line
+ * leaves the pile; his phone's own lists own it after the lift).
+ * A reboot cannot empty this table (UX-SR-3 MC-3 / B-10's
+ * restart law at this depth): the pile is re-derived from these
+ * rows on every antechamber entry, so what waited still waits.
+ */
+@Entity(
+    tableName = "strongroom_held_arrivals",
+    indices = [Index(value = ["filingDateIso"])]
+)
+data class StrongroomHeldArrivalEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val filingDateIso: String,
+    /** KIND_CALL or KIND_CODE. */
+    val kind: String,
+    /** The number as it arrived (call) or the digits alone (code). */
+    val line: String,
+    val arrivedAtWallMillis: Long,
+    /** STATE_WAITING / STATE_TAKEN / STATE_LEFT. */
+    val state: String = STATE_WAITING
+) {
+    companion object {
+        const val KIND_CALL = "CALL"
+        const val KIND_CODE = "CODE"
+        const val STATE_WAITING = "WAITING"
+        const val STATE_TAKEN = "TAKEN"
+        const val STATE_LEFT = "LEFT"
+    }
+}
+
 fun StrongroomCrankWeekEntity.toCrankWeek(): StrongroomDay.GovernorCrankWeek =
     StrongroomDay.GovernorCrankWeek(
         weekAnchorMillis = weekAnchorMillis,

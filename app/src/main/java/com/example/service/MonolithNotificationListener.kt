@@ -362,6 +362,27 @@ class MonolithNotificationListener : NotificationListenerService() {
         // (mutable, pooled) StatusBarNotification.
         val key = sbn.key ?: return
         val postTimeMillis = sbn.postTime
+
+        // BUILD-SR-28 (the W-6 cure): the Strongroom held path.
+        // While a Strongroom seal stands, an unknown number's
+        // call and a held code must ARRIVE somewhere — before
+        // this cure the routing's held verdict had no caller and
+        // no store, and the pile was empty by construction. Call
+        // notifications are judged HERE, before the capture gate
+        // below spares CATEGORY_CALL wholesale (that sparing is
+        // the legacy session's law and stands): the bridge
+        // records the arrival only when the caller is unknown
+        // AND a seal stands; a contact rings through and records
+        // nothing. Codes are judged at the code-word sniff below.
+        if (notification.category == Notification.CATEGORY_CALL) {
+            val callExtras = notification.extras
+            val callTitle = callExtras?.getCharSequence(Notification.EXTRA_TITLE)
+                ?.toString()?.trim().orEmpty()
+            val callText = callExtras?.getCharSequence(Notification.EXTRA_TEXT)
+                ?.toString()?.trim().orEmpty()
+            captureStrongroomHeldCall(postTimeMillis, callTitle, callText)
+        }
+
         if (!NotificationCapturePolicy.shouldCaptureNotification(notification.flags, notification.category)) {
             return
         }
@@ -390,7 +411,16 @@ class MonolithNotificationListener : NotificationListenerService() {
         val extras = notification.extras
         val title = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val text = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
-        if (NotificationCapturePolicy.looksLikeOneTimeCode(title, text)) return
+        if (NotificationCapturePolicy.looksLikeOneTimeCode(title, text)) {
+            // BUILD-SR-28: the legacy exemption stands (the code
+            // is never held by the legacy session) — but under a
+            // Strongroom seal the code is a HELD arrival (B-18):
+            // its digits alone are recorded into the pile's
+            // record, the digits' only home inside the seal. The
+            // bridge writes nothing when no seal stands.
+            captureStrongroomHeldCode(postTimeMillis, title, text)
+            return
+        }
 
         // Issue #100 F1 fast path: a cached session window + rule
         // judges a LOCKED, non-FINANCE app's post with zero
@@ -438,6 +468,62 @@ class MonolithNotificationListener : NotificationListenerService() {
             // now — skip the hold, whatever the tier.
             if (peekLeaseLive(appRule.activePeekUntilElapsedRealtime, SystemClock.elapsedRealtime())) return@launch
             holdNotification(key, snoozeDurationMillis(session, System.currentTimeMillis()))
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // BUILD-SR-28: the Strongroom held-arrival capture. Both entry
+    // points are fire-and-forget onto the listener's own scope;
+    // the bridge owns the verdict (contact rings / unknown held)
+    // and the standing-seal condition, and writes nothing when
+    // either fails. Content discipline: a call contributes its
+    // number only; a code contributes its digits only; no title,
+    // no text, no message body is ever stored.
+    // ------------------------------------------------------------------
+
+    private fun captureStrongroomHeldCall(postTimeMillis: Long, title: String, text: String) {
+        val number = StrongroomEngineBridge.extractCallerNumber("$title $text") ?: return
+        scope.launch {
+            StrongroomEngineBridge.recordHeldCallIfUnknown(
+                context = applicationContext,
+                number = number,
+                isContact = isContactNumber(number),
+                arrivedAtWallMillis = postTimeMillis
+            )
+        }
+    }
+
+    private fun captureStrongroomHeldCode(postTimeMillis: Long, title: String, text: String) {
+        val digits = StrongroomEngineBridge.extractHeldCodeDigits("$title $text") ?: return
+        scope.launch {
+            StrongroomEngineBridge.recordHeldCode(
+                context = applicationContext,
+                digits = digits,
+                arrivedAtWallMillis = postTimeMillis
+            )
+        }
+    }
+
+    /** The phone's own contact book answers: is [number] a
+     *  contact? Read-only lookup, only when the permission
+     *  stands; without it the answer is false — the dialer's own
+     *  presentation already leans that way (a contact's call
+     *  notification names the contact, and no number would have
+     *  been extracted from it above). */
+    private fun isContactNumber(number: String): Boolean {
+        if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return false
+        val uri = android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI
+            .buildUpon().appendPath(number).build()
+        return try {
+            contentResolver.query(
+                uri,
+                arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null, null, null
+            )?.use { it.moveToFirst() } == true
+        } catch (_: Exception) {
+            false
         }
     }
 

@@ -837,6 +837,143 @@ class ScreenshotHarnessTest {
         assertTrue("HB-4: the jammed arm must annul at L+1500", annulled)
     }
 
+    // ------------------------------------------------------------------
+    // THE STRONGROOM FACES (BUILD-SR-28, item 4 — CRITIC-SR-8 §6.5:
+    // the venue photographed only the legacy root, so every cold
+    // walk was blind on this slice). FABRICATED STATE, named as
+    // such in the PARK / faulted-receipt pattern: the surfaces are
+    // composed directly over hand-built model state — the signing
+    // draft is built by the PRODUCTION StrongroomFlowModel (with
+    // firstSigning = true, so the frame also carries R2-8's
+    // teaching line), the antechamber state by the same model's
+    // adapter over fabricated held-arrival rows in P1's own entity
+    // shape. What is fabricated: the day, its apps, its arrivals.
+    // What is NOT: every word and figure on the frames is rendered
+    // by production surfaces from production model code.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun srStrongroomFaces() {
+        val signingRecord = com.example.domain.StrongroomDay.SigningRecord(
+            filingDateIso = "2026-11-02",
+            lockedPackages = setOf("com.video.app"),
+            allowedPackages = listOf("com.phone.app"),
+            liftingTime = java.time.LocalTime.of(20, 0),
+            sentence = "Finish the chapter, then stop.",
+            breakLengthMinutes = 20,
+            breakFiresAtOffsetMillis = -1L,
+            allowanceMinutes = 30,
+            gaps = emptyList()
+        )
+        val draft = com.example.ui.strongroom.StrongroomFlowModel.signingDraft(
+            dayShapeName = "ORDINARY",
+            appOptions = listOf(
+                com.example.ui.strongroom.SigningAppOption("com.video.app", "Video"),
+                com.example.ui.strongroom.SigningAppOption("com.phone.app", "Phone"),
+                com.example.ui.strongroom.SigningAppOption("com.chat.app", "Chat")
+            ),
+            composedLocked = setOf("com.video.app"),
+            liftingTime = java.time.LocalTime.of(20, 0),
+            sentence = "Finish the chapter, then stop.",
+            breakLengthMinutes = 20,
+            spentDay = false,
+            firstSigning = true
+        )
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                com.example.ui.strongroom.SigningScreen(
+                    draft = draft,
+                    onDetent = {},
+                    onLatch = {},
+                    onLeave = {},
+                    onSigned = {}
+                )
+            }
+        }
+        settle(1200)
+        captureTo(File(shotsDir, "20_strongroom_signing.png"))
+
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                com.example.ui.strongroom.SealedFaceScreen(
+                    state = com.example.ui.strongroom.SealedFaceState(
+                        liftingHour = "20:00",
+                        sentence = "Finish the chapter, then stop."
+                    ),
+                    onKnockReach = {},
+                    onAntechamberRequest = {}
+                )
+            }
+        }
+        settle(1200)
+        captureTo(File(shotsDir, "21_strongroom_sealed_face.png"))
+
+        val antechamber = com.example.ui.strongroom.StrongroomFlowModel.antechamberState(
+            signing = signingRecord,
+            purseRemainingMinutes = 29,
+            nameOf = { pkg ->
+                mapOf(
+                    "com.phone.app" to "Phone",
+                    "com.chat.app" to "Chat",
+                    "com.video.app" to "Video"
+                )[pkg] ?: pkg
+            },
+            cataloguePackages = listOf("com.phone.app", "com.chat.app", "com.video.app"),
+            heldArrivals = listOf(
+                com.example.data.StrongroomHeldArrivalEntity(
+                    id = 1,
+                    filingDateIso = "2026-11-02",
+                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CALL,
+                    line = "+919876543210",
+                    arrivedAtWallMillis = System.currentTimeMillis() - 3_600_000L
+                ),
+                com.example.data.StrongroomHeldArrivalEntity(
+                    id = 2,
+                    filingDateIso = "2026-11-02",
+                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CODE,
+                    line = "482916",
+                    arrivedAtWallMillis = System.currentTimeMillis() - 1_800_000L
+                )
+            )
+        )
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                com.example.ui.strongroom.AntechamberScreen(
+                    initialState = antechamber,
+                    readOnlyLines = com.example.ui.strongroom.StrongroomFlowModel
+                        .antechamberReadOnlyLines(signingRecord),
+                    onCrankOutcome = {},
+                    onSignedOpen = {},
+                    onShowingOutcome = {},
+                    onTakeCall = {},
+                    onReturned = {},
+                    onLeave = {}
+                )
+            }
+        }
+        settle(1200)
+        captureTo(File(shotsDir, "22_strongroom_antechamber.png"))
+
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                com.example.ui.strongroom.LiftingScreen(
+                    plate = null,
+                    handingBack = com.example.domain.LiftingPlate.HandingBack.prepare(
+                        listOf(
+                            com.example.domain.LiftingPlate.WaitingPerson(
+                                displayName = "+919876543210",
+                                ownListRef = "+919876543210"
+                            )
+                        )
+                    ),
+                    onHandedBack = {}
+                )
+            }
+        }
+        settle(1200)
+        captureTo(File(shotsDir, "23_strongroom_lifting.png"))
+    }
+
     /** Truth Car 2's Drawer/Tasks proof renders: a stored detail
      *  WITH a historical estimate (the line prints — history is
      *  kept), a stored detail finished at 01:15 with NO estimate

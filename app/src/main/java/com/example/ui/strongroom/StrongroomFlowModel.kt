@@ -1,5 +1,6 @@
 package com.example.ui.strongroom
 
+import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.DeskClockRecord
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomDay
@@ -107,6 +108,28 @@ object StrongroomFlowModel {
      * package that left the catalogue is dropped here, by name
      * in the host's record, rather than crashing the signing).
      */
+    /**
+     * R2-8's one swing-telling (BUILD-SR-28, the K1 cure). The
+     * ruled content, from the record: FRESH-SR-5's S-2 names the
+     * missing thing — the swing's gesture taught before the
+     * first morning it is required — and UX-SR-4 §5.3 S-2 files
+     * the gesture itself: a hold on the door, at the first
+     * sitting, after he has seen the composition; deliberately
+     * NOT the alarm's dismiss, not opening the app, not any
+     * notification tap. No verbatim line for this beat was ever
+     * filed in the copy deck (the deck's §1.8 telling is B-19's
+     * standing line, a different line, and it stands untouched),
+     * so this line is HOST COPY in the room's plain hand — the
+     * R-11 precedent BUILD-SR-21's record sets — and the deck's
+     * 23-key census is not touched. It is passed into the draft
+     * ONLY at the first signing (see [signingDraft]'s
+     * [firstSigning]); every ordinary signing carries null.
+     */
+    const val SWING_TEACHING_LINE: String =
+        "Tomorrow, at your first sitting, the day seals by the swing: " +
+            "look at the day as it stands, then hold the door until the bolts drive home. " +
+            "That hold — not the alarm, not opening the app — is the swing."
+
     fun signingDraft(
         dayShapeName: String,
         appOptions: List<SigningAppOption>,
@@ -115,7 +138,7 @@ object StrongroomFlowModel {
         sentence: String?,
         breakLengthMinutes: Int,
         spentDay: Boolean,
-        teachingLine: String? = null
+        firstSigning: Boolean = false
     ): CompositionDraft = CompositionDraft(
         dayShapeName = dayShapeName,
         appOptions = appOptions,
@@ -124,7 +147,10 @@ object StrongroomFlowModel {
         composedSentence = sentence,
         spentDay = spentDay,
         composedBreakMinutes = breakLengthMinutes,
-        teachingLine = teachingLine
+        // R2-8: present at the first signing, absent at every
+        // ordinary one — the derivation is this one line, so no
+        // caller can pass a teaching into an ordinary signing.
+        teachingLine = if (firstSigning) SWING_TEACHING_LINE else null
     )
 
     /** The lawful HH:MM figure (FIG-1) for a wall time. */
@@ -162,26 +188,71 @@ object StrongroomFlowModel {
      * missing label. The drum's stock is every OTHER catalogued
      * app (not locked, not signed) by name. The purse is the
      * day's own remaining allowance (P1's purse arithmetic is
-     * its source). Held calls/codes arrive empty until a
-     * production held-pile store exists — named in the record,
-     * never fabricated here.
+     * its source — the sealed day row's spent minutes, read at
+     * every entry, so a spend taken in the room survives leaving
+     * and re-entering it: BUILD-SR-28's K2 cure). The held pile
+     * is built from the day's RECORDED held arrivals (P1's
+     * strongroom_held_arrivals, BUILD-SR-28's K3 cure): WAITING
+     * rows only, first-waited first — a taken or left line has
+     * had its choice and does not wait again.
      */
     fun antechamberState(
         signing: StrongroomDay.SigningRecord,
         purseRemainingMinutes: Int,
         nameOf: (String) -> String,
-        cataloguePackages: List<String>
+        cataloguePackages: List<String>,
+        heldArrivals: List<StrongroomHeldArrivalEntity> = emptyList()
     ): AntechamberState {
         val signedNames = signing.allowedPackages.map(nameOf)
         val drumNames = cataloguePackages
             .filter { it !in signing.lockedPackages && it !in signing.allowedPackages }
             .map(nameOf)
+        val waiting = heldArrivals.filter {
+            it.state == StrongroomHeldArrivalEntity.STATE_WAITING
+        }
         return AntechamberState(
             allowedAsSigned = signedNames,
             drumCandidates = drumNames,
-            purseMinutes = purseRemainingMinutes
+            purseMinutes = purseRemainingMinutes,
+            heldCalls = waiting
+                .filter { it.kind == StrongroomHeldArrivalEntity.KIND_CALL }
+                .map { arrival ->
+                    HeldCall(
+                        id = arrival.id.toString(),
+                        number = arrival.line,
+                        hour = hourText(arrival.arrivedAtWallMillis)
+                    )
+                },
+            heldCodes = waiting
+                .filter { it.kind == StrongroomHeldArrivalEntity.KIND_CODE }
+                .map { arrival ->
+                    HeldCode(
+                        id = arrival.id.toString(),
+                        digits = arrival.line,
+                        hour = hourText(arrival.arrivedAtWallMillis)
+                    )
+                }
         )
     }
+
+    /**
+     * Resolve a drum candidate's displayed NAME back to the
+     * package it names (BUILD-SR-28, K2): the drum's stock is
+     * names on the surface (R2-4's form), but the launch and
+     * the purse act on packages. The resolution is the
+     * catalogue's own name→package fact, restricted to the
+     * drum's lawful stock — a name that is not drum stock for
+     * this signing resolves to nothing, so a turned name can
+     * never launch or spend for an app the drum did not offer.
+     */
+    fun drumPackageFor(
+        signing: StrongroomDay.SigningRecord,
+        cataloguePackages: List<String>,
+        nameOf: (String) -> String,
+        turnedName: String
+    ): String? = cataloguePackages
+        .filter { it !in signing.lockedPackages && it !in signing.allowedPackages }
+        .firstOrNull { nameOf(it) == turnedName }
 
     /** The antechamber's read-only day panel (B-9's day-as-set
      *  face): the day's standing facts as plain lines — the
