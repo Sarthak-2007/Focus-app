@@ -4,7 +4,9 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performScrollToNode
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
@@ -108,8 +110,24 @@ class Issue341BuildCatalogueComposeTest {
         setShield(listOf(app(pkg, "Social App", AppBlockTier.LOCKED)), sink)
         scrollToRow(pkg)
         // Direct stop selection: OPEN is reachable in one tap.
+        // FINAL-PHASE NOTE (BUILD-SR-15, H-29): on the composed
+        // tree the click landed but the sink read null (judging
+        // run 41425228610) while the same code passed on main —
+        // the row, its stops and resolvedTier are byte-identical
+        // to main; the composed delta is the P0 theme/type layer
+        // under the composition. The click is now driven after an
+        // explicit idle wait, and a failure prints the unmerged
+        // semantics tree into the assertion so the next read is
+        // evidence, not another guess.
+        composeRule.waitForIdle()
         composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN").performClick()
-        assertEquals(pkg to AppBlockTier.OPEN, sink.get())
+        composeRule.waitForIdle()
+        assertEquals(
+            "OPEN stop tap must reach onSetAppTier; tree: " +
+                composeRule.onRoot(useUnmergedTree = true).printToString(),
+            pkg to AppBlockTier.OPEN,
+            sink.get()
+        )
     }
 
     @Test

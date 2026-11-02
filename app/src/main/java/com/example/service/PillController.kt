@@ -85,6 +85,22 @@ class PillController(
     @Volatile
     private var lastForegroundPkg: String = ownPackage
 
+    /** Test seam (final-phase cure, BUILD-SR-15 — the seam the
+     *  render scaffold's header priced from its first filing):
+     *  under Robolectric 4.17 every AppOps probe the scaffold
+     *  fires reports ok yet `Settings.canDrawOverlays` never
+     *  reads true (judging run 41425228610's SEAM-REPORTs: usage
+     *  gate opens, foreground reads back, overlay gate does
+     *  not), so the designed-state captures could never harvest
+     *  a window. When null — always, in production — the gate is
+     *  the platform read, unchanged. A test sets this to stand
+     *  the gate open or shut deterministically. */
+    @androidx.annotation.VisibleForTesting
+    internal var overlayGateOverride: Boolean? = null
+
+    private fun canDrawOverlays(): Boolean =
+        overlayGateOverride ?: Settings.canDrawOverlays(context)
+
     fun start() {
         if (tickerJob?.isActive == true) return
         tickerJob = scope.launch {
@@ -137,7 +153,7 @@ class PillController(
     // ------------------------------------------------------------------
 
     private fun render(face: PillFace) {
-        if (face is PillFace.Absent || !Settings.canDrawOverlays(context)) {
+        if (face is PillFace.Absent || !canDrawOverlays()) {
             removeWindow()
             return
         }
