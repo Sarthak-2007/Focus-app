@@ -149,6 +149,25 @@ class ScreenshotHarnessTest {
     )
 
     private fun shoot(name: String, state: AntechamberState, openPile: Boolean) {
+        val bitmap = drawShot(
+            interact = {
+                if (openPile) {
+                    // The pile's second step, by the pile corner's
+                    // own click, as his hand reaches it.
+                    clickLowestClickable("the room must carry clickables")
+                }
+            }
+        ) {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Antechamber(state = state, actions = actions())
+                }
+            }
+        }
+        writeShot(name, bitmap)
+    }
+
+
 
     /** THE CAPTURE, deterministic (BUILD-SR-38's cure of the
      *  harness it revived): the content is composed in a
@@ -236,24 +255,6 @@ class ScreenshotHarnessTest {
             "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
             colors.size > 40
         )
-    }
-
-        val bitmap = drawShot(
-            interact = {
-                if (openPile) {
-                    // The pile's second step, by the pile corner's
-                    // own click, as his hand reaches it.
-                    clickLowestClickable("the room must carry clickables")
-                }
-            }
-        ) {
-            StrongroomTheme(lightState = StrongroomLightState.DAY) {
-                Box(Modifier.size(412.dp, 915.dp)) {
-                    Antechamber(state = state, actions = actions())
-                }
-            }
-        }
-        writeShot(name, bitmap)
     }
 
     @Test
