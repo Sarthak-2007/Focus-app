@@ -97,13 +97,14 @@ fun PlatePileScreen(
             .background(PlateDarkRoom)
             .testTag("plate_pile")
     ) {
-        Text(
-            text = "The plates",
-            style = RoomHeadingStyle,
-            color = PlateInkGold,
-            modifier = Modifier.padding(
-                start = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp,
-                top = RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp
+        // Deck §7.8 (Stage 9, BUILD-SR-17 — copy governs): the
+        // pile carries no heading, total, or count line. The
+        // heading's inset survives as the layout's own spacing
+        // (BUILD-SR-16's frame; BUILD-SR-23, step 3).
+        Spacer(
+            Modifier.height(
+                RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp +
+                    RoomHeadingStyle.lineHeight.value.dp
             )
         )
         TrayDrawerLayout(
@@ -255,7 +256,7 @@ fun StrongroomDrawerScreen(
             )
             .testTag("strongroom_drawer")
     ) {
-        Text(text = "The drawer", style = RoomHeadingStyle, color = PlateInkGold)
+        // Deck §11.3 (Stage 9, BUILD-SR-17 — copy governs): the drawer surface carries ∅ room words.
         Spacer(Modifier.height(RoomGrid.dp(RoomGrid.LIST_BAND_STEPS).dp))
         LazyColumn(Modifier.testTag("strongroom_drawer_list")) {
             for ((day, tasks) in byDay) {

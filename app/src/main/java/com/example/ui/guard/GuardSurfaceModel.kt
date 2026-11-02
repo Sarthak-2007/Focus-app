@@ -216,19 +216,22 @@ object GuardCopy {
 
     /** The raise control says its own truth, plainly (D-1):
      *  never same-day, from the next day-start, 03:30. */
-    const val RAISE_LAW: String =
-        "A raise never lands today. It stands from the next day-start — 03:30 — and not an hour before."
+    // Deck §12.2 (Stage 9): one line serves every pending loosening
+    // in the app — this is that line, and no surface varies it.
+    const val RAISE_LAW: String = "Stands from the next day-start."
 
     /** Once the purse is spent there is no loosening control to
      *  point at; this line is testimony, not a control (D-1). */
-    const val HARD_STOP: String =
-        "Today's minutes are spent. What would loosen this stands beyond the hard stop — there is no loosening control on this surface today."
+    // Deck §12 (Stage 9): beyond a spent purse the loosening
+    // controls are absent, and absence carries ∅ copy — there is
+    // no hard-stop line. The builder composes null for this field;
+    // the constant stands empty so the ∅ is named, not improvised.
+    const val HARD_STOP: String = ""
 
-    const val OFF_LAW: String =
-        "Off lands at the next day-start — 03:30. Until then the Guard stands."
+    const val OFF_LAW: String = "Stands from the next day-start."
     const val ON_LAW: String = "On stands at once."
-    const val STRETCH_SETUP_LAW: String =
-        "Choose the end. That date is the exit — inside a stretch there is no off."
+    // Deck §12.4: at setup, the term stands in his ruling's words.
+    const val STRETCH_SETUP_LAW: String = "The end date is the exit."
     const val EXITS_TITLE: String = "The ways out, chosen in advance"
     const val EXITS_LAW: String =
         "Only what was chosen in advance stands here. Nothing is stockpiled; nothing can be drawn on the day."
@@ -244,20 +247,25 @@ object GuardCopy {
         "The day's allowance stands at ${minutesText(minutes)}."
 
     fun pendingRaiseLine(minutes: Int, fromMillis: Long, zone: ZoneId): String =
-        "A raise to ${minutesText(minutes)} stands from ${dayStartText(fromMillis, zone)}."
+        // Deck §12.2: the one line, no figure — the day-start is a
+        // standing fact of his day, not a setting to restate.
+        "Stands from the next day-start."
 
     fun pendingOffLine(fromMillis: Long, zone: ZoneId): String =
-        "Off stands from ${dayStartText(fromMillis, zone)} — until then the Guard holds."
+        "Stands from the next day-start."
 
     fun stretchLine(endMillis: Long, zone: ZoneId): String =
-        "This stretch ends ${dateText(endMillis, zone)}. That date is the exit. There is no off inside it."
+        // Deck §12.4: inside a stretch, no exit wording is rendered
+        // inside the thing it would exit — the end date, and nothing else.
+        "This stretch ends ${dateText(endMillis, zone)}."
 
     fun valveLine(spent: Boolean): String =
-        if (spent) "The week's emergency minute is spent. Its snapped seal stands in the tray, where it stays."
-        else "The week's emergency minute stands whole, under its lead seal."
+        // Deck §12.6/§6.3: the valve is shown as a struck fact,
+        // ∅ words — whole or spent reads from the seal itself.
+        ""
 
     fun routinePendingOffLine(fromMillis: Long, zone: ZoneId): String =
-        "Off stands from ${dayStartText(fromMillis, zone)}."
+        "Stands from the next day-start."
 
     const val ROUTINE_ENFORCING_LINE: String =
         "Its window is enforcing now — there is no off to offer."
@@ -358,7 +366,8 @@ object GuardSurface {
                     zone
                 )
             } else null,
-            hardStopLine = if (snapshot.purseSpentToday) GuardCopy.HARD_STOP else null,
+            // Deck §12: beyond the spent purse, loosening is absent — ∅ line.
+            hardStopLine = null,
             pendingOffLine = if (snapshot.pendingOffFromMillis > 0L) {
                 GuardCopy.pendingOffLine(snapshot.pendingOffFromMillis, zone)
             } else null,

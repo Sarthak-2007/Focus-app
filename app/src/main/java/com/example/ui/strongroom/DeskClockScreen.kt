@@ -89,7 +89,7 @@ fun DeskClockFace(
             .fillMaxWidth()
             .aspectRatio(5f / 3f)
             .padding(16.dp)
-            .semantics { contentDescription = "Desk clock — the day's plate, forming" }
+            .semantics { contentDescription = "" } // Deck §10.1: ∅ words on this surface, accessibility text included
     ) {
         val w = size.width
         val h = size.height

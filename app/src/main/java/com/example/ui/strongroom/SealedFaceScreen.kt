@@ -574,7 +574,7 @@ private fun GrillePlate(onClick: () -> Unit) {
             .width(120.dp)
             .height(54.dp)
             .clickable(interactionSource = source, indication = null, onClick = onClick)
-            .semantics { contentDescription = "Antechamber" }
+            .semantics { contentDescription = "" } // Deck §4.1: the grille door is ∅ words — a captioned door is a tab
             .testTag("antechamber_grille")
     ) {
         Canvas(Modifier.fillMaxSize()) {

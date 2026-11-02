@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  THE SINGLE COPY SOURCE — Stage 9 (BUILD-SR-17).
+
+  Every authored, user-facing string of the composed Strongroom
+  surfaces lives here and nowhere else, keyed by its address in
+  TYPE-SR-1's copy deck (ascent/build-first-usable/work/type-sr-1/
+  copy-deck.md), so this file reads in deck order and any reviewer
+  can walk deck <-> code row by row (LEAD-SLICE-3 S3-1).
+
+  Authored fixed strings only: VERBATIM-LOCKED 5, day-shapes 4,
+  exit names 5, take it / leave it 2, the stretch line 1,
+  WRITTEN 5, the one notification 1 = 23 keys.
+
+  What never gets a key: deck rows ruled empty (a kept place is a
+  place, never a string), carried content (his own words, signed
+  app names, arrived numbers/digits/hours — bound as values at
+  runtime, never stored here), and figures (formatted from facts).
+-->
+<resources>
+    <!-- §1.2 · the four day-shapes (DECIDED, Ledger rows verbatim) -->
+    <string name="copy_1_2_day_shape_ordinary">ordinary day</string>
+    <string name="copy_1_2_day_shape_test">test day</string>
+    <string name="copy_1_2_day_shape_small">the small day</string>
+    <string name="copy_1_2_day_shape_rest">the rest day</string>
+
+    <!-- §1.5 · B-1 / TI-01 · VERBATIM-LOCKED, 23 words, signing only -->
+    <string name="copy_1_5_purpose">What I settle while I am strong, this holds while I am not. It reopens nothing. At night it tells me the truth.</string>
+
+    <!-- §1.6 · B-4 / TI-02 · VERBATIM-LOCKED, the spent-day telling -->
+    <string name="copy_1_6_codes_wait_tonight">codes wait tonight</string>
+
+    <!-- §1.7 · B-5 / TI-04 · VERBATIM-LOCKED, the signing's clause,
+         directly above the signature and nowhere else -->
+    <string name="copy_1_7_clause">do not listen to me after this</string>
+
+    <!-- §1.8 · B-19 / TI-03 · VERBATIM-LOCKED, 21 words, the door's
+         telling at every signing -->
+    <string name="copy_1_8_telling">You can close this room yourself, on any calm evening, in any month, and it will read as a kept account.</string>
+
+    <!-- §1.9 · the exit names, whole, in ruled order (DECIDED,
+         his #683 verdict words verbatim; antechamber capacity only) -->
+    <string name="copy_1_9_exit_charger">charger</string>
+    <string name="copy_1_9_exit_preset_pin">pre-set PIN</string>
+    <string name="copy_1_9_exit_temporary_unlock">temporary unlock that auto-relocks</string>
+    <string name="copy_1_9_exit_deactivation_cooldown">deactivation cooldown</string>
+    <string name="copy_1_9_exit_time_itself">time itself</string>
+
+    <!-- §3.2 · WRITTEN (TYPE-SR-1) · the doorway's one plain line -->
+    <string name="copy_3_2_day_stands_composed">The day stands composed.</string>
+
+    <!-- §4.4 · WRITTEN (TYPE-SR-1) · the antechamber's standing
+         state line -->
+    <string name="copy_4_4_seal_stands">The seal stands.</string>
+
+    <!-- §5.3 · TX-DO-01 · the per-call choice, verbatim pair,
+         neither the lesser -->
+    <string name="copy_5_3_take_it">take it</string>
+    <string name="copy_5_3_leave_it">leave it</string>
+
+    <!-- §5.6 · WRITTEN (TYPE-SR-1) · the showing's price line.
+         Dispute applied as the deck argues it (vs CRITIC-SR-4
+         AC-29): a price stated before the spending is information;
+         the line stands. See BUILD-SR-17's record. -->
+    <string name="copy_5_6_one_minute">One minute.</string>
+
+    <!-- §7.6 · A-12 · VERBATIM-LOCKED bracket words.
+         RECORD-ONLY: carried verbatim in the record, never struck
+         as words on any plate and never set on any screen (deck
+         §7.6). This key exists so the settled words have exactly
+         one code home; no surface consumes it. The bracket pair
+         itself is a struck form, [HH:MM — HH:MM], not a string. -->
+    <string name="copy_7_6_bracket_words">standing at the last check, fallen by the first check that found it</string>
+
+    <!-- §8.2 · WRITTEN (TYPE-SR-1) · the break's state line, at the
+         antechamber's head, replacing §4.4's line while it stands -->
+    <string name="copy_8_2_break_stands">The break stands.</string>
+
+    <!-- §10.2 · TI-13 · DECIDED-ruled (Stage 5 Amendment A-6.2):
+         the one plain notification. No full stop, no figure. -->
+    <string name="copy_10_2_notification">Locked until the hour</string>
+
+    <!-- §12.2 · WRITTEN (TYPE-SR-1) · every pending loosening in
+         the app speaks this one line -->
+    <string name="copy_12_2_stands_from_next_day_start">Stands from the next day-start.</string>
+
+    <!-- §12.4 · D-3 · the stretch's term at its setup only, in his
+         ruling's own words; inside a stretch this is never shown -->
+    <string name="copy_12_4_end_date_is_the_exit">The end date is the exit.</string>
+</resources>

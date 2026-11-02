@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
 import com.example.ui.strongroom.layout.AntechamberLayout
@@ -241,11 +242,15 @@ private fun AntechamberListView(
         listColumn = {
             AntechamberLayout(
                 callingOut = {
-                    Text(text = "THE ANTECHAMBER", style = SigningHeadStyle, color = ink)
+                    // Deck §4.4 (Stage 9, BUILD-SR-17 — copy
+                    // governs): the room's standing state line
+                    // stands at its head, from the single source.
+                    // Seated on BUILD-SR-16's slot by BUILD-SR-23
+                    // (composition step 3).
+                    Text(text = stringResource(StrongroomCopy.SealStands), style = SigningHeadStyle, color = ink)
                     // B-9.1 — calling out, first and biggest.
                     if (room.callingOut.isNotEmpty()) {
                         Spacer(Modifier.height(16.dp))
-                        Text(text = "CALLING OUT", style = SigningQuietStyle, color = quietInk)
                         room.callingOut.forEach { name ->
                             Text(
                                 text = name,
@@ -261,11 +266,7 @@ private fun AntechamberListView(
                     if (room.openApp != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (room.openViaDrum) {
-                                    "OPEN BY THE DRUM — ${room.openApp}"
-                                } else {
-                                    "OPEN — ${room.openApp}"
-                                },
+                                text = room.openApp.orEmpty(),
                                 style = SigningBodyStyle,
                                 color = ink,
                                 modifier = Modifier.weight(1f)
@@ -315,17 +316,9 @@ private fun AntechamberListView(
                                 .testTag("antechamber_pile_entry"),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "THE HELD PILE",
-                                style = SigningHandleStyle,
-                                color = ink,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                text = room.heldCount.toString(),
-                                style = SigningFiguresStyle,
-                                color = quietInk
-                            )
+                            // Deck §4.5/§5.1: no caption, no
+                            // count — the step itself.
+                            Spacer(Modifier.weight(1f))
                         }
                     }
                 }
@@ -341,19 +334,10 @@ private fun AntechamberListView(
                 // of the room, never a row in the list above. Its
                 // stock is the mechanism's own form: a strip of
                 // minute-marks that depletes (R2-4 — never a number).
-                Text(
-                    text = "THE DRUM — BEYOND THE SIGNED SET",
-                    style = SigningQuietStyle,
-                    color = quietInk
-                )
                 Spacer(Modifier.height(8.dp))
                 if (room.purseSpent) {
-                    Text(
-                        text = "The purse is spent — the crank will not turn.",
-                        style = SigningBodyStyle,
-                        color = ink,
-                        modifier = Modifier.testTag("antechamber_purse_spent")
-                    )
+                    // Deck §6.4: ∅ words at the hard stop.
+                    // Nothing stands here.
                 } else {
                     DrumStockStrip(
                         minutes = room.purseMinutes,
@@ -385,8 +369,6 @@ private fun AntechamberListView(
                 // The read-only face: the day as set. No clickable
                 // exists in this block — reading is all it is for.
                 Column(modifier = Modifier.testTag("antechamber_readonly")) {
-                    Text(text = "THE DAY AS SET", style = SigningQuietStyle, color = quietInk)
-                    Spacer(Modifier.height(6.dp))
                     readOnlyLines.forEach { line ->
                         Text(text = line, style = SigningBodyStyle, color = quietInk)
                     }
@@ -464,12 +446,8 @@ private fun HeldPileView(
     HeldPileLayout(
         waiting = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "THE HELD PILE",
-                    style = SigningHeadStyle,
-                    color = ink,
-                    modifier = Modifier.weight(1f)
-                )
+                // Deck §5: the pile carries no heading.
+                Spacer(Modifier.weight(1f))
                 AntechamberHandle("BACK", ink, "pile_back", onBack)
             }
             Spacer(Modifier.height(16.dp))
@@ -512,7 +490,7 @@ private fun HeldPileView(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(text = code.hour, style = SigningFiguresStyle, color = ink)
                                 Text(
-                                    text = "A SHOWING COSTS ONE MINUTE",
+                                    text = stringResource(StrongroomCopy.OneMinute),
                                     style = SigningQuietStyle,
                                     color = quietInk,
                                     modifier = Modifier.testTag("pile_price_${code.id}")
@@ -544,21 +522,14 @@ private fun HeldPileView(
                         color = quietInk,
                         modifier = Modifier.weight(1f)
                     )
-                    AntechamberHandle("TAKE IT", ink, "pile_take_${call.id}") { onTake(call) }
-                    AntechamberHandle("LEAVE IT", ink, "pile_leave_${call.id}") {
+                    AntechamberHandle(stringResource(StrongroomCopy.TakeIt), ink, "pile_take_${call.id}") { onTake(call) }
+                    AntechamberHandle(stringResource(StrongroomCopy.LeaveIt), ink, "pile_leave_${call.id}") {
                         onLeaveCall(call)
                     }
                 }
             }
-            if (room.purseSpent && room.heldCodes.isNotEmpty()) {
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    text = "The purse is spent — codes wait for the lift.",
-                    style = SigningBodyStyle,
-                    color = quietInk,
-                    modifier = Modifier.testTag("pile_codes_wait")
-                )
-            }
+            // Deck §5.7: on a spent day the held line waits as
+            // testimony — ∅ words.
         }
     )
 }

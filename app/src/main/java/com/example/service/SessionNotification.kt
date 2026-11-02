@@ -155,7 +155,7 @@ object SessionNotification {
         )
         fun oneLineBuilder() = NotificationCompat.Builder(appContext, SessionNotificationSpec.CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_shield)
-            .setContentText(SessionNotificationSpec.WORDING)
+            .setContentText(appContext.getString(R.string.copy_10_2_notification))
         val publicVersion = oneLineBuilder()
             .setOngoing(SessionNotificationSpec.ONGOING)
             .build()
