@@ -39,6 +39,7 @@ import com.example.data.StrongroomDayEntity
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.data.StrongroomStore
 import com.example.data.toPurse
+import com.example.data.toSealSpan
 import com.example.data.toSigningRecord
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
@@ -447,6 +448,42 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // lawful exactly when the snapshot stands.
         viewModel.noteStrongroomSealStanding(facts.first != null)
     }
+    // PLACES (the break's standing, from the Strongroom day
+    // itself): the sealed span's firing + the crank week, read on
+    // the same tick AND whenever the standing place changes —
+    // the crank is spent from inside the antechamber, and its
+    // spend moves the place, which is this host's signal to
+    // re-read the week before the minute runs. The standings are
+    // then derived per reading from a short clock tick: the
+    // firing runs on the elapsed clock the span was struck on,
+    // the crank minute on the wall clock that struck its spend.
+    // Before this cure the shell derived the BREAK place from
+    // the legacy session alone, so a Strongroom day's firing
+    // stood no room and unblocked nothing.
+    var spanBreakFacts by remember {
+        mutableStateOf<Pair<StrongroomDay.BreakFiring?, StrongroomDay.GovernorCrankWeek?>>(
+            null to null
+        )
+    }
+    val standingPlaceForBreak by viewModel.currentPlace.collectAsStateWithLifecycle()
+    LaunchedEffect(doorwayRefreshTick.value, standingPlaceForBreak) {
+        spanBreakFacts = loadSpanBreakFacts(appContext)
+    }
+    var shellNowElapsed by remember {
+        mutableStateOf(android.os.SystemClock.elapsedRealtime())
+    }
+    var shellNowWall by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(250L)
+            shellNowElapsed = android.os.SystemClock.elapsedRealtime()
+            shellNowWall = System.currentTimeMillis()
+        }
+    }
+    val strongroomBreakStanding =
+        spanBreakFacts.first?.isRunning(shellNowElapsed) == true
+    val crankMinuteStanding =
+        spanBreakFacts.second?.minuteRunningAt(shellNowWall) == true
     // BUILD-SR-40 (the Lifting + Plate Strike slice): the
     // lifting's standing facts, read from the Strongroom store
     // on the same tick — the newest struck day (its plate, struck
@@ -578,6 +615,12 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // the face's place in parallel: one derivation, and both
         // hosts render its one snapshot.
         sealedStanding = sealedFaceState != null,
+        // THE BREAK'S STRONGROOM STANDINGS (PLACES cure): the
+        // span's firing + the crank minute, derived above from
+        // the sealed day's own facts — either one standing stands
+        // the BREAK place for a Strongroom day.
+        strongroomBreakStanding = strongroomBreakStanding,
+        crankMinuteStanding = crankMinuteStanding,
         doorwayContent = {
             // While a Strongroom seal stands, the doorway place
             // itself stands as the sealed face (BUILD-SR-37;
@@ -767,10 +810,14 @@ private fun ShellHost(viewModel: MonolithViewModel) {
  * closed.
  *
  * The governor's crank: this host persists the week's spend and
- * returns him to the sealed face. The door's crack for that
- * minute is the seal's own consumption and no kept verb carries
- * it — named GAP-COORD-CRANK-CONSUMPTION on the slice's PR, never
- * invented here.
+ * returns him to the sealed face. The minute itself is carried
+ * by the week's own window (GovernorCrankWeek.minuteRunningAt):
+ * while it runs, the shell stands the BREAK place on the crank's
+ * standing and the break room renders the minute's own clock —
+ * the seal's consumption, opened for exactly those 60 seconds
+ * inside the block (GAP-COORD-CRANK-CONSUMPTION, closed by the
+ * PLACES wiring: the shell's crankMinuteStanding + BreakHost's
+ * crank clock below).
  */
 @Composable
 private fun AntechamberHost(viewModel: MonolithViewModel) {
@@ -940,15 +987,20 @@ private fun AntechamberHost(viewModel: MonolithViewModel) {
  * clock is re-derived from the engine's standing facts on every
  * engine tick: first the Strongroom day's own firing (the
  * signing's offset + priced length against the seal's elapsed
- * span, through the domain's breakFiring), else the kept
+ * span, through the domain's breakFiring), else the governor's
+ * crank minute while its 60-second window runs (PLACES — the
+ * one clock here anchored on the wall reading that struck the
+ * spend, since the week's spend is a wall fact), else the kept
  * session's standing break facts (its length in force + its
  * remaining seconds — the same facts the shell's place
  * derivation stands on). Between ticks the surface interpolates
- * on the monotonic clock alone; the wall clock is never
- * consulted. When neither clock stands, the host renders
- * nothing — a break that is not firing has no surface, and a
- * legacy session break on a day no Strongroom signing stands
- * for is the old engine's business, not this room's.
+ * on the monotonic clock alone. When no clock stands, the host
+ * renders nothing — a break that is not firing has no surface,
+ * and a legacy session break on a day no Strongroom signing
+ * stands for is the old engine's business, not this room's.
+ * The shell now stands this place from the same Strongroom
+ * facts (ShellHost's span-break derivation), not from the
+ * legacy session alone — the PLACES cure.
  *
  * The interior's acts are the held room's own, through the same
  * store verbs the antechamber host uses: a within-reach launch
@@ -1004,12 +1056,29 @@ private fun BreakHost(viewModel: MonolithViewModel) {
                         com.example.ui.`break`.BreakClock.fromFiring(firing, nowE)
                     }
             } else null
+            // THE CRANK'S CLOCK (PLACES — GAP-COORD-CRANK-
+            // CONSUMPTION closed): the week's spent minute,
+            // while its own 60-second window runs, is a break
+            // inside the block — a 60-second clock anchored on
+            // the minute's remaining span at this reading, so
+            // the room renders the crank minute itself and its
+            // within-reach acts stand for exactly that long.
+            val crankClock = store.crankWeek(System.currentTimeMillis()).let { week ->
+                val remaining = week.minuteRemainingMillisAt(System.currentTimeMillis())
+                if (remaining <= 0L) null
+                else com.example.ui.`break`.BreakClock(
+                    totalMillis = StrongroomDay.CRANK_SECONDS * 1_000L,
+                    remainingAtAnchorMillis = remaining,
+                    anchorElapsedMillis = nowE
+                )
+            }
             val sessionClock = session?.takeIf { it.isInSafeBreak }?.let { s ->
                 com.example.ui.`break`.BreakClock.fromSession(
                     s.effectiveBreakSeconds, s.safeBreakSecondsRemaining, nowE
                 )
             }
-            val clock = firingClock ?: sessionClock ?: return@withContext null
+            val clock = firingClock ?: crankClock ?: sessionClock
+                ?: return@withContext null
             val heldRows = store.heldArrivals(row.filingDateIso)
             val waiting = com.example.ui.antechamber.AntechamberModel.waitingPile(heldRows)
             Triple(row.toSigningRecord(), clock, waiting)
@@ -1438,6 +1507,35 @@ private suspend fun loadDrawerState(context: Context): DrawerState =
             handingBack = LiftingPlate.HandingBack.prepare(waiting),
             handingBackDelivered = false
         )
+    }
+
+/**
+ * The break's Strongroom standing facts (PLACES) — the ONLY
+ * source of the shell's strongroomBreakStanding /
+ * crankMinuteStanding in the composed app:
+ *
+ *  - **The firing**: the sealed day's signing + its struck span,
+ *    through the domain's [StrongroomDay.breakFiring] — null when
+ *    no seal stands or the signing priced no break. Whether it
+ *    RUNS is the firing's own arithmetic against the elapsed
+ *    clock, derived by the host per reading.
+ *  - **The crank week**: the week's minute as the store stands
+ *    it (legacy carry included). Whether its 60 seconds RUN is
+ *    the week's own arithmetic against the wall clock.
+ */
+private suspend fun loadSpanBreakFacts(
+    context: Context
+): Pair<StrongroomDay.BreakFiring?, StrongroomDay.GovernorCrankWeek?> =
+    withContext(Dispatchers.IO) {
+        val store = StrongroomStore(AppContainer.dao(context.applicationContext))
+        val row = store.sealedDay()
+        val firing = row?.let {
+            val span = it.toSealSpan()
+            if (span != null) StrongroomDay.breakFiring(it.toSigningRecord(), span)
+            else null
+        }
+        val crank = store.crankWeek(System.currentTimeMillis())
+        firing to crank
     }
 
 /**
