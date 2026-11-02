@@ -76,4 +76,60 @@ class MaximumPresetsTest {
         assertEquals(195, train.specFor(30).amplitude)
         assertEquals(90L, MaximumPresets.STRETCH_MIN_STEP_INTERVAL_MS)
     }
+
+    // ---------- Census additions (LEAD-STAGE-11, by number) ----------
+
+    @Test
+    fun `E-04 the clunk pairing hook names the engine's own sync points, in order`() {
+        val sealingClunks = com.example.ui.motion.MonolithScores.Sealing.syncPoints
+            .filter { it.name.startsWith("bolt-clunk") }.map { it.name }
+        assertEquals(sealingClunks, MaximumPresets.BoltClunkPairing.map { it.second })
+        assertEquals(listOf("bolt-1", "bolt-2", "bolt-3"), MaximumPresets.BoltClunkPairing.map { it.first })
+    }
+
+    @Test
+    fun `E-06 the grille latch seats within its constraint and its curves are distinct by value`() {
+        assertTrue(MaximumPresets.GrilleLatchSpec.amplitude <= 150)
+        assertTrue(MaximumPresets.GrilleLatchSpec.durationMs <= 40)
+        // M-4: distinct BY VALUE at a probe point, not just by name.
+        val latch = MaximumPresets.GrilleLatchCurve.resistanceAt(1f, 1f)
+        val swing = MaximumPresets.GrilleSwingCurve.resistanceAt(1f, 1f)
+        assertEquals(2.5f, latch, 0.001f)
+        assertEquals(1.35f, swing, 0.001f)
+        assertTrue(latch != swing)
+    }
+
+    @Test
+    fun `E-10 spent stops strain over the ruled 4 degrees and then refuse`() {
+        assertEquals(4.0f, MaximumPresets.SPENT_STOP_TRAVEL_DEG, 0f)
+        val stop = MaximumPresets.spentPurseStop(travelLimit = 90f)
+        assertEquals(4.0f, stop.spec.approachZone, 0f)
+        val refused = stop.push(currentValue = 89f, proposedValue = 95f, velocity = 1f)
+        assertTrue(refused.refused)
+        assertEquals(90f, refused.value, 0f)
+    }
+
+    @Test
+    fun `E-14 the desk clock's extent is linear in held time - an eased extent would fail here`() {
+        assertEquals(0f, MaximumPresets.deskClockExtent(0f), 0f)
+        assertEquals(0.25f, MaximumPresets.deskClockExtent(0.25f), 0f)
+        assertEquals(0.5f, MaximumPresets.deskClockExtent(0.5f), 0f)
+        assertEquals(1f, MaximumPresets.deskClockExtent(1f), 0f)
+        assertEquals(1f, MaximumPresets.deskClockExtent(2f), 0f) // clamped, never beyond the day
+    }
+
+    @Test
+    fun `the dynamic range ships as data, heaviest to lightest, uncompressed`() {
+        // H-6 / FEEL-SR-3 section 2: 240 down to 30, strictly descending.
+        val peaks = MaximumPresets.DynamicRangePeaks
+        assertEquals(240, peaks.first())
+        assertEquals(30, peaks.last())
+        assertTrue(peaks.zipWithNext().all { (a, b) -> a > b })
+    }
+
+    @Test
+    fun `the ruled exclusions stand named - ring-hour out by law, the drum's end is its return`() {
+        assertEquals(listOf("ring-hour", "drum-minute-end"), MaximumPresets.ExcludedByLaw.map { it.name })
+        assertTrue(MaximumPresets.CensusOrder.none { it.name == "ring-hour" })
+    }
 }
