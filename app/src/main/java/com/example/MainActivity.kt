@@ -65,8 +65,6 @@ import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
 import com.example.domain.LiftingPlate
 import com.example.ui.doorway.DoorwayState
-import com.example.ui.doorway.HomeDoor
-import com.example.ui.doorway.HomeDoorActions
 import com.example.ui.doorway.plateTruthForDoorway
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
@@ -80,9 +78,6 @@ import com.example.ui.sealed.DoorWordSetter
 import com.example.ui.sealed.SealedFace
 import com.example.ui.sealed.SealedFaceActions
 import com.example.ui.sealed.SealedFaceState
-import com.example.ui.sealed.SwingAct
-import com.example.ui.sealed.SwingActActions
-import com.example.ui.sealed.SwingActState
 import com.example.ui.shell.StrongroomShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -436,12 +431,36 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     // and the shell rests at the doorway.
     var sealedFaceState by remember { mutableStateOf<SealedFaceState?>(null) }
     var swingStanding by remember { mutableStateOf(false) }
-    var swingActState by remember { mutableStateOf(SwingActState()) }
+    // NAV-ALL (normal app): the sealed day's allowed apps for
+    // the sealed screen's grid — the record's own allowed set,
+    // labelled by the phone. Read on the same tick as the face.
+    var sealedApps by remember {
+        mutableStateOf<List<com.example.ui.sealed.SealedAppEntry>>(emptyList())
+    }
     val shellScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(doorwayRefreshTick.value) {
         val facts = loadSealFacts(appContext)
         sealedFaceState = facts.first
         swingStanding = facts.second
+        sealedApps = if (facts.first != null) {
+            withContext(Dispatchers.IO) {
+                val store = StrongroomStore(AppContainer.dao(appContext))
+                val record = store.sealedDay()?.toSigningRecord()
+                record?.allowedPackages?.map { pkg ->
+                    val label = try {
+                        val pm = appContext.packageManager
+                        pm.getApplicationLabel(
+                            pm.getApplicationInfo(pkg, 0)
+                        ).toString()
+                    } catch (t: Throwable) {
+                        pkg.substringAfterLast('.')
+                    }
+                    com.example.ui.sealed.SealedAppEntry(pkg, label)
+                } ?: emptyList()
+            }
+        } else {
+            emptyList()
+        }
         // The movement law reads the same one derivation
         // (BUILD-SR-38 merge composition): the second touch is
         // lawful exactly when the snapshot stands.
@@ -615,6 +634,13 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     // the face owns the place whole and there is no route into the
     // normal app (D-7), setup included.
     var setupOpen by remember { mutableStateOf(false) }
+    // NAV-ALL: the setup side's landing section — HOME's APPS
+    // button deep-links the picker, SETTINGS lands the setup
+    // home. SetupHost is composed only while setupOpen stands,
+    // so the remembered section inside it re-seeds per opening.
+    var setupSection by remember {
+        mutableStateOf(com.example.ui.setup.SetupSection.HOME)
+    }
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
     }
@@ -790,133 +816,159 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                 } else if (setupOpen) {
                     SetupHost(
                         viewModel = viewModel,
-                        onClose = { setupOpen = false }
+                        onClose = { setupOpen = false },
+                        initialSection = setupSection
                     )
                 } else {
-                // HOME-FIRST (2026-11-03, Sarthak's redirect):
-                // the doorway place is the HOME DOOR — the vault
-                // door modelled in code (HomeDoor): the top plate
-                // (his sentence + the lifting hour), the great
-                // wheel and the combination dial worked by hand,
-                // SIGN TOMORROW, and the drawer pull at the foot.
-                // The pasted print face is retired from this
-                // place (the print survives as the app's icon
-                // only). SIGN TOMORROW stands the signing table
-                // in this same place — the evening's act — with
-                // a plain way back to the door (and Back returns
-                // here first); the swing act stands under the
-                // door on the mornings it is invocable, as before.
+                // NAV-ALL (the NORMAL-APP redirect, Sarthak's word
+                // 2026-11-03: "Cant u build a normal fucking app"):
+                // the doorway place is a NORMAL HOME screen —
+                // small door picture, plain status lines, five big
+                // labelled buttons (ui/home/Home.kt). SIGN TOMORROW
+                // stands the signing table in this place (back row
+                // + Back return here); TODAY shows the standing
+                // day and carries the seal act on a labelled
+                // button (the swing's own activation — the swing
+                // surface stands retired in its file for the later
+                // art pass, its act lives here); APPS deep-links
+                // the setup side's picker, SETTINGS its home;
+                // PAST DAYS opens the drawer. The buttons stand in
+                // EVERY unsealed state — day born or not — so a
+                // fresh install is an app, not a picture with one
+                // button (the build-5 lesson). The modelled
+                // HomeDoor likewise stands retired in Doorway.kt;
+                // SETUP-FLOW's foot entry is superseded by the
+                // APPS / SETTINGS buttons (same doors, named).
                 var signOpen by remember { mutableStateOf(false) }
+                var todayOpen by remember { mutableStateOf(false) }
+                var sealFailed by remember { mutableStateOf(false) }
                 BackHandler(enabled = signOpen) { signOpen = false }
+                BackHandler(enabled = todayOpen) { todayOpen = false }
                 androidx.compose.foundation.layout.Column(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
-                    if (signOpen) {
-                        // The way back to the door, in plain words.
-                        androidx.compose.foundation.layout.Row(
-                            modifier = androidx.compose.ui.Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    signOpen = false
-                                }
-                                .padding(horizontal = 20.dp, vertical = 14.dp)
-                        ) {
-                            androidx.compose.material3.Text(
-                                text = "‹ THE DOOR",
-                                style = com.example.ui.foundation
-                                    .StrongroomType.Anon2,
-                                color = com.example.ui.foundation
-                                    .StrongroomInks.Gold
-                            )
-                        }
-                        androidx.compose.foundation.layout.Box(
-                            modifier = androidx.compose.ui.Modifier.weight(1f)
-                        ) {
-                            SigningHost(viewModel = viewModel)
-                        }
-                    } else {
-                        androidx.compose.foundation.layout.Box(
-                            modifier = androidx.compose.ui.Modifier.weight(1f)
-                        ) {
-                            HomeDoor(
-                                state = doorwayState,
-                                actions = HomeDoorActions(
-                                    onSignTomorrow = { signOpen = true },
-                                    onOpenDrawer = {
-                                        // The opening act is the
-                                        // drawer's slide
-                                        // (DRAWER_OPEN, wired by
-                                        // the SOUND seat).
-                                        StrongroomEngineBridge.fireSurfaceEvent(
-                                            appContext, HapticEvent.DRAWER_OPEN
-                                        )
-                                        drawerOpen = true
-                                    },
-                                    onFeelEvent = { event ->
-                                        StrongroomEngineBridge.fireSurfaceEvent(
-                                            appContext, event
-                                        )
+                    when {
+                        signOpen -> {
+                            // The way back home, in plain words.
+                            androidx.compose.foundation.layout.Row(
+                                modifier = androidx.compose.ui.Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        signOpen = false
                                     }
+                                    .padding(horizontal = 20.dp, vertical = 14.dp)
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "‹ HOME",
+                                    style = com.example.ui.foundation
+                                        .StrongroomType.Anon2,
+                                    color = com.example.ui.foundation
+                                        .StrongroomInks.Gold
                                 )
-                            )
+                            }
+                            androidx.compose.foundation.layout.Box(
+                                modifier = androidx.compose.ui.Modifier.weight(1f)
+                            ) {
+                                SigningHost(viewModel = viewModel)
+                            }
                         }
-                        if (swingStanding) {
-                            SwingAct(
-                                state = swingActState,
-                                actions = SwingActActions(
-                                    onContact = {
+                        todayOpen -> {
+                            com.example.ui.home.TodayScreen(
+                                state = com.example.ui.home.TodayState(
+                                    statusLine = when {
+                                        sealFailed ->
+                                            "The seal did not take — try again."
+                                        sealedFaceState != null ->
+                                            "Sealed until " +
+                                                sealedFaceState.printings
+                                                    .liftingHour.text
+                                        swingStanding ->
+                                            "Signed — not sealed yet"
+                                        doorwayState.composition != null ->
+                                            "Signed"
+                                        else -> "Nothing signed for today"
+                                    },
+                                    taskLine = doorwayState.composition?.taskLine,
+                                    liftingHourText =
+                                        doorwayState.composition?.liftingHourText
+                                            ?: sealedFaceState?.printings
+                                                ?.liftingHour?.text,
+                                    lockedCount =
+                                        doorwayState.composition?.lockedThings,
+                                    canSeal = swingStanding
+                                ),
+                                actions = com.example.ui.home.TodayActions(
+                                    onSealToday = {
                                         shellScope.launch {
                                             val todayIso = StrongroomDay
-                                                .filingDateIso(System.currentTimeMillis())
-                                            val span = withContext(Dispatchers.IO) {
-                                                StrongroomEngineBridge.activateSeal(
-                                                    appContext, todayIso
+                                                .filingDateIso(
+                                                    System.currentTimeMillis()
                                                 )
+                                            val span = withContext(Dispatchers.IO) {
+                                                StrongroomEngineBridge
+                                                    .activateSeal(appContext, todayIso)
                                             }
-                                            swingActState = if (span != null) {
-                                                SwingActState(sealStruck = true)
+                                            if (span != null) {
+                                                sealFailed = false
+                                                todayOpen = false
+                                                doorwayRefreshTick.value++
                                             } else {
-                                                SwingActState(sealFailed = true)
+                                                sealFailed = true
                                             }
                                         }
                                     },
-                                    onCeremonyComplete = {
-                                        swingActState = SwingActState()
-                                        doorwayRefreshTick.value++
-                                    }
-                                )
+                                    onBack = { todayOpen = false }
+                                ),
+                                modifier = androidx.compose.ui.Modifier.weight(1f)
                             )
                         }
-                    }
-                    // NAV-ALL merge resolution (SETUP-FLOW × the
-                    // home hub): the old doorway furniture column
-                    // (SigningHost box + DrawerFront) is superseded
-                    // by the hub — SIGN TOMORROW stands the signing
-                    // table, the door's own pull opens the drawer.
-                    // SETUP-FLOW's entry survives the merge at the
-                    // foot of the hub, in unsealed hours, exactly
-                    // as they built it: plain, gold-ruled, one tap
-                    // to the setup side (permissions · app picker ·
-                    // guard settings), whose host branch stands
-                    // above in this same doorway place.
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                            .border(
-                                1.dp,
-                                com.example.ui.foundation.StrongroomInks.Gold,
-                                RoundedCornerShape(6.dp)
+                        else -> {
+                            com.example.ui.home.HomeScreen(
+                                state = com.example.ui.home.HomeState(
+                                    todayLine = when {
+                                        sealedFaceState != null ->
+                                            "Sealed until " +
+                                                sealedFaceState.printings
+                                                    .liftingHour.text
+                                        swingStanding ->
+                                            "Today is signed — it seals " +
+                                                "at the first sitting"
+                                        doorwayState.composition != null ->
+                                            "Today is signed"
+                                        else -> "No day signed for today"
+                                    },
+                                    tomorrowLine =
+                                        doorwayState.plateLiftingText?.let {
+                                            "Tomorrow is signed — lifts at $it"
+                                        } ?: "Tomorrow is not signed yet"
+                                ),
+                                actions = com.example.ui.home.HomeActions(
+                                    onSignTomorrow = { signOpen = true },
+                                    onToday = { todayOpen = true },
+                                    onApps = {
+                                        setupSection =
+                                            com.example.ui.setup
+                                                .SetupSection.APPS
+                                        setupOpen = true
+                                    },
+                                    onSettings = {
+                                        setupSection =
+                                            com.example.ui.setup
+                                                .SetupSection.HOME
+                                        setupOpen = true
+                                    },
+                                    onPastDays = {
+                                        StrongroomEngineBridge
+                                            .fireSurfaceEvent(
+                                                appContext,
+                                                HapticEvent.DRAWER_OPEN
+                                            )
+                                        drawerOpen = true
+                                    }
+                                ),
+                                modifier = androidx.compose.ui.Modifier.weight(1f)
                             )
-                            .clickable { setupOpen = true }
-                            .padding(vertical = 12.dp),
-                        contentAlignment = androidx.compose.ui.Alignment.Center
-                    ) {
-                        androidx.compose.material3.Text(
-                            "SETUP / GUARD",
-                            style = com.example.ui.foundation.StrongroomType.Scr2,
-                            color = com.example.ui.foundation.StrongroomInks.Gold
-                        )
+                        }
                     }
                 }
                 }
@@ -950,7 +1002,15 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // render that one snapshot; re-shown exactly as cut,
             // never recomposed, ledger B-10).
             sealedFaceState?.let { face ->
-                SealedFace(state = face, actions = sealedFaceActions)
+                // NAV-ALL (normal app): the sealed place stands
+                // the plain status screen + the allowed-apps
+                // grid (SealedScreen); the doorway birth-frame
+                // above keeps the bare status face.
+                com.example.ui.sealed.SealedScreen(
+                    state = face,
+                    actions = sealedFaceActions,
+                    allowedApps = sealedApps
+                )
             }
         },
         liftingContent = {
@@ -979,7 +1039,7 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                                 .padding(horizontal = 20.dp, vertical = 14.dp)
                         ) {
                             androidx.compose.material3.Text(
-                                text = "‹ THE DOOR",
+                                text = "‹ HOME",
                                 style = com.example.ui.foundation
                                     .StrongroomType.Anon2,
                                 color = com.example.ui.foundation
@@ -2201,14 +2261,21 @@ private fun reaskPostNotifications(
  *    printed back in plain words.
  */
 @Composable
-private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
+private fun SetupHost(
+    viewModel: MonolithViewModel,
+    onClose: () -> Unit,
+    initialSection: com.example.ui.setup.SetupSection =
+        com.example.ui.setup.SetupSection.HOME
+) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val apps by viewModel.apps.collectAsStateWithLifecycle()
 
     var state by remember {
-        mutableStateOf(com.example.ui.setup.SetupState())
+        mutableStateOf(
+            com.example.ui.setup.SetupState(section = initialSection)
+        )
     }
     var guardNote by remember { mutableStateOf("") }
     var refreshTick by remember { mutableStateOf(0) }

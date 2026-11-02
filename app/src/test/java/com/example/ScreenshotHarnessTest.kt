@@ -1652,7 +1652,9 @@ class ScreenshotHarnessTest {
                 )
             }
         }
-        writeShot("sealed-face-device.png", bitmap)
+        // NAV-ALL (normal-app redirect): the face is plain now;
+        // the sparse gate is the honest gate for it.
+        writeShotSparse("sealed-face-device.png", bitmap)
     }
 
     @Test
@@ -1740,6 +1742,85 @@ class ScreenshotHarnessTest {
         writeShotSparse("airlock-device.png", bitmap)
     }
 
+    /**
+     * NAV-ALL (normal-app standings): HOME with NO day born —
+     * the fresh-install state from Sarthak's build-5 photos:
+     * every button stands anyway (SIGN TOMORROW · TODAY · APPS ·
+     * SETTINGS · PAST DAYS), because APPS/SETTINGS are how a
+     * first run sets its lifting hour. TODAY signed + sealable.
+     * The SEALED SCREEN with its allowed-apps grid.
+     */
+    @Test
+    fun home_deviceSpec_noDayBorn() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                com.example.ui.home.HomeScreen(
+                    state = com.example.ui.home.HomeState(
+                        todayLine = "No day signed for today",
+                        tomorrowLine = "Tomorrow is not signed yet"
+                    ),
+                    actions = com.example.ui.home.HomeActions(
+                        onSignTomorrow = {}, onToday = {}, onApps = {},
+                        onSettings = {}, onPastDays = {}
+                    )
+                )
+            }
+        }
+        writeShotSparse("home-device.png", bitmap)
+    }
+
+    @Test
+    fun today_deviceSpec_signed() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                com.example.ui.home.TodayScreen(
+                    state = com.example.ui.home.TodayState(
+                        statusLine = "Signed — not sealed yet",
+                        taskLine = "Physics — Rotational Mechanics",
+                        liftingHourText = "05:30",
+                        lockedCount = 14,
+                        canSeal = true
+                    ),
+                    actions = com.example.ui.home.TodayActions(
+                        onSealToday = {}, onBack = {}
+                    )
+                )
+            }
+        }
+        writeShotSparse("today-device.png", bitmap)
+    }
+
+    @Test
+    fun sealedScreen_deviceSpec_grid() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                com.example.ui.sealed.SealedScreen(
+                    state = state,
+                    actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {}),
+                    allowedApps = listOf(
+                        com.example.ui.sealed.SealedAppEntry(
+                            "com.google.android.dialer", "Phone"
+                        ),
+                        com.example.ui.sealed.SealedAppEntry(
+                            "com.google.android.gm", "Gmail"
+                        ),
+                        com.example.ui.sealed.SealedAppEntry(
+                            "org.telegram.messenger", "Telegram"
+                        ),
+                        com.example.ui.sealed.SealedAppEntry(
+                            "com.google.android.apps.maps", "Maps"
+                        )
+                    )
+                )
+            }
+        }
+        writeShotSparse("sealed-screen-device.png", bitmap)
+    }
+
     @Test
     fun navWalk_home_signing_back_drawer_deviceSpec() {
         val activity = composeRule.activity
@@ -1796,7 +1877,7 @@ class ScreenshotHarnessTest {
                                             )
                                     ) {
                                         androidx.compose.material3.Text(
-                                            text = "‹ THE DOOR",
+                                            text = "‹ HOME",
                                             style = com.example.ui.foundation
                                                 .StrongroomType.Anon2,
                                             color = StrongroomInks.Gold
@@ -1820,12 +1901,17 @@ class ScreenshotHarnessTest {
                                         modifier = Modifier.weight(1f)
                                     )
                                 }
-                            else -> HomeDoor(
-                                state = homeStandingState(),
-                                actions = HomeDoorActions(
+                            else -> com.example.ui.home.HomeScreen(
+                                state = com.example.ui.home.HomeState(
+                                    todayLine = "No day signed for today",
+                                    tomorrowLine = "Tomorrow is not signed yet"
+                                ),
+                                actions = com.example.ui.home.HomeActions(
                                     onSignTomorrow = { signOpen = true },
-                                    onOpenDrawer = { drawerOpen = true },
-                                    onFeelEvent = {}
+                                    onToday = {},
+                                    onApps = {},
+                                    onSettings = {},
+                                    onPastDays = { drawerOpen = true }
                                 )
                             )
                         }
@@ -1843,20 +1929,25 @@ class ScreenshotHarnessTest {
             )
             view.layout(0, 0, w, h)
         }
-        // (1) Home stands, with its one big act on it.
-        composeRule.onNodeWithContentDescription("SIGN TOMORROW").assertExists()
-        snap("nav-walk-1-home.png")
+        // (1) Home stands — ALL five buttons, no day born.
+        composeRule.onNodeWithText("SIGN TOMORROW").assertExists()
+        composeRule.onNodeWithText("TODAY").assertExists()
+        composeRule.onNodeWithText("APPS").assertExists()
+        composeRule.onNodeWithText("SETTINGS").assertExists()
+        composeRule.onNodeWithText("PAST DAYS").assertExists()
+        snap("nav-walk-1-home.png", sparse = true)
         // (2) SIGN TOMORROW, by the button's own click: the
         // signing table stands in the place.
-        composeRule.onNodeWithContentDescription("SIGN TOMORROW").performClick()
-        composeRule.onNodeWithText("‹ THE DOOR").assertExists()
+        composeRule.onNodeWithText("SIGN TOMORROW").performClick()
+        composeRule.onNodeWithText("‹ HOME").assertExists()
         snap("nav-walk-2-signing.png")
-        // (3) Back, by the host's own row: the door again.
-        composeRule.onNodeWithText("‹ THE DOOR").performClick()
-        composeRule.onNodeWithContentDescription("SIGN TOMORROW").assertExists()
-        snap("nav-walk-3-home-again.png")
-        // (4) The drawer pull: the past-days drawer stands.
-        composeRule.onNodeWithContentDescription("PAST DAYS").performClick()
+        // (3) Back, by the host's own row: home again.
+        composeRule.onNodeWithText("‹ HOME").performClick()
+        composeRule.onNodeWithText("SIGN TOMORROW").assertExists()
+        snap("nav-walk-3-home-again.png", sparse = true)
+        // (4) PAST DAYS: the plain drawer list stands.
+        composeRule.onNodeWithText("PAST DAYS").performClick()
+        composeRule.onNodeWithText("Past days").assertExists()
         snap("nav-walk-4-drawer.png", sparse = true)
     }
 }
