@@ -116,13 +116,52 @@ class AndroidWaveformPlayer(context: Context) : WaveformPlayer {
 
     companion object {
 
+        /** The motor fact, cached per process (FEEL-SR-1 seam
+         *  term 2): a profile is a property of the DEVICE, never
+         *  of the moment — the same hand must meet the same door
+         *  every day, and a capability probe is not paid per
+         *  firing. */
+        @Volatile
+        private var cachedProfile: MotorProfile? = null
+
         /**
-         * The motor fact, read from the live vibrator. The
-         * classification itself is the pure [classify] below, so
-         * the boundary table is JVM-provable; this function only
-         * gathers the platform's answers.
+         * Prime the felt leg (FEEL-SR-1 R-8): resolve the
+         * vibrator and the profile ahead of a ceremony whose
+         * first call cannot afford cold latency — the lift's
+         * twin of the seal's `primeForSeal`. Fires NOTHING.
+         */
+        fun prime(context: Context) {
+            motorProfile(context)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val vm = context.applicationContext
+                        .getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                    vm?.defaultVibrator?.hasVibrator()
+                } else {
+                    @Suppress("DEPRECATION")
+                    (context.applicationContext
+                        .getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator)
+                        ?.hasVibrator()
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        /**
+         * The motor fact, read from the live vibrator (first
+         * call) and cached thereafter. The classification itself
+         * is the pure [classify] below, so the boundary table is
+         * JVM-provable; this function only gathers the
+         * platform's answers.
          */
         fun motorProfile(context: Context): MotorProfile {
+            cachedProfile?.let { return it }
+            val profile = readMotorProfile(context)
+            cachedProfile = profile
+            return profile
+        }
+
+        private fun readMotorProfile(context: Context): MotorProfile {
             val vibrator = try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val vm = context.applicationContext

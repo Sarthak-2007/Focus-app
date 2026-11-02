@@ -25,6 +25,12 @@ package com.example.service.haptics
  * it made — what was asked of each sense — so callers and tests
  * read the same record. A silent-by-law event returns a
  * dispatch of three silences; that is a firing, not a no-op.
+ *
+ * PRE-EMPTION (FEEL-SR-1 L-5): if the system takes the motor
+ * mid-waveform (a contact call rings through by ruling), the
+ * ceremony is truncated and is NEVER replayed or resumed —
+ * the waveform is testimony, not truth, and a witness does
+ * not re-testify. This bus contains no retry, by design.
  */
 class SensoryBus(
     private val waveformPlayer: WaveformPlayer,
