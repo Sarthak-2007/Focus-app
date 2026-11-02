@@ -20,7 +20,10 @@ import org.junit.Test
  *    kept place; a real sentence stands itself.
  *  - The model carries NO field for the door-word or the held
  *    mark (G-1/G-2: no word exists, no glyph is invented) — the
- *    data class's whole surface is the hour and the sentence.
+ *    data class's surface is the hour, the sentence, and (R7-1's
+ *    amendment, B-11) the seal-gone bracket: a struck pair of
+ *    hours testifying to a fallen day, never a slot a door-word
+ *    or a held mark could be invented into.
  */
 class StrongroomSealedFaceModelTest {
 
@@ -73,6 +76,13 @@ class StrongroomSealedFaceModelTest {
             }
             .map { it.name }
             .sorted()
-        assertEquals(listOf("hasSentence", "liftingHour", "sentence"), components)
+        // RE-AIMED at the end phase (BUILD-SR-24) to the ruled
+        // census: R7-1 ordered sealGoneBracket into the model
+        // (B-11's amendment) — the census is the amended four,
+        // and still no door-word, no held-mark field exists.
+        assertEquals(
+            listOf("hasSentence", "liftingHour", "sealGoneBracket", "sentence"),
+            components
+        )
     }
 }

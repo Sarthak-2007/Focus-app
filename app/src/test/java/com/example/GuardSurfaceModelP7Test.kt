@@ -92,8 +92,15 @@ class GuardSurfaceModelP7Test {
         assertTrue(model.has(GuardControl.ALLOWANCE_RAISE_WHEEL))
         assertTrue(model.has(GuardControl.ALLOWANCE_RAISE_CONFIRM))
         assertEquals(GuardCopy.RAISE_LAW, model.raiseLine)
-        assertTrue(model.raiseLine!!.contains("never lands today"))
-        assertTrue(model.raiseLine!!.contains("03:30"))
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // Stage 9 §12.2 struck the dated form — one line serves
+        // every pending loosening, and it carries NO figure: no
+        // day-start time, no date, no minutes. The truth the name
+        // asserts (next day-start, never today) is the line's
+        // whole content, in the deck's words.
+        assertEquals("Stands from the next day-start.", model.raiseLine)
+        assertFalse(model.raiseLine!!.contains("03:30"))
+        assertFalse(model.raiseLine!!.any { it.isDigit() })
     }
 
     @Test
@@ -102,8 +109,13 @@ class GuardSurfaceModelP7Test {
         assertFalse(model.has(GuardControl.ALLOWANCE_RAISE_WHEEL))
         assertFalse(model.has(GuardControl.ALLOWANCE_RAISE_CONFIRM))
         assertNull(model.raiseLine)
-        // The hard-stop testimony stands where the control stood.
-        assertEquals(GuardCopy.HARD_STOP, model.hardStopLine)
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // Stage 9 §12 composes NO hard-stop line at all — beyond
+        // the spent purse the loosening side is absence with
+        // ∅ copy, so the model composes null (GuardCopy.HARD_STOP
+        // stands empty precisely to name that ∅).
+        assertNull(model.hardStopLine)
+        assertEquals("", GuardCopy.HARD_STOP)
         // Tightening is not a loosening: it survives the hard stop.
         assertTrue(model.has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL))
     }
@@ -113,10 +125,11 @@ class GuardSurfaceModelP7Test {
         val model = surface(
             snapshot(pendingAllowanceMinutes = 45, pendingAllowanceFromMillis = nextDayStart)
         )
-        assertEquals(
-            "A raise to 45 minutes stands from Wednesday 4 November, 03:30.",
-            model.pendingRaiseLine
-        )
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // §12.2's one line carries no figure — not the raised
+        // minutes, not the date, not the day-start time.
+        assertEquals("Stands from the next day-start.", model.pendingRaiseLine)
+        assertFalse(model.pendingRaiseLine!!.contains("45"))
     }
 
     @Test
@@ -147,10 +160,9 @@ class GuardSurfaceModelP7Test {
         val model = surface(snapshot(pendingOffFromMillis = nextDayStart))
         assertFalse(model.has(GuardControl.GUARD_REQUEST_OFF))
         assertTrue(model.has(GuardControl.GUARD_TURN_ON))
-        assertEquals(
-            "Off stands from Wednesday 4 November, 03:30 — until then the Guard holds.",
-            model.pendingOffLine
-        )
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // a pending off is told by §12.2's one line, no figure.
+        assertEquals("Stands from the next day-start.", model.pendingOffLine)
     }
 
     @Test
@@ -179,11 +191,13 @@ class GuardSurfaceModelP7Test {
         assertFalse(model.has(GuardControl.GUARD_REQUEST_OFF))
         assertFalse(model.has(GuardControl.STRETCH_END_STEPPER))
         assertFalse(model.has(GuardControl.STRETCH_BEGIN_CONFIRM))
-        assertEquals(
-            "This stretch ends Tuesday 10 November. That date is the exit. " +
-                "There is no off inside it.",
-            model.stretchLine
-        )
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // §12.4 renders NO exit wording inside the thing it
+        // would exit — inside a stretch the line is the end
+        // date, and nothing else.
+        assertEquals("This stretch ends Tuesday 10 November.", model.stretchLine)
+        assertFalse(model.stretchLine!!.contains("exit", ignoreCase = true))
+        assertFalse(model.stretchLine!!.contains("off", ignoreCase = true))
     }
 
     @Test
@@ -213,7 +227,13 @@ class GuardSurfaceModelP7Test {
         val model = surface(snapshot(crankMinuteSpent = true))
         assertEquals(listOf("The pre-set PIN, to the antechamber"), model.exitNames)
         assertEquals(GuardCopy.valveLine(true), model.valveLine)
-        assertTrue(model.valveLine.contains("spent"))
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // §12.6/§6.3 shows the valve as a struck fact with
+        // ∅ words — whole or spent reads from the seal itself,
+        // so the line is empty in BOTH states and no wording
+        // ever stands for the valve's fact.
+        assertEquals("", model.valveLine)
+        assertEquals("", GuardCopy.valveLine(false))
         // Type-level: no field on the snapshot or the model can
         // hold a stockpile — no count, no balance, no remaining.
         val fields = (GuardSurfaceSnapshot::class.java.declaredFields +
@@ -254,7 +274,9 @@ class GuardSurfaceModelP7Test {
         )
         val row = surface(snapshot(routines = listOf(pending))).routineRows.single()
         assertTrue(row.controls.isEmpty())
-        assertEquals("Off stands from Wednesday 4 November, 03:30.", row.line)
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the routine's landing line is §12.2's one line.
+        assertEquals("Stands from the next day-start.", row.line)
     }
 
     // ---------- VERIFY-SR-4's owed P7-T names, by name ----------
@@ -283,7 +305,9 @@ class GuardSurfaceModelP7Test {
         // Until the day-start lands, the standing allowance is
         // still today's word and the raise reads as pending.
         assertEquals(GuardCopy.allowanceLine(30), model.allowanceLine)
-        assertTrue(model.pendingRaiseLine!!.contains("stands from Wednesday 4 November, 03:30"))
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the pending raise is told by §12.2's one line exactly.
+        assertEquals("Stands from the next day-start.", model.pendingRaiseLine)
     }
 
     @Test
@@ -295,7 +319,10 @@ class GuardSurfaceModelP7Test {
         // day-start — the standing line still reads ON until then.
         val pending = surface(snapshot(pendingOffFromMillis = nextDayStart))
         assertEquals(GuardCopy.STANDING_ON, pending.standingLine)
-        assertTrue(pending.pendingOffLine!!.contains("Wednesday 4 November, 03:30"))
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the pending off lands at the day-start and is told by
+        // §12.2's one line exactly — no date, no figure.
+        assertEquals("Stands from the next day-start.", pending.pendingOffLine)
     }
 
     @Test
@@ -311,7 +338,14 @@ class GuardSurfaceModelP7Test {
             LocalDate.of(2026, 11, 10).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
         val inside = surface(snapshot(stretchEndMillis = end))
         assertFalse(inside.has(GuardControl.GUARD_REQUEST_OFF))
-        assertTrue(inside.stretchLine!!.contains("That date is the exit"))
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the end-date-is-the-exit truth stands at SETUP in the
+        // deck's term (§12.4, GuardCopy.STRETCH_SETUP_LAW);
+        // inside the stretch no exit wording is rendered at
+        // all — the line is the end date alone.
+        assertEquals("The end date is the exit.", GuardCopy.STRETCH_SETUP_LAW)
+        assertEquals("This stretch ends Tuesday 10 November.", inside.stretchLine)
+        assertFalse(inside.stretchLine!!.contains("exit", ignoreCase = true))
     }
 
     @Test

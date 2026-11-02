@@ -1,8 +1,10 @@
 package com.example
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -75,7 +77,14 @@ class StrongroomAntechamberRenderTest {
         composeRule.onNodeWithTag("antechamber_crank_Social").performClick()
         composeRule.waitForIdle()
         assertEquals(CrankOutcome.TURNED, crank.get())
-        composeRule.onNodeWithText("OPEN BY THE DRUM — Social").assertExists()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // §6.1 struck the room's words over an opening — the
+        // open app stands under its carried name alone, with
+        // its TURN BACK handle standing beside it (the handle
+        // exists only while an opening stands). The struck
+        // caption stands nowhere.
+        composeRule.onNodeWithTag("antechamber_turn_back").assertExists()
+        composeRule.onNodeWithText("OPEN BY THE DRUM — Social").assertDoesNotExist()
     }
 
     @Test
@@ -100,9 +109,16 @@ class StrongroomAntechamberRenderTest {
         composeRule.onNodeWithTag("antechamber_open_Notes").performClick()
         composeRule.waitForIdle()
         assertEquals(CrankOutcome.OPENED_FROM_THE_SIGNED_SET, crank.get())
-        composeRule.onNodeWithText("OPEN — Notes").assertExists()
-        // The drum's stock is gone; its spent line stands instead.
-        composeRule.onNodeWithTag("antechamber_purse_spent").assertExists()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the opening stands under its carried name alone
+        // (§6.1 — "OPEN — Notes" is struck copy), witnessed by
+        // the TURN BACK handle that stands only while it is open.
+        composeRule.onNodeWithTag("antechamber_turn_back").assertExists()
+        composeRule.onNodeWithText("OPEN — Notes").assertDoesNotExist()
+        // The drum's stock is gone — and at the hard stop the
+        // deck (§6.4) stands ∅ words: no spent line, no node.
+        composeRule.onNodeWithTag("antechamber_purse_spent").assertDoesNotExist()
+        composeRule.onNodeWithTag("antechamber_drum_stock").assertDoesNotExist()
         composeRule.onNodeWithTag("antechamber_drum_Social").assertDoesNotExist()
         composeRule.onNodeWithTag("antechamber_crank_Social").assertDoesNotExist()
     }
@@ -127,7 +143,13 @@ class StrongroomAntechamberRenderTest {
         composeRule.onNodeWithTag("antechamber_pile_entry").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("pile_call_c1").assertIsDisplayed()
-        composeRule.onNodeWithText("+91 98110 24680").assertExists()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the composed
+        // chamber: in HeldPileLayout the number stands TWICE by
+        // design — on the WAITING shelf (what waits, shown whole)
+        // and again on the TAKING shelf beside its handles — so
+        // the single-node text finder is the wrong instrument;
+        // the count is the pin.
+        composeRule.onAllNodesWithText("+91 98110 24680").assertCountEquals(2)
         composeRule.onNodeWithTag("pile_take_c1").assertExists()
         composeRule.onNodeWithTag("pile_leave_c1").assertExists()
         // The price stands on the unshown row, before the taking.

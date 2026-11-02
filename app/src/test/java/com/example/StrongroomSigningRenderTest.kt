@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import com.example.ui.strongroom.CompositionDraft
@@ -51,6 +52,108 @@ class StrongroomSigningRenderTest {
         spentDay = spentDay
     )
 
+    /** The standing hour on the signing's hour step, read off
+     *  the value node itself. */
+    private fun hourText(): String =
+        composeRule.onNodeWithTag("signing_hour_value")
+            .fetchSemanticsNode()!!
+            .config[SemanticsProperties.Text][0].text
+
+    /** The break's standing span on the hour step, read off
+     *  its value node ("N MIN"). */
+    private fun breakMinutes(): Int =
+        composeRule.onNodeWithTag("signing_break_value")
+            .fetchSemanticsNode()!!
+            .config[SemanticsProperties.Text][0].text
+            .removeSuffix(" MIN").trim().toInt()
+
+    /** One horizontal drag on a setter strip, [travelPx] of
+     *  pointer travel in ten stepped moves — this Compose
+     *  version's touch scope has no swipe member, and the
+     *  strip accumulates per-event deltas, so the steps sum
+     *  to the same travel (the idiom the wheel drag below
+     *  already proves on the venue). */
+    private fun dragStrip(tag: String, travelPx: Float) {
+        composeRule.onNodeWithTag(tag).performTouchInput {
+            val startX = if (travelPx >= 0) center.x - 120f else center.x + 120f
+            down(Offset(startX, center.y))
+            // Event time advances between every step, and once
+            // more before the up: with every move stamped at the
+            // same instant, this harness batches them, and the
+            // batch that carries the up eats its movement
+            // (measured on PR #865's targeted runs: identical
+            // gestures lost 0 / 12 / 13.6 px). Stamped apart —
+            // the venue's own idiom, cf. DeskClockLivedTest's
+            // hand-injected hold — each step is its own change.
+            repeat(20) {
+                moveBy(Offset(travelPx / 20f, 0f))
+                advanceEventTime(16L)
+            }
+            advanceEventTime(60L)
+            up()
+        }
+        composeRule.waitForIdle()
+    }
+
+    /** E-15, driven as a hand drives it — by eye (BUILD-SR-24
+     *  re-aim): the hour is set by the drag strip, never a
+     *  stepper. The strip travels 2 minutes per dp and its
+     *  release snaps to a quarter inside ±4 minutes.
+     *
+     *  The gesture itself must be MEASURED before it can be
+     *  aimed: this harness spends the first ~13.5 dp of every
+     *  gesture before drag recognition (proven on PR #865's
+     *  targeted run 41443521636 — a 32 dp drag delivered 37 of
+     *  its intended 64 minutes; two 13.5 dp corrections
+     *  delivered nothing). The break strip is the calibration
+     *  instrument: it stands on the same step, travels
+     *  1 minute per dp on the same pointer road, and its
+     *  release rests on whole minutes — no quarter snap to
+     *  distort the read — and the walk's result never asserts
+     *  the break, so spending it on measurement costs the
+     *  test nothing. Two drags of different sizes solve the
+     *  road's px-per-dp (R) and the gesture's slop (S) exactly:
+     *  counted minutes = (px − S) / R. The hour drag is then
+     *  sent at px = Δ/2 · R + S, read back, and re-sent with a
+     *  growing nudge while it does not stand (three passes
+     *  bound the walk; the assertion after is the verdict). */
+    private fun dragHourTo(target: String) {
+        fun minutesOf(hhmm: String) =
+            hhmm.split(":").let { it[0].toInt() * 60 + it[1].toInt() }
+        fun wrappedDelta(from: Int, to: Int): Int {
+            var d = to - from
+            if (d > 720) d -= 1440
+            if (d < -720) d += 1440
+            return d
+        }
+        val b0 = breakMinutes()
+        dragStrip("signing_break_drag", 240f)
+        val b1 = breakMinutes()
+        dragStrip("signing_break_drag", 120f)
+        val b2 = breakMinutes()
+        val countedA = (b1 - b0).toFloat()
+        val countedB = (b2 - b1).toFloat()
+        require(countedA > countedB && countedB > 0f) {
+            "the calibration drags did not register on the break strip " +
+                "($b0 → $b1 → $b2) — the hour cannot be aimed"
+        }
+        val r = (240f - 120f) / (countedA - countedB)
+        val s = 240f - countedA * r
+        val telemetry = StringBuilder(
+            "calibration: break $b0 -> $b1 -> $b2 " +
+                "(counted $countedA / $countedB), R=$r px/dp, S=$s px; hour passes:"
+        )
+        repeat(3) { pass ->
+            val delta = wrappedDelta(minutesOf(hourText()), minutesOf(target))
+            if (delta == 0) return
+            val nudge = (if (delta > 0) 1f else -1f) * (2f + pass * 5f)
+            val px = delta / 2f * r + s + nudge
+            dragStrip("signing_hour_drag", px)
+            telemetry.append(" [$pass] sent ${px}px -> ${hourText()};")
+        }
+        assertEquals("hour drag telemetry:$telemetry", target, hourText())
+    }
+
     @Test
     fun signing_walksTheSequence_andHandsTheSetDayOnward() {
         val signed = AtomicReference<SigningResult?>(null)
@@ -79,13 +182,23 @@ class StrongroomSigningRenderTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("signing_hour_value").assertIsDisplayed()
         composeRule.onNodeWithText("06:30").assertExists()
-        composeRule.onNodeWithTag("signing_hour_up").performClick()
+        // RE-AIMED at the end phase (BUILD-SR-24): the retired
+        // stepper tag signing_hour_up stands nowhere — E-15's
+        // governed drag strip sets the hour in its place.
+        dragHourTo("07:30")
         composeRule.onNodeWithText("07:30").assertExists()
 
         composeRule.onNodeWithTag("signing_continue").performClick()
         composeRule.waitForIdle()
         // No sentence written: the kept place stands.
-        composeRule.onNodeWithText("THE KEPT PLACE STANDS").assertExists()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the deck struck the sentence step's headings and
+        // captions — no kept-place caption stands anywhere;
+        // the step is its fields alone, and the kept place is
+        // proven by the RESULT at the walk's end (the handed-on
+        // sentence is null), not by furniture copy.
+        composeRule.onNodeWithTag("signing_sentence_field").assertIsDisplayed()
+        composeRule.onNodeWithText("THE KEPT PLACE STANDS").assertDoesNotExist()
 
         composeRule.onNodeWithTag("signing_continue").performClick()
         composeRule.waitForIdle()
@@ -117,9 +230,14 @@ class StrongroomSigningRenderTest {
 
         composeRule.onNodeWithTag("signing_sign").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("signing_ready").assertIsDisplayed()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // §1 struck every post-spin confirmation line — the
+        // sealing itself is the confirmation, and no
+        // signing_ready sheet stands; the READY step is its
+        // DONE handle alone, which hands the result onward.
+        composeRule.onNodeWithTag("signing_done").assertIsDisplayed()
         composeRule.onNodeWithText("The door stands ready. It swings at the first sitting.")
-            .assertExists()
+            .assertDoesNotExist()
 
         composeRule.onNodeWithTag("signing_done").performClick()
         composeRule.waitForIdle()

@@ -130,19 +130,36 @@ class SoundEventRegistryTest {
 
     @Test
     fun sealingDescendsAndLiftingAscends() {
+        // RE-AIMED at the end phase (BUILD-SR-24) to the filed
+        // ruling + spec — the seam's departing side was THIS
+        // TEST, never the registry: it pinned P0's superseded
+        // table ([0, 190, 420] onsets, seal gains DESCENDING).
+        // R7-4 rules the clunks descend in PITCH and ascend in
+        // WEIGHT; SOUND-SR-1's filed figures govern both acts:
+        // seal f0 191→143→97 Hz, stem peaks 0.62→0.70→0.80,
+        // onsets Δ500/Δ680 (widening) = [0, 500, 1180] relative;
+        // lifting f0 121→158→207 Hz, stem peaks 0.50→0.46→0.42
+        // (the withdrawals lighten as they free), onsets Δ500/
+        // Δ500 (even) = [0, 500, 1000] relative. The registry
+        // carries those figures verbatim; they are pinned here
+        // exactly so any drift fails by name.
         val seal = SoundRegistry.SEAL_SEQUENCE.map { SoundRegistry.spec(it.first) }
-        assertEquals(listOf(0, 190, 420), SoundRegistry.SEAL_SEQUENCE.map { it.second })
+        assertEquals(listOf(0, 500, 1180), SoundRegistry.SEAL_SEQUENCE.map { it.second })
+        assertEquals(listOf(191f, 143f, 97f), seal.map { it.voice!!.pitchHz })
+        assertEquals(listOf(0.62f, 0.70f, 0.80f), seal.map { it.voice!!.gain })
         assertTrue(seal[0].voice!!.pitchHz > seal[1].voice!!.pitchHz)
         assertTrue(seal[1].voice!!.pitchHz > seal[2].voice!!.pitchHz)
-        assertTrue(seal[0].voice!!.gain > seal[1].voice!!.gain)
-        assertTrue(seal[1].voice!!.gain > seal[2].voice!!.gain)
+        assertTrue(seal[0].voice!!.gain < seal[1].voice!!.gain)
+        assertTrue(seal[1].voice!!.gain < seal[2].voice!!.gain)
 
         val lift = SoundRegistry.LIFT_SEQUENCE.map { SoundRegistry.spec(it.first) }
-        assertEquals(listOf(0, 190, 420), SoundRegistry.LIFT_SEQUENCE.map { it.second })
+        assertEquals(listOf(0, 500, 1000), SoundRegistry.LIFT_SEQUENCE.map { it.second })
+        assertEquals(listOf(121f, 158f, 207f), lift.map { it.voice!!.pitchHz })
+        assertEquals(listOf(0.50f, 0.46f, 0.42f), lift.map { it.voice!!.gain })
         assertTrue(lift[0].voice!!.pitchHz < lift[1].voice!!.pitchHz)
         assertTrue(lift[1].voice!!.pitchHz < lift[2].voice!!.pitchHz)
-        assertTrue(lift[0].voice!!.gain < lift[1].voice!!.gain)
-        assertTrue(lift[1].voice!!.gain < lift[2].voice!!.gain)
+        assertTrue(lift[0].voice!!.gain > lift[1].voice!!.gain)
+        assertTrue(lift[1].voice!!.gain > lift[2].voice!!.gain)
     }
 
     @Test
