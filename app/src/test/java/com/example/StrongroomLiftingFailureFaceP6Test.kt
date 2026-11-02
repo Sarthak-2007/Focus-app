@@ -47,7 +47,7 @@ class StrongroomLiftingFailureFaceP6Test {
             }
         }
         composeRule.onNodeWithTag("lifting_screen").assertExists()
-        composeRule.onNodeWithTag("sealed_face_bracket", useUnmergedNode = true).assertExists()
+        composeRule.onNodeWithTag("sealed_face_bracket", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithTag("sealed_face_ring").assertDoesNotExist()
         composeRule.onNodeWithTag("ajar_face").assertDoesNotExist()
     }
