@@ -59,6 +59,13 @@ import com.example.ui.foundation.StrongroomType
  *    normalisation — the exact rows [com.example.data.LegacyCarry]
  *    reads when a day is born, so what he sets here is what the
  *    signing and the seal inherit.
+ *  - DAY — his standing lifting hour: the hour a sealed day
+ *    lifts (ends), set by his hand here and kept in SetupStore.
+ *    The day's birth reads it when no session window stands —
+ *    on a fresh install it is the ONLY lifting source, so
+ *    without it no day can be born and the home stays an empty
+ *    door (build 5). The evening signing still moves a single
+ *    day's hour; this is the standing hour days are born from.
  *  - GUARD — the standing guard, worked through the store's own
  *    verbs, the three rules behaving as ruled: tighten lands
  *    instantly; a raise is scheduled from the next day-start
@@ -72,7 +79,7 @@ import com.example.ui.foundation.StrongroomType
  * later programme and changes nothing in the wiring.
  */
 
-enum class SetupSection { HOME, PERMISSIONS, APPS, GUARD }
+enum class SetupSection { HOME, DAY, PERMISSIONS, APPS, GUARD }
 
 /** One permission row: [key] is the WatchItemId name (or the
  *  NOTIFICATIONS key for the runtime grant), [stateText] is the
@@ -93,6 +100,10 @@ data class SetupAppRow(
 
 data class SetupState(
     val section: SetupSection = SetupSection.HOME,
+    /** His standing lifting hour as read from SetupStore;
+     *  [liftingHour] -1 = never set — no day can be born. */
+    val liftingHour: Int = -1,
+    val liftingMinute: Int = 0,
     val permissions: List<SetupPermissionRow> = emptyList(),
     val apps: List<SetupAppRow> = emptyList(),
     val guard: StrongroomGuard.GuardState? = null,
@@ -103,12 +114,18 @@ data class SetupState(
     val stretchEndText: String = ""
 ) {
     val grantedCount: Int get() = permissions.count { it.granted }
+    val liftingSet: Boolean get() = liftingHour in 0..23
+    val liftingText: String get() = if (liftingSet) {
+        "${liftingHour.toString().padStart(2, '0')}:" +
+            liftingMinute.toString().padStart(2, '0')
+    } else ""
 }
 
 data class SetupActions(
     val onOpenSection: (SetupSection) -> Unit = {},
     val onBackToSetupHome: () -> Unit = {},
     val onClose: () -> Unit = {},
+    val onSetLiftingTime: (Int, Int) -> Unit = { _, _ -> },
     val onPermissionTap: (String) -> Unit = {},
     val onAttestAutostart: () -> Unit = {},
     val onSetTier: (String, AppBlockTier) -> Unit = { _, _ -> },
@@ -136,6 +153,7 @@ fun Setup(state: SetupState, actions: SetupActions, modifier: Modifier = Modifie
             Text(
                 text = when (state.section) {
                     SetupSection.HOME -> "SETUP"
+                    SetupSection.DAY -> "SETUP — DAY"
                     SetupSection.PERMISSIONS -> "SETUP — PERMISSIONS"
                     SetupSection.APPS -> "SETUP — APPS"
                     SetupSection.GUARD -> "SETUP — GUARD"
@@ -155,6 +173,7 @@ fun Setup(state: SetupState, actions: SetupActions, modifier: Modifier = Modifie
         Spacer(Modifier.height(14.dp))
         when (state.section) {
             SetupSection.HOME -> SetupHome(state, actions)
+            SetupSection.DAY -> DayPanel(state, actions)
             SetupSection.PERMISSIONS -> PermissionsList(state, actions)
             SetupSection.APPS -> AppsList(state, actions)
             SetupSection.GUARD -> GuardPanel(state, actions)
@@ -171,6 +190,12 @@ private fun SetupHome(state: SetupState, actions: SetupActions) {
             style = StrongroomType.Scr1, color = DimInk
         )
         Spacer(Modifier.height(16.dp))
+        EntryRow(
+            title = "DAY",
+            detail = if (state.liftingSet) "day lifts at ${state.liftingText}"
+            else "no lifting hour set — no day can be born yet",
+            onClick = { actions.onOpenSection(SetupSection.DAY) }
+        )
         EntryRow(
             title = "PERMISSIONS",
             detail = if (state.permissions.isEmpty()) "not read yet"
@@ -227,6 +252,77 @@ private fun EntryRow(title: String, detail: String, onClick: () -> Unit) {
         Text(title, style = StrongroomType.Scr3, color = InkOnField)
         Spacer(Modifier.height(2.dp))
         Text(detail, style = StrongroomType.Scr1, color = DimInk)
+    }
+}
+
+@Composable
+private fun DayPanel(state: SetupState, actions: SetupActions) {
+    // The steppers work from the standing hour when one stands,
+    // else from 20:00 — the first tap on a fresh install sets
+    // the hour it lands on, printed on the plate before he taps.
+    val baseMinutes = if (state.liftingSet) {
+        state.liftingHour * 60 + state.liftingMinute
+    } else 20 * 60
+    fun shift(delta: Int) {
+        val total = ((baseMinutes + delta) % 1440 + 1440) % 1440
+        actions.onSetLiftingTime(total / 60, total % 60)
+    }
+    Column(Modifier.verticalScroll(rememberScrollState())) {
+        if (!state.liftingSet) {
+            Text(
+                "No lifting hour is set. Without one, no day can " +
+                    "be born — the home stays an empty door with " +
+                    "nothing to sign. Set it here and the day stands.",
+                style = StrongroomType.Scr2, color = StrongroomInks.Rose
+            )
+            Spacer(Modifier.height(14.dp))
+        }
+        Text(
+            "YOUR DAY LIFTS AT",
+            style = StrongroomType.Scr3, color = InkOnField
+        )
+        Spacer(Modifier.height(10.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Line, RoundedCornerShape(6.dp))
+                .semantics { contentDescription = "lifting hour" }
+                .padding(vertical = 22.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (state.liftingSet) state.liftingText else "20:00",
+                style = StrongroomType.Scr6,
+                color = Field
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row {
+            PlainButton("−1H") { shift(-60) }
+            Spacer(Modifier.padding(horizontal = 4.dp))
+            PlainButton("−15M") { shift(-15) }
+            Spacer(Modifier.padding(horizontal = 4.dp))
+            PlainButton("+15M") { shift(15) }
+            Spacer(Modifier.padding(horizontal = 4.dp))
+            PlainButton("+1H") { shift(60) }
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "The hour your sealed day lifts — the block ends and " +
+                "the phone is yours again. Days are born from this " +
+                "standing hour; a running session's own window end " +
+                "outranks it, and the evening signing can still " +
+                "move one single day's hour.",
+            style = StrongroomType.Scr1, color = DimInk
+        )
+        if (!state.liftingSet) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "The plate shows 20:00 — tap any step and that " +
+                    "becomes your hour.",
+                style = StrongroomType.Scr1, color = Line
+            )
+        }
     }
 }
 

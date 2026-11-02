@@ -1282,8 +1282,12 @@ private fun SigningHost(viewModel: MonolithViewModel) {
             // day; today's row serves only when tomorrow's cannot
             // stand (e.g. the morning's own signing before the
             // swing, when the birth has not carried a tomorrow).
+            // + his standing lifting hour from setup — the
+            // fresh-install source that lets a first day be born.
             com.example.data.StrongroomDayBirth.ensureStandingDays(
-                store, dao, System.currentTimeMillis()
+                store, dao, System.currentTimeMillis(),
+                standingLiftingTime =
+                    com.example.data.SetupStore(appContext).liftingTime()
             )
             val todayIso = com.example.domain.StrongroomDay.filingDateIso(
                 System.currentTimeMillis()
@@ -1466,7 +1470,10 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
         // so a day stands at the door whether or not he came to
         // it (B-2). Idempotent: standing days are not recomposed.
         com.example.data.StrongroomDayBirth.ensureStandingDays(
-            store, dao, System.currentTimeMillis()
+            store, dao, System.currentTimeMillis(),
+            standingLiftingTime =
+                com.example.data.SetupStore(context.applicationContext)
+                    .liftingTime()
         )
         val todayIso = StrongroomDay.filingDateIso(System.currentTimeMillis())
         val yesterdayIso = java.time.LocalDate.parse(todayIso).minusDays(1).toString()
@@ -1649,7 +1656,9 @@ private suspend fun loadSealFacts(context: Context): Pair<SealedFaceState?, Bool
         // facts load ensures the birth first, as the doorway's
         // does. Idempotent; a sealed/struck day is never recomposed.
         com.example.data.StrongroomDayBirth.ensureStandingDays(
-            store, dao, System.currentTimeMillis()
+            store, dao, System.currentTimeMillis(),
+            standingLiftingTime =
+                com.example.data.SetupStore(appContext).liftingTime()
         )
         val sealedRow = store.sealedDay()
         val face = sealedRow?.let { row ->
@@ -2004,11 +2013,16 @@ private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
         val facts = withContext(Dispatchers.IO) {
             loadSetupFacts(appContext)
         }
+        val lifting = withContext(Dispatchers.IO) {
+            com.example.data.SetupStore(appContext).liftingTime()
+        }
         state = state.copy(
             permissions = facts.first,
             guard = facts.second,
             stretchEndText = facts.third,
-            guardNote = guardNote
+            guardNote = guardNote,
+            liftingHour = lifting?.hour ?: -1,
+            liftingMinute = lifting?.minute ?: 0
         )
     }
 
@@ -2033,6 +2047,15 @@ private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
                 refreshTick++
             },
             onClose = onClose,
+            onSetLiftingTime = { hour, minute ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        com.example.data.SetupStore(appContext)
+                            .setLiftingTime(hour, minute)
+                    }
+                    refreshTick++
+                }
+            },
             onPermissionTap = { key ->
                 openSetupPermission(appContext, key)
                 refreshTick++

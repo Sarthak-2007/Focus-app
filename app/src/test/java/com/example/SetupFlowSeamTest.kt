@@ -5,10 +5,12 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.AppBlockTier
 import com.example.data.MonolithDatabase
+import com.example.data.SetupStore
 import com.example.data.StrongroomDayBirth
 import com.example.data.StrongroomStore
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomGuard
+import java.time.LocalTime
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +39,15 @@ import org.robolectric.annotation.Config
  *     from the next day-start and does NOT move today's
  *     allowance; off schedules to the next day-start; inside a
  *     stretch, off is REFUSED — the stretch has no off.
+ *
+ *  3. THE FRESH INSTALL (build 5's dead doorway): a catalogue
+ *     and guard settings but NO session and NO profile — the
+ *     birth honestly refuses (NotBorn, nothing written). He
+ *     then sets his standing lifting hour on setup's DAY panel
+ *     (the SetupStore write the panel performs), the birth is
+ *     re-run with that very read passed in — as all three
+ *     production call sites now pass it — and the day STANDS,
+ *     carrying his hour and his shut app.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -101,6 +112,58 @@ class SetupFlowSeamTest {
                 "the peek app stands in the signed allowed set",
                 fx.PEEK_PACKAGE in record.allowedPackages
             )
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun freshInstall_birthWaitsForTheSetupHour_thenStands() = runBlocking {
+        val db = seededDb()
+        try {
+            val dao = db.monolithDao()
+            // A fresh install's data: the synced catalogue and
+            // the guard's settings. No session, no profile —
+            // no window end anywhere in his data.
+            dao.insertApps(fx.blockedApps)
+            dao.insertGuardSettings(fx.guardSettings)
+            val store = StrongroomStore(dao)
+            val todayIso = StrongroomDay.filingDateIso(eveningMillis, fx.UTC)
+
+            // The birth, exactly as the entry paths run it with
+            // nothing set: it refuses, and writes nothing.
+            val refused = StrongroomDayBirth.ensureStandingDays(
+                store, dao, eveningMillis, fx.UTC
+            )
+            assertTrue(
+                "no lifting hour in his data — no day is born",
+                refused is StrongroomDayBirth.Outcome.NotBorn
+            )
+            assertEquals(null, store.day(todayIso))
+
+            // THE DAY PANEL'S WRITE, verbatim: the store reads
+            // unset until his hand sets the hour.
+            val setupStore = SetupStore(context)
+            assertEquals(null, setupStore.liftingTime())
+            setupStore.setLiftingTime(20, 0)
+            assertEquals(LocalTime.of(20, 0), setupStore.liftingTime())
+
+            // The birth again, with the setup read passed in as
+            // the production call sites pass it: the day stands.
+            val outcome = StrongroomDayBirth.ensureStandingDays(
+                store, dao, eveningMillis, fx.UTC,
+                standingLiftingTime = setupStore.liftingTime()
+            )
+            val standing = outcome as StrongroomDayBirth.Outcome.Standing
+            assertEquals(
+                "the born day carries HIS hour, not an invented one",
+                LocalTime.of(20, 0), standing.tomorrow.record.liftingTime
+            )
+            assertTrue(
+                "his shut app is shut in the first born day",
+                fx.LOCKED_PACKAGE in standing.tomorrow.record.lockedPackages
+            )
+            assertTrue("today's row now stands", store.day(todayIso) != null)
         } finally {
             db.close()
         }
