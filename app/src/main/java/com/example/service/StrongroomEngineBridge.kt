@@ -9,6 +9,7 @@ import android.provider.Settings
 import com.example.AppContainer
 import com.example.data.StrongroomDayEntity
 import com.example.data.StrongroomStore
+import com.example.data.toSealSpan
 import com.example.data.toSigningRecord
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomRouting
