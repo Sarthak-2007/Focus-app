@@ -552,6 +552,56 @@ private fun DrawerBody(lightState: StrongroomLightState) {
             }
             yy += cell; cy++
         }
+        // The back panel's joinery and the body's depth: a
+        // framed panel inset on the back (its shadow sides cut
+        // toward violet, its lit sides a breath further), the
+        // floor's shadow gathering where the back meets the
+        // drawer's floor, and the cheeks' shade just inside the
+        // runners — the box has an inside, and the inside has
+        // corners. In the day's light the wood itself is one
+        // tone by law; the depth is carried by these violet-
+        // ward cuts, the room's own relief ink.
+        val backInset = 20.dp.toPx()
+        val shade1 = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 1
+        )
+        val shade2 = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 2
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(backInset, backInset),
+            size = Size(size.width - 2 * backInset, 1.6.dp.toPx())
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(backInset, backInset),
+            size = Size(1.6.dp.toPx(), size.height - 2 * backInset)
+        )
+        drawRect(
+            color = shade2,
+            topLeft = Offset(backInset, size.height - backInset - 1.6.dp.toPx()),
+            size = Size(size.width - 2 * backInset, 1.6.dp.toPx())
+        )
+        drawRect(
+            color = shade2,
+            topLeft = Offset(size.width - backInset - 1.6.dp.toPx(), backInset),
+            size = Size(1.6.dp.toPx(), size.height - 2 * backInset)
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(10.6.dp.toPx(), 0f),
+            size = Size(6.dp.toPx(), size.height)
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(size.width - 16.6.dp.toPx(), 0f),
+            size = Size(6.dp.toPx(), size.height)
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(0f, size.height - 12.dp.toPx()),
+            size = Size(size.width, 12.dp.toPx())
+        )
+        drawRect(
+            color = shade2, topLeft = Offset(0f, size.height - 6.dp.toPx()),
+            size = Size(size.width, 6.dp.toPx())
+        )
         // The side cheeks: steel runners the drawer slides on,
         // at both edges — machinery at the furniture's flank.
         // A runner is a rail: a grained steel member with a lit
@@ -645,6 +695,67 @@ private fun HandingBackThreshold(
                         }
                         yy += cell; cy++
                     }
+                    // The slip as a made thing, still mute: a
+                    // pressed groove around its face (the die's
+                    // shadow cut, its far wall catching what
+                    // light the day gives), a bolt at each corner
+                    // where it is fastened, a crease where it was
+                    // folded, and its weight along its foot.
+                    drawRoundRect(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 6
+                        ),
+                        topLeft = Offset(4.8.dp.toPx(), 4.8.dp.toPx()),
+                        size = Size(size.width - 8.dp.toPx(), size.height - 8.dp.toPx()),
+                        cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
+                        style = Stroke(width = 1.2.dp.toPx())
+                    )
+                    drawRoundRect(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 2
+                        ),
+                        topLeft = Offset(3.2.dp.toPx(), 3.2.dp.toPx()),
+                        size = Size(size.width - 8.dp.toPx(), size.height - 8.dp.toPx()),
+                        cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
+                        style = Stroke(width = 1.2.dp.toPx())
+                    )
+                    val creaseX = size.width * 0.33f
+                    drawLine(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 4
+                        ),
+                        start = Offset(creaseX, 5.dp.toPx()),
+                        end = Offset(creaseX, size.height - 5.dp.toPx()),
+                        strokeWidth = 1.4.dp.toPx()
+                    )
+                    drawLine(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 2
+                        ),
+                        start = Offset(creaseX + 1.8.dp.toPx(), 5.dp.toPx()),
+                        end = Offset(creaseX + 1.8.dp.toPx(), size.height - 5.dp.toPx()),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                    drawRect(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 6
+                        ),
+                        topLeft = Offset(0f, size.height - 3.5.dp.toPx()),
+                        size = Size(size.width, 3.5.dp.toPx())
+                    )
+                    boltHead(Offset(9.dp.toPx(), 9.dp.toPx()), 2.2.dp.toPx(), lightState)
+                    boltHead(
+                        Offset(size.width - 9.dp.toPx(), 9.dp.toPx()),
+                        2.2.dp.toPx(), lightState
+                    )
+                    boltHead(
+                        Offset(9.dp.toPx(), size.height - 9.dp.toPx()),
+                        2.2.dp.toPx(), lightState
+                    )
+                    boltHead(
+                        Offset(size.width - 9.dp.toPx(), size.height - 9.dp.toPx()),
+                        2.2.dp.toPx(), lightState
+                    )
                 }
             }
         }
