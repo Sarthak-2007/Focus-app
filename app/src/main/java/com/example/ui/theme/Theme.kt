@@ -6,11 +6,13 @@ import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.unit.dp
 
@@ -114,6 +116,87 @@ val SealedVaultNightColorScheme = darkColorScheme(
     surfaceTint = NightColorPrimary
 )
 
+/**
+ * THE STRONGROOM SCHEME (P0 FOUNDATION — BUILD-SR-1): the redesigned
+ * app's Material scheme, wired from the seven inks ONLY (Color.kt's law
+ * layer). The ground is the kept violet enamel; gold leaf carries
+ * primary emphasis and text on the ground (the violet/gold chord, his
+ * eye, Audit A §4); graphite is the recessed/line-work tier. Every slot
+ * is an ink — no derived colour stands in a slot; relief and descent
+ * are RELIGHT's derivations at render time, never scheme values.
+ * The surface lanes (P3+) adopt this scheme surface by surface; the
+ * legacy schemes above remain the outgoing generation's, untouched.
+ */
+val StrongroomColorScheme = darkColorScheme(
+    primary = InkGold,
+    onPrimary = InkGraphite,
+    primaryContainer = InkViolet,
+    onPrimaryContainer = InkGold,
+    secondary = InkRose,
+    onSecondary = InkGraphite,
+    secondaryContainer = InkGraphite,
+    onSecondaryContainer = InkGold,
+    tertiary = InkBlue,
+    onTertiary = InkGraphite,
+    tertiaryContainer = InkViolet,
+    onTertiaryContainer = InkGold,
+    background = InkViolet,
+    onBackground = InkGold,
+    surface = InkViolet,
+    onSurface = InkGold,
+    surfaceVariant = InkGraphite,
+    onSurfaceVariant = InkGold,
+    surfaceBright = InkViolet,
+    surfaceDim = InkGraphite,
+    surfaceContainerLowest = InkGraphite,
+    surfaceContainerLow = InkViolet,
+    surfaceContainer = InkViolet,
+    surfaceContainerHigh = InkGraphite,
+    surfaceContainerHighest = InkGraphite,
+    inverseSurface = InkGold,
+    inverseOnSurface = InkGraphite,
+    inversePrimary = InkViolet,
+    error = InkMagenta,
+    onError = InkGraphite,
+    errorContainer = InkRose,
+    onErrorContainer = InkGraphite,
+    outline = InkGold,
+    outlineVariant = Color(0x75E2BC39),
+    scrim = InkGraphite,
+    surfaceTint = InkGold
+)
+
+
+/**
+ * The app's Material typography (P0): every slot IS a named Stage 5
+ * step from MonolithType (Type.kt) — a component reaching for a slot
+ * inherits the scale, never a stock Material size. This val lives in
+ * Theme.kt, not Type.kt, to keep class initialisation acyclic: Type.kt's
+ * families are read by MonolithType's styles, whose values this val
+ * reads; Theme.kt reads back into neither. (Venue-caught: with the val
+ * in Type.kt, a MonolithType-first touch built Typography from
+ * still-null styles.)
+ */
+// Material slots draw ONLY from the Stage 5 steps (P0): a component that
+// reaches for a slot inherits the scale, never a stock Material size.
+val Typography = Typography(
+    displayLarge = MonolithType.Scr6,
+    displayMedium = MonolithType.Scr5,
+    displaySmall = MonolithType.Scr4,
+    headlineLarge = MonolithType.Scr4,
+    headlineMedium = MonolithType.Scr3,
+    headlineSmall = MonolithType.Scr3,
+    titleLarge = MonolithType.Scr3,
+    titleMedium = MonolithType.Scr2,
+    titleSmall = MonolithType.Scr1,
+    bodyLarge = MonolithType.Scr2,
+    bodyMedium = MonolithType.Scr1,
+    bodySmall = MonolithType.Scr0,
+    labelLarge = MonolithType.Scr3,
+    labelMedium = MonolithType.Scr1,
+    labelSmall = MonolithType.Scr0
+)
+
 // (Issue #63: the three scheme aliases that duplicated these two
 // schemes under other names — ObsidianSolar / SunlitPaperLight /
 // WarmIndigoDuskDark — had zero call sites and are deleted.)
@@ -150,6 +233,11 @@ fun MyApplicationTheme(
     // is law, and a wallpaper hue could literally introduce green.
     darkTheme: Boolean,
     isFocusSessionActive: Boolean = false,
+    // P0: the session's RELIGHT state (Relight.kt). Default is the
+    // signing light; the sealed-hours surfaces provide SEALED/DARK/DAY
+    // as the day's state demands. The theme provides the law's state —
+    // surfaces consume it, never re-derive it.
+    relightState: RelightState = RelightState.SIGNING,
     content: @Composable () -> Unit
 ) {
     val scheme = if (darkTheme || isFocusSessionActive) {
@@ -164,7 +252,10 @@ fun MyApplicationTheme(
     ) {
         // Ripple is purged app-wide (Round 1c, state grammar): controls in
         // this app answer with position, fill and sound — never a wash.
-        CompositionLocalProvider(LocalIndication provides NoRippleIndication) {
+        CompositionLocalProvider(
+            LocalIndication provides NoRippleIndication,
+            LocalRelightState provides relightState
+        ) {
             content()
         }
     }

@@ -1,17 +1,23 @@
 package com.example
 
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.DisplayUnitTextStyle
+import com.example.ui.theme.InkGold
+import com.example.ui.theme.InkGraphite
+import com.example.ui.theme.InkMagenta
+import com.example.ui.theme.InkViolet
+import com.example.ui.theme.MonolithType
 import com.example.ui.theme.NightAlert
 import com.example.ui.theme.NightColorOnPrimary
 import com.example.ui.theme.NightColorSecondaryContainer
 import com.example.ui.theme.NightColorSurfaceBright
 import com.example.ui.theme.SealedVaultNightColorScheme
+import com.example.ui.theme.StrongroomColorScheme
 import com.example.ui.theme.TokenColorOnPrimary
 import com.example.ui.theme.TokenColorSurfaceBright
 import com.example.ui.theme.TokenTrueBlack
 import com.example.ui.theme.Typography
 import com.example.ui.theme.WarmTactileStudioColorScheme
+import androidx.compose.ui.text.font.FontWeight
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -49,13 +55,28 @@ class ThemeWiringTest {
     }
 
     @Test
-    fun `typography assigns all slots and the 50 tier is real`() {
-        assertEquals(DisplayUnitTextStyle, Typography.displaySmall)
-        assertEquals(50.sp, Typography.displaySmall.fontSize)
-        assertEquals(Typography.headlineLarge, Typography.headlineSmall)
-        assertEquals(com.example.ui.theme.AppTitleTextStyle, Typography.titleSmall)
-        // bodyLarge is the honest 400 body tier, not the bold title style.
-        assertNotEquals(Typography.titleSmall.fontWeight, Typography.bodyLarge.fontWeight)
+    fun `typography assigns all slots from the Stage 5 steps`() {
+        // P0 (BUILD-SR-1): the old 104/72/50/22/15/10 ladder is retired;
+        // every Material slot now IS a named Stage 5 step.
+        assertEquals(MonolithType.Scr6, Typography.displayLarge)
+        assertEquals(MonolithType.Scr4, Typography.displaySmall)
+        assertEquals(20.sp, Typography.displaySmall.fontSize)
+        assertEquals(MonolithType.Scr4, Typography.headlineLarge)
+        assertEquals(MonolithType.Scr3, Typography.headlineSmall)
+        assertEquals(MonolithType.Scr1, Typography.titleSmall)
+        // bodyLarge is the honest Atkinson 400 primary body step (SCR-2).
+        assertEquals(MonolithType.Scr2, Typography.bodyLarge)
+        assertEquals(FontWeight.Normal, Typography.bodyLarge.fontWeight)
         assertNotEquals(Typography.bodyMedium.lineHeight, Typography.bodySmall.lineHeight)
+    }
+
+    @Test
+    fun `strongroom scheme is wired from the seven inks`() {
+        assertEquals(InkViolet, StrongroomColorScheme.background)
+        assertEquals(InkGold, StrongroomColorScheme.onBackground)
+        assertEquals(InkGold, StrongroomColorScheme.primary)
+        assertEquals(InkGraphite, StrongroomColorScheme.onPrimary)
+        assertEquals(InkGraphite, StrongroomColorScheme.surfaceVariant)
+        assertEquals(InkMagenta, StrongroomColorScheme.error)
     }
 }
