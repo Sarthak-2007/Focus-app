@@ -162,8 +162,17 @@ object SessionNotification {
             .setPublicVersion(publicVersion)
             .setDeleteIntent(deleteIntent)
             .build()
-        NotificationManagerCompat.from(appContext)
-            .notify(SessionNotificationSpec.NOTIFICATION_ID, notification)
+        // COMPOSITION CURE (BUILD-SR-13): the composed head's lint
+        // run (41424101165) named one NEW error over the standing
+        // 11 — MissingPermission at this notify call. On API 33+
+        // the post permission can be absent; the one line then
+        // simply does not post (the seal itself is not the card).
+        // The areNotificationsEnabled check is the lint-honest
+        // guard; behaviour otherwise unchanged.
+        val manager = NotificationManagerCompat.from(appContext)
+        if (manager.areNotificationsEnabled()) {
+            manager.notify(SessionNotificationSpec.NOTIFICATION_ID, notification)
+        }
     }
 
     /** The lifting takes the card down and clears the dismissal

@@ -308,14 +308,19 @@ class P9MigrationProofTest {
             // set), his break length carries, the active session's
             // own words carry as the sentence, verbatim.
             val activeSession = fx.sessions().first { it.id == fx.ACTIVE_SESSION_ID }
+            // COMPOSITION CURE (BUILD-SR-13): as in the walk test —
+            // the landed P1 signature takes the intention string
+            // and returns a nullable record; the fixture's session
+            // and window end stand, so it is unwrapped. Named in
+            // the composition record.
             val signing = LegacyCarry.deriveSigning(
                 filingDateIso = "2026-11-05",
                 blockedApps = fx.blockedApps,
                 guardSettings = fx.guardSettings,
-                activeSession = activeSession,
+                activeSessionIntention = activeSession.intention,
                 guardAllowanceMinutes = 30,
                 activeSessionWindowEnd = LocalTime.of(14, 0)
-            )
+            )!!
             assertEquals(setOf(fx.LOCKED_PACKAGE), signing.lockedPackages)
             assertEquals(fx.GUARD_BREAK_MINUTES, signing.breakLengthMinutes)
             assertEquals(fx.ACTIVE_SESSION_INTENTION, signing.sentence)

@@ -71,14 +71,21 @@ class P9WholeDayWalkTest {
     private fun composedSigning(): StrongroomDay.SigningRecord {
         // COMPOSE (B-2): the day stands composed from his standing
         // order — here, the fixture loadout via LegacyCarry.
+        // COMPOSITION CURE (BUILD-SR-13): the harness was written
+        // against a draft P1 signature (activeSession = the session
+        // entity, non-null return). The landed P1 API takes the
+        // session's intention string and returns null when no
+        // lifting hour stands; the fixture's window end stands, so
+        // the record is unwrapped. Named in the composition record.
         val composed = LegacyCarry.deriveSigning(
             filingDateIso = filingDate,
             blockedApps = fx.blockedApps,
             guardSettings = fx.guardSettings,
-            activeSession = fx.sessions().first { it.id == fx.ACTIVE_SESSION_ID },
+            activeSessionIntention = fx.sessions()
+                .first { it.id == fx.ACTIVE_SESSION_ID }.intention,
             guardAllowanceMinutes = 30,
             activeSessionWindowEnd = LocalTime.of(14, 0)
-        )
+        )!!
         // The evening signing AMENDS the composition: it prices the
         // day's break — 37 minutes, freely chosen, deliberately NOT
         // one of the preset shortcuts — and shapes the gym gap.
