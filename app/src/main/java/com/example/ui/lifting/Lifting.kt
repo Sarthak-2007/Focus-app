@@ -585,37 +585,22 @@ private fun TrayZone(
     pose: LiftCeremonyPose,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
-        // The landing plate: present only from the strike — the
-        // door strikes it, it falls the last distance into the
-        // tray on its landing body and settles on the pile. Before
-        // the strike there is no plate here and nothing counts
-        // down to one.
-        Box(modifier = Modifier.fillMaxWidth().height(124.dp)) {
-            if (pose.struck) {
-                val dropPx = ((1.0 - pose.plateDropFraction.coerceAtMost(1.0)) * -72.0).toFloat()
-                StruckPlateCard(
-                    plate = plate,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .offset(y = dropPx.dp)
-                        // The plate arrives slightly askew and
-                        // squares itself as the landing body
-                        // settles — the overshoot past 1 rocks it
-                        // a breath the other way, then rest.
-                        .rotate(
-                            ((1.0 - pose.plateDropFraction) * 2.2).toFloat()
-                        )
-                )
-            }
-        }
-        Spacer(Modifier.height(10.dp))
-        PlatePileStrip(
-            pile = pile,
-            landingStruck = pose.struck,
-            dipFraction = pose.pileDip.toFloat()
-        )
-    }
+    // The tray zone is the strip itself: the pile in its
+    // receptacle, and — from the strike — today's plate falling
+    // the last distance to SEAT on the stack, its rest the
+    // pile's own top surface (the seat lives in PlatePileStrip
+    // and stands reserved before the strike, so the ceremony's
+    // layout never jumps when the plate arrives). Before the
+    // strike there is no plate here and nothing counts down
+    // to one.
+    PlatePileStrip(
+        pile = pile,
+        landingStruck = pose.struck,
+        landingPlate = plate,
+        dropFraction = pose.plateDropFraction,
+        dipFraction = pose.pileDip.toFloat(),
+        modifier = modifier
+    )
 }
 
 /**
@@ -759,17 +744,43 @@ fun StruckPlateCard(plate: StruckPlateView, modifier: Modifier = Modifier) {
 private fun PlatePileStrip(
     pile: PlatePileView,
     landingStruck: Boolean,
-    dipFraction: Float = 0f
+    dipFraction: Float = 0f,
+    landingPlate: StruckPlateView? = null,
+    dropFraction: Double = 1.0,
+    modifier: Modifier = Modifier
 ) {
     val lightState = LocalStrongroomLightState.current
     // The pile's dip under the landing: the whole stack rides
     // down by the dip's depth (3 dp at full dip) and rings back
     // on the pile's own body — brass pressed by brass, settling.
     val dipDp = (dipFraction.coerceIn(-0.35f, 1f) * 3f).dp
+    // THE SEAT (bugfix, LEAD-MOVES 2026-11-03): the stack's top
+    // surface, measured from the strip's foot — the tray's own
+    // top (26) when nothing rests, else the top resting plate's
+    // top edge (its 22 lift + 30 of brass + 8 per plate under
+    // it). The struck plate's home is THIS surface. Its first
+    // rendering stood the plate in a fixed box a full gap above
+    // the pile — box slack, a spacer, and this strip's own
+    // headroom stacked to some 66 dp of air — so even settled
+    // the plate floated at two-thirds of the tray's height,
+    // in the harness and on the phone alike. The seat is the
+    // cure: the card's foot is laid on the stack by layout,
+    // and only the fall is an offset, spent at fraction 1.
+    // The seat stands RESERVED whenever a landing plate is
+    // carried (the ceremony always carries today's): the strip
+    // is seat-high before the strike too, so nothing jumps
+    // when the plate arrives.
+    val drawnResting = pile.resting.take(PlatePileView.DRAWN_RESTING_MAX)
+    val stackTopDp = if (drawnResting.isEmpty()) 26.dp
+        else (52 + (drawnResting.size - 1) * 8).dp
+    val landingCardDp = landingPlate?.let {
+        if (it.bracket != null) 124.dp else 104.dp
+    } ?: 0.dp
+    val stripHeight = if (landingPlate != null) stackTopDp + landingCardDp else 104.dp
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(104.dp)
+            .height(stripHeight)
             .offset(y = dipDp)
     ) {
         // The tray: a graphite receptacle with a gold rim — it
@@ -784,7 +795,7 @@ private fun PlatePileStrip(
         )
         // The resting plates, newest on top of the stack, each at
         // its honest angle, rising as the pile grows.
-        val resting = pile.resting.take(PlatePileView.DRAWN_RESTING_MAX)
+        val resting = drawnResting
         resting.forEachIndexed { depth, restingPlate ->
             Box(
                 modifier = Modifier
@@ -876,9 +887,32 @@ private fun PlatePileStrip(
                 }
             }
         }
+        // THE LANDING PLATE, SEATED: from the strike, today's
+        // plate falls the last 72 dp on its landing body and
+        // comes to rest with its foot ON the stack's top
+        // surface — seated in the tray, in the pile, never
+        // floating above it. The fall is an offset only; at
+        // fraction 1 the offset is spent and the seat is the
+        // layout itself. It arrives slightly askew and squares
+        // itself as the body settles — the overshoot past 1
+        // rocks it a breath the other way, then rest. The whole
+        // strip rides the pile's dip together (above), plate
+        // and pile as one struck stack.
+        if (landingStruck && landingPlate != null) {
+            val fallDp = ((1.0 - dropFraction.coerceAtMost(1.0)) * -72.0).toFloat()
+            StruckPlateCard(
+                plate = landingPlate,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = stackTopDp)
+                    .offset(y = fallDp.dp)
+                    .rotate(((1.0 - dropFraction) * 2.2).toFloat())
+            )
+        }
         // Before the strike (landingStruck = false) the pile
         // stands as it was left: resting plates only, the tray's
-        // top empty until the strike lands today's plate.
+        // top empty until the strike lands today's plate — the
+        // seat above the stack stands reserved, and empty.
     }
 }
 
