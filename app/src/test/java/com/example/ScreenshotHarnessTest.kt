@@ -22,6 +22,10 @@ import com.example.ui.antechamber.AntechamberModel
 import com.example.ui.antechamber.AntechamberState
 import com.example.ui.antechamber.AntechamberToken
 import com.example.ui.antechamber.HeldSlip
+import com.example.ui.`break`.Break
+import com.example.ui.`break`.BreakActions
+import com.example.ui.`break`.BreakClock
+import com.example.ui.`break`.BreakState
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
 import org.junit.Assert.assertTrue
@@ -219,5 +223,112 @@ class ScreenshotHarnessTest {
             state(StrongroomDay.AllowancePurse(30, 30), spentCrank()),
             openPile = false
         )
+    }
+
+    // ── THE BREAK (BUILD-SR-39) — the firing, rendered ─────────
+    // The break's faces are phases of ONE span (30 minutes,
+    // priced at the harness signing above): the firing's first
+    // seconds (the door easing, every tooth gold), the span at
+    // rest (half the wheel graphite, the rack dressed, the pile
+    // standing with its dot), the pile's second step, and the
+    // re-drive (the seam nearly shut, the bolts travelling home).
+    // The clock is a fabricated standing, named as such — the
+    // surface renders it exactly as it renders the engine's.
+
+    private fun breakState(remainingMs: Long): BreakState {
+        val signing = signing()
+        val waiting = AntechamberModel.waitingPile(arrivals())
+        return BreakState(
+            signing = signing,
+            clock = BreakClock(
+                totalMillis = 1_800_000L,
+                remainingAtAnchorMillis = remainingMs,
+                anchorElapsedMillis = 0L
+            ),
+            tokens = signing.allowedPackages.map {
+                AntechamberToken(it, labels[it] ?: it)
+            },
+            waiting = waiting,
+            quietDot = AntechamberModel.quietDotVisible(waiting)
+        )
+    }
+
+    private fun breakActions() = BreakActions(
+        onLaunchAllowed = {},
+        onShowCode = { _: HeldSlip -> },
+        onResolveHeld = { _: HeldSlip, _: Boolean -> },
+        onTakeCall = { _: HeldSlip -> },
+        onKnock = {}
+    )
+
+    private fun shootBreak(name: String, remainingMs: Long, openPile: Boolean) {
+        val state = breakState(remainingMs)
+        val now = state.clock.totalMillis - remainingMs
+        composeRule.setContent {
+            StrongroomTheme(lightState = StrongroomLightState.SEALED) {
+                Box(Modifier.size(412.dp, 915.dp).testTag("shot")) {
+                    Break(state = state, actions = breakActions(), nowElapsedMillis = now)
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        if (openPile) {
+            val clickables = composeRule.onAllNodes(hasClickAction())
+            val nodes = clickables.fetchSemanticsNodes()
+            assertTrue("the break must carry clickables", nodes.isNotEmpty())
+            val lowest = nodes.indices.maxByOrNull { nodes[it].boundsInRoot.top }!!
+            clickables[lowest].performClick()
+            composeRule.waitForIdle()
+        }
+        val bitmap = composeRule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        assertTrue(
+            "shot must be a rich render, not a blank field (${file.length()} bytes)",
+            file.length() > 15_000
+        )
+        val colors = HashSet<Int>()
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                colors.add(bitmap.getPixel(x, y))
+                y += 7
+            }
+            x += 7
+        }
+        assertTrue(
+            "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
+            colors.size > 40
+        )
+    }
+
+    @Test
+    fun break_easing_theFiringArrives() {
+        // 900 ms into the span: the ease mid-rise on its cam, the
+        // seam opening, every tooth still gold.
+        shootBreak("break-easing.png", remainingMs = 1_799_100L, openPile = false)
+    }
+
+    @Test
+    fun break_running_theRoomAtRest() {
+        // Half the span run: half the wheel graphite, the rack
+        // dressed, the pile standing with its dot.
+        shootBreak("break-running.png", remainingMs = 900_000L, openPile = false)
+    }
+
+    @Test
+    fun break_heldPile_secondStep() {
+        shootBreak("break-held-pile.png", remainingMs = 900_000L, openPile = true)
+    }
+
+    @Test
+    fun break_redriving_theSealRestored() {
+        // The span's last second and a half: the ease nearly off,
+        // the bolts travelling home on the score.
+        shootBreak("break-redriving.png", remainingMs = 1_500L, openPile = false)
     }
 }

@@ -585,6 +585,15 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // day stands (no dead route, route-book Law R-2).
             AntechamberHost(viewModel = viewModel)
         },
+        breakContent = {
+            // The Break (BUILD-SR-39): the shell stands the BREAK
+            // place only while the engine's break span runs — the
+            // host below renders the firing from the standing
+            // facts and nothing when no break stands. The surface
+            // invokes nothing: there is no act in it that can
+            // start, stop or extend a break (census C-16).
+            BreakHost(viewModel = viewModel)
+        },
         sealedFaceContent = {
             // The shell's own SEALED_FACE host: the face from THE
             // ONE SNAPSHOT (BUILD-SR-38 merge composition — the
@@ -783,6 +792,173 @@ private fun AntechamberHost(viewModel: MonolithViewModel) {
             onReturnToFace = {
                 viewModel.moveToPlace(com.example.session.StrongroomPlace.SEALED_FACE)
             }
+        )
+    )
+}
+
+/**
+ * BUILD-SR-39 composition glue — THE BREAK (census C-16) in the
+ * shell's BREAK place.
+ *
+ * The host renders THE FIRING and invokes nothing. The break's
+ * clock is re-derived from the engine's standing facts on every
+ * engine tick: first the Strongroom day's own firing (the
+ * signing's offset + priced length against the seal's elapsed
+ * span, through the domain's breakFiring), else the kept
+ * session's standing break facts (its length in force + its
+ * remaining seconds — the same facts the shell's place
+ * derivation stands on). Between ticks the surface interpolates
+ * on the monotonic clock alone; the wall clock is never
+ * consulted. When neither clock stands, the host renders
+ * nothing — a break that is not firing has no surface, and a
+ * legacy session break on a day no Strongroom signing stands
+ * for is the old engine's business, not this room's.
+ *
+ * The interior's acts are the held room's own, through the same
+ * store verbs the antechamber host uses: a within-reach launch
+ * (no spend — the break was priced whole at signing), a code's
+ * showing (one minute + a SHOWING punch, B-18), a held slip
+ * resolved or a held call taken. There is deliberately NO act
+ * here — and none in the surface — that starts, stops, extends
+ * or shortens the break.
+ */
+@Composable
+private fun BreakHost(viewModel: MonolithViewModel) {
+    val context = LocalContext.current
+    val appContext = context.applicationContext
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val apps by viewModel.apps.collectAsStateWithLifecycle()
+    val session by viewModel.activeSession.collectAsStateWithLifecycle()
+
+    var breakState by remember {
+        mutableStateOf<com.example.ui.`break`.BreakState?>(null)
+    }
+    var revealed by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var refreshTick by remember { mutableStateOf(0) }
+    var nowElapsed by remember {
+        mutableStateOf(android.os.SystemClock.elapsedRealtime())
+    }
+
+    // The escapement's frame clock: monotonic readings only.
+    LaunchedEffect(Unit) {
+        while (true) {
+            androidx.compose.runtime.withFrameMillis {
+                nowElapsed = android.os.SystemClock.elapsedRealtime()
+            }
+        }
+    }
+
+    val sessionOnBreak = session?.isInSafeBreak == true
+    val sessionRemaining = session?.safeBreakSecondsRemaining ?: 0
+    LaunchedEffect(sessionOnBreak, sessionRemaining, refreshTick, apps) {
+        val facts = withContext(Dispatchers.IO) {
+            val store = StrongroomStore(AppContainer.dao(appContext))
+            val row = store.sealedDay() ?: return@withContext null
+            val nowE = android.os.SystemClock.elapsedRealtime()
+            val firingClock = if (
+                row.spanDurationMillis > 0L && row.sealedBootCount >= 0
+            ) {
+                val span = StrongroomDay.SealSpan(
+                    row.sealedAtElapsedMillis,
+                    row.sealedBootCount,
+                    row.spanDurationMillis
+                )
+                StrongroomDay.breakFiring(row.toSigningRecord(), span)
+                    ?.let { firing ->
+                        com.example.ui.`break`.BreakClock.fromFiring(firing, nowE)
+                    }
+            } else null
+            val sessionClock = session?.takeIf { it.isInSafeBreak }?.let { s ->
+                com.example.ui.`break`.BreakClock.fromSession(
+                    s.effectiveBreakSeconds, s.safeBreakSecondsRemaining, nowE
+                )
+            }
+            val clock = firingClock ?: sessionClock ?: return@withContext null
+            val heldRows = store.heldArrivals(row.filingDateIso)
+            val waiting = com.example.ui.antechamber.AntechamberModel.waitingPile(heldRows)
+            Triple(row.toSigningRecord(), clock, waiting)
+        }
+        breakState = facts?.let { (signing, clock, waiting) ->
+            com.example.ui.`break`.BreakState(
+                signing = signing,
+                clock = clock,
+                tokens = apps.map {
+                    com.example.ui.antechamber.AntechamberToken(it.packageName, it.appName)
+                },
+                waiting = waiting,
+                quietDot = com.example.ui.antechamber.AntechamberModel
+                    .quietDotVisible(waiting),
+                revealedCodeIds = revealed
+            )
+        }
+    }
+
+    val standing = breakState ?: return
+    com.example.ui.`break`.Break(
+        state = standing,
+        nowElapsedMillis = nowElapsed,
+        actions = com.example.ui.`break`.BreakActions(
+            onLaunchAllowed = { pkg ->
+                // Within reach is within reach: the phone's own
+                // launcher entry, nothing spent, nothing struck.
+                runCatching {
+                    val launchIntent = appContext.packageManager
+                        .getLaunchIntentForPackage(pkg)
+                        ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (launchIntent != null) {
+                        appContext.startActivity(launchIntent)
+                    }
+                }
+            },
+            onShowCode = { slip ->
+                scope.launch {
+                    val shown = withContext(Dispatchers.IO) {
+                        val store = StrongroomStore(AppContainer.dao(appContext))
+                        val row = store.sealedDay() ?: return@withContext false
+                        store.spendAllowance(
+                            row.filingDateIso,
+                            com.example.ui.antechamber.RevolvingDrum.MINUTES_PER_TAKING
+                        ) ?: return@withContext false
+                        val offset = (android.os.SystemClock.elapsedRealtime() -
+                            row.sealedAtElapsedMillis).coerceAtLeast(0L)
+                        store.punch(
+                            row.filingDateIso,
+                            StrongroomDay.Punch(
+                                StrongroomDay.PunchKind.SHOWING, offset, ""
+                            )
+                        )
+                        true
+                    }
+                    if (shown) revealed = revealed + slip.id
+                    refreshTick++
+                }
+            },
+            onResolveHeld = { slip, taken ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .resolveHeldArrival(slip.id, taken)
+                    }
+                    revealed = revealed - slip.id
+                    refreshTick++
+                }
+            },
+            onTakeCall = { slip ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .resolveHeldArrival(slip.id, taken = true)
+                    }
+                    runCatching {
+                        appContext.startActivity(
+                            Intent(Intent.ACTION_DIAL, Uri.parse("tel:${slip.line}"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                    refreshTick++
+                }
+            },
+            onKnock = {}
         )
     )
 }
