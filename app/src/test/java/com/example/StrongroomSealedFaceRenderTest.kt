@@ -42,20 +42,23 @@ class StrongroomSealedFaceRenderTest {
             }
         }
         composeRule.onNodeWithTag("sealed_face").assertIsDisplayed()
-        // FINAL-PHASE CURE (BUILD-SR-15, E-16): the ring asserted
-        // DISPLAYED and failed on the judging run (41425228610) —
-        // under Robolectric the compose host's window does not
-        // take the filed w420dp-h920dp qualifiers, so "displayed"
-        // measured the harness window, not the face (the face's
-        // own column audits to ~743dp of fixed measure, inside
-        // the filed 920dp). The substance asserted instead: the
-        // ring STANDS, square, at its filed measure's scale —
-        // at least half the face's width (300dp of the 420dp
-        // face) — which a collapsed or displaced ring fails.
-        composeRule.onNodeWithTag("sealed_face_ring").assertExists()
+        // FINAL-PHASE CURE (BUILD-SR-15, E-16/E-17, second read):
+        // the judging run's "not displayed" and this branch's
+        // first cure both missed the mechanism the run's own E-17
+        // text names — the face's semantics-silent children (the
+        // ring Canvas, the kept places) are ABSORBED into the
+        // clickable root's merged node (clickable carries
+        // MergeDescendants=true in this Compose version, proven
+        // on H-29's tree dump) and do not exist in the merged
+        // tree at all. Every face-internal query below therefore
+        // runs on the unmerged tree. The ring's substance: it
+        // STANDS, square, at its filed measure's scale — at
+        // least half the face's width (300dp of the 420dp face)
+        // — which a collapsed or displaced ring fails.
+        composeRule.onNodeWithTag("sealed_face_ring", useUnmergedTree = true).assertExists()
         val faceBounds = composeRule.onNodeWithTag("sealed_face")
             .fetchSemanticsNode().boundsInRoot
-        val ringBounds = composeRule.onNodeWithTag("sealed_face_ring")
+        val ringBounds = composeRule.onNodeWithTag("sealed_face_ring", useUnmergedTree = true)
             .fetchSemanticsNode().boundsInRoot
         assert(ringBounds.width == ringBounds.height && ringBounds.width > 0f) {
             "the ring must stand square and sized, was $ringBounds"
@@ -64,11 +67,11 @@ class StrongroomSealedFaceRenderTest {
             "the ring must carry the face at its filed measure " +
                 "(300dp of 420dp), was ${ringBounds.width} of ${faceBounds.width}"
         }
-        composeRule.onNodeWithTag("door_word_kept_place").assertExists()
-        composeRule.onNodeWithTag("face_sentence").assertExists()
-        composeRule.onNodeWithTag("sentence_kept_place").assertDoesNotExist()
-        composeRule.onNodeWithTag("held_mark_kept_place").assertExists()
-        composeRule.onNodeWithTag("antechamber_grille").assertExists()
+        composeRule.onNodeWithTag("door_word_kept_place", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("face_sentence", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("sentence_kept_place", useUnmergedTree = true).assertDoesNotExist()
+        composeRule.onNodeWithTag("held_mark_kept_place", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("antechamber_grille", useUnmergedTree = true).assertExists()
     }
 
     @Test

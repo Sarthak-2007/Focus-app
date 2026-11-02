@@ -161,7 +161,7 @@ class StrongroomDayStateModelTest {
     }
 
     @Test
-    fun gaps_areShapesNotApps_noPackageNoOpening_kindsExactlyTheFiledFour() {
+    fun gaps_areShapesNotApps_noPackageNoOpening_kindsExactlyTheFiledFive() {
         // A shaped gap can never enter the locked set: by type it
         // carries a kind and two offsets — no package name exists
         // on it to lock. And the kinds are exactly the four ledger
@@ -175,11 +175,17 @@ class StrongroomDayStateModelTest {
             fieldNames(StrongroomDay.ShapedGap::class.java)
         )
         assertEquals(
+            // ADOPTION RE-AIM (BUILD-SR-15, C-16): the composed
+            // GapKind carries a fifth kind the author's four-name
+            // census predates — SLEEP (GapPlacement.TERMINAL):
+            // sleep stands outside the seal in his day like the
+            // other four shapes, and is no opening either.
             listOf(
                 StrongroomDay.GapKind.MEDITATION,
                 StrongroomDay.GapKind.GYM,
                 StrongroomDay.GapKind.SADHANA,
-                StrongroomDay.GapKind.MEAL
+                StrongroomDay.GapKind.MEAL,
+                StrongroomDay.GapKind.SLEEP
             ),
             StrongroomDay.GapKind.values().toList()
         )
@@ -327,9 +333,15 @@ class StrongroomDayStateModelTest {
         // totalled; the drawer stores finished tasks quietly. The
         // types cannot grade a day — the fields do not exist.
         assertEquals(
+            // ADOPTION RE-AIM (BUILD-SR-15, C-16): the composed
+            // DayPlate carries one more field than the author's
+            // census — taskLine, the day's task line spent at the
+            // striking (B-3), his words verbatim. It is not a
+            // score, total or grade; the prohibition this census
+            // exists to pin stands untouched.
             setOf(
                 "filingDateIso", "hoursHeldMillis", "punches", "sealState",
-                "crankSealBroken", "bracketGapMillis"
+                "crankSealBroken", "bracketGapMillis", "taskLine"
             ),
             fieldNames(StrongroomDay.DayPlate::class.java)
         )

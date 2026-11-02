@@ -81,7 +81,7 @@ class SigningModelAdjacencyC4Test {
     // ---------------------------------------------------------------
 
     @Test
-    fun apiSurface_isExactlyTheSevenRuledActs() {
+    fun apiSurface_isExactlyTheEightRuledActs() {
         val actMethods = SigningState::class.java.declaredMethods
             .filter { m ->
                 !m.isSynthetic &&
@@ -92,8 +92,17 @@ class SigningModelAdjacencyC4Test {
             .map { it.name }
             .toSet()
         assertEquals(
+            // ADOPTION RE-AIM (BUILD-SR-15, C-14): the composed
+            // SigningState carries an eighth act the author's
+            // census predates — setBreakMinutes, the break-length
+            // ruling's signing act (break length is freely chosen
+            // when the day is signed; CompositionDraft carries
+            // composedBreakMinutes). The census follows the
+            // composed tree; the adjacency drivers below are the
+            // author's chain, untouched.
             setOf(
                 "toggleApp", "setHour", "setSentence", "setTaskLine",
+                "setBreakMinutes",
                 "advance", "beginSignature", "completeSignature"
             ),
             actMethods
@@ -105,7 +114,7 @@ class SigningModelAdjacencyC4Test {
     // ---------------------------------------------------------------
 
     @Test
-    fun stateFields_areExactlyTheEight_andNoneHoldsACombinationOrSwing() {
+    fun stateFields_areExactlyTheNine_andNoneHoldsACombinationOrSwing() {
         val fields = SigningState::class.java.declaredFields
             .filter {
                 !it.isSynthetic &&
@@ -116,8 +125,8 @@ class SigningModelAdjacencyC4Test {
             .sorted()
         assertEquals(
             listOf(
-                "draft", "liftingHour", "lockedPackages", "result",
-                "sentence", "signatureBegun", "step", "taskLine"
+                "breakMinutes", "draft", "liftingHour", "lockedPackages",
+                "result", "sentence", "signatureBegun", "step", "taskLine"
             ),
             fields
         )

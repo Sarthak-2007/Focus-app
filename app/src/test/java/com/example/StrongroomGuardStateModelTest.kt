@@ -127,10 +127,18 @@ class StrongroomGuardStateModelTest {
         // end date chosen at setup is the only exit.
         val fields = fieldNames(StrongroomGuard.GuardState::class.java)
         assertEquals(
+            // ADOPTION RE-AIM (BUILD-SR-15, C-16): the composed
+            // GuardState carries one more field than the author's
+            // census — dayPurseTotalMinutes, the standing day
+            // purse the allowance is drawn against (default -1 =
+            // unprovisioned). It is allowance machinery, not an
+            // off and not a witness; D-3's prohibitions below
+            // stand untouched.
             setOf(
                 "guardOn", "allowanceMinutes", "pendingAllowanceMinutes",
                 "pendingAllowanceFromMillis", "pendingOffFromMillis",
-                "stretchEndMillis", "spentDateIso", "spentMinutesThatDay"
+                "stretchEndMillis", "spentDateIso", "spentMinutesThatDay",
+                "dayPurseTotalMinutes"
             ),
             fields
         )

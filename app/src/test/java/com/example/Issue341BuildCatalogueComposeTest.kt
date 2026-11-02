@@ -120,11 +120,20 @@ class Issue341BuildCatalogueComposeTest {
         // semantics tree into the assertion so the next read is
         // evidence, not another guess.
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN").performClick()
+        // Second instrument (BUILD-SR-15): the first cure's dump
+        // (run 41428559751) proves the OPEN stop stands in the
+        // unmerged tree at (262,64)-(302,100) with its own
+        // OnClick, inside the row whose combinedClickable merges
+        // descendants — the merged-tree node the plain finder
+        // returns is the suspect. Click the unmerged node; a
+        // failure now prints the MERGED tree (the click's own
+        // tree) beside the assertion.
+        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN", useUnmergedTree = true)
+            .performClick()
         composeRule.waitForIdle()
         assertEquals(
-            "OPEN stop tap must reach onSetAppTier; tree: " +
-                composeRule.onRoot(useUnmergedTree = true).printToString(),
+            "OPEN stop tap must reach onSetAppTier; merged tree: " +
+                composeRule.onRoot().printToString(),
             pkg to AppBlockTier.OPEN,
             sink.get()
         )
