@@ -7,9 +7,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -949,8 +947,31 @@ class ScreenshotHarnessTest {
         try {
             val bitmap = drawShot(
                 interact = {
-                    composeRule.onRoot().performTouchInput { click(center) }
-                    composeRule.mainClock.advanceBy(48)
+                    // The strike as real motion events on the
+                    // decor view, at the laid-out face's own
+                    // centre (drawShot has already laid the view
+                    // out at the shot's size): down and up 30 ms
+                    // apart — a tap, not a press — then the test
+                    // clock advanced into the blow.
+                    val activity = composeRule.activity
+                    val decor = activity.window.decorView
+                    val density = activity.resources.displayMetrics.density
+                    val cx = 206 * density
+                    val cy = 457 * density
+                    val now = android.os.SystemClock.uptimeMillis()
+                    composeRule.runOnUiThread {
+                        val down = android.view.MotionEvent.obtain(
+                            now, now, android.view.MotionEvent.ACTION_DOWN, cx, cy, 0
+                        )
+                        val up = android.view.MotionEvent.obtain(
+                            now, now + 30, android.view.MotionEvent.ACTION_UP, cx, cy, 0
+                        )
+                        decor.dispatchTouchEvent(down)
+                        decor.dispatchTouchEvent(up)
+                        down.recycle()
+                        up.recycle()
+                    }
+                    composeRule.mainClock.advanceTimeBy(48)
                 }
             ) {
                 StrongroomTheme(lightState = StrongroomLightState.DAY) {
