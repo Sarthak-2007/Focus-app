@@ -78,8 +78,10 @@ object ResistanceCurves {
      * (the control rests there willingly) and PEAKS at [lipDistance]
      * from it — the lip the hand must climb to leave. The bump is
      * x²·e^(1−x²) over x = distance/lipDistance: 0 at the centre,
-     * 1 at the lip, decaying beyond, so neighbouring wells never
-     * stack into a wall.
+     * 1 at the lip, decaying beyond. The NEAREST well governs: a
+     * centre is a true rest (exactly base resistance), and the
+     * midpoint between two detents is the lip between them —
+     * neighbouring tails never leak into a rest.
      */
     fun detentWells(positions: List<Float>, lipDistance: Float, depth: Float): ResistanceCurve {
         require(positions.isNotEmpty()) { "detent wells need at least one position" }
@@ -87,13 +89,11 @@ object ResistanceCurves {
         require(depth >= 0f) { "well depth must be >= 0" }
         val sorted = positions.distinct().sorted()
         return ResistanceCurve { value, _ ->
-            var peak = 0f
-            for (p in sorted) {
-                val x = abs(value - p) / lipDistance
-                val bump = x * x * exp(1f - x * x)
-                if (bump > peak) peak = bump
-            }
-            1f + depth * peak
+            var nearest = Float.MAX_VALUE
+            for (p in sorted) nearest = minOf(nearest, abs(value - p))
+            val x = nearest / lipDistance
+            val bump = x * x * exp(1f - x * x)
+            1f + depth * bump
         }
     }
 
