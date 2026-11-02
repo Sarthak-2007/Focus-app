@@ -13,6 +13,8 @@ import com.example.data.toSealSpan
 import com.example.data.toSigningRecord
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomRouting
+import com.example.service.haptics.AndroidWaveformPlayer
+import com.example.service.haptics.HapticEvent
 
 /**
  * P2 — ENGINE WIRING (BUILD-SR-3): the Strongroom model, wired to
@@ -71,6 +73,26 @@ object StrongroomEngineBridge {
     private fun store(context: Context): StrongroomStore =
         StrongroomStore(AppContainer.dao(context.applicationContext))
 
+    /**
+     * STAGE 14 (BUILD-SR-20): the felt layer's one door. Every
+     * ceremony this bridge drives fires its [HapticEvent] through
+     * [com.example.service.haptics.SensoryBus] — the single event
+     * table (R8-4) — with the real Android waveform player. The
+     * bus's sound/motion players are the recorded NoOps until
+     * BUILD-SR-19's sound adapter lands behind the bus (named in
+     * BUILD-SR-20's record, never faked here). A sensory failure
+     * never fails the ceremony: the span is the truth, the felt
+     * event is its testimony (L-5 — never replayed, never a
+     * substitute buzz). All felt figures UNPROVEN-ON-DEVICE.
+     */
+    private fun fireSensory(context: Context, event: HapticEvent) {
+        try {
+            AndroidWaveformPlayer.bus(context.applicationContext).fire(event)
+        } catch (_: Exception) {
+            // Silence for this firing; the ceremony stands.
+        }
+    }
+
     /** The monotonic clock the seal's span is struck on. */
     fun nowElapsedMillis(): Long = SystemClock.elapsedRealtime()
 
@@ -104,6 +126,16 @@ object StrongroomEngineBridge {
             sealedAtElapsedMillis = nowElapsedMillis(),
             bootCount = bootCount(appContext)
         ) ?: return null
+        // THE DOOR, felt: the swing + three bolts fire as ONE
+        // SensoryBus event at the ceremony's t=0 (FEEL-SR-1's
+        // canonical 1,204 ms array stands verbatim in the
+        // registry). Primed first (R-8) so the first strike is
+        // not paid for in cold latency.
+        try {
+            AndroidWaveformPlayer.prime(appContext)
+        } catch (_: Exception) {
+        }
+        fireSensory(appContext, HapticEvent.DOOR_SEAL)
         MonolithShieldService.startShield(appContext)
         armFirings(appContext, dateIso)
         // The swing has taken: the session's one lock-screen
@@ -180,6 +212,11 @@ object StrongroomEngineBridge {
             allowedPackages = signing.allowedPackages.toSet()
         )
         if (decision == StrongroomRouting.ReachDecision.KNOCK) {
+            // THE KNOCK, felt through the one door: the sealed
+            // face's only felt event (registry row = BUILD-SR-2's
+            // StrongroomKnock verbatim). Fired here, at the
+            // routing's own verdict — exactly once per reach.
+            fireSensory(appContext, HapticEvent.KNOCK)
             val offset = (nowElapsedMillis() - row.sealedAtElapsedMillis).coerceAtLeast(0L)
             store.punch(
                 row.filingDateIso,
@@ -231,6 +268,10 @@ object StrongroomEngineBridge {
             return false
         }
         store.strikePlate(dateIso, nowElapsed, boot, sealFailed = false)
+        // THE LIFTING, felt: bolts withdrawing + the door opening
+        // on its own weight (FEEL-SR-1's canonical 1,197 ms array
+        // verbatim in the registry; no terminal impact).
+        fireSensory(appContext, HapticEvent.DOOR_LIFT)
         MonolithShieldService.stopShield(appContext)
         // The lifting takes the session's one card down with it.
         SessionNotification.cancel(appContext)
@@ -262,12 +303,16 @@ object StrongroomEngineBridge {
         when (StrongroomRouting.classifyIntegrity(span, boot, sidewaysKillObserved)) {
             StrongroomRouting.SealIntegrity.AJAR_BOOT_DEATH -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = false)
+                // A fallen day's strike is felt as such — lower,
+                // damped (the registry's failure row).
+                fireSensory(appContext, HapticEvent.PLATE_STRIKE_FAILURE)
                 MonolithShieldService.stopShield(appContext)
                 // Seal death: no session stands, no presence stands.
                 SessionNotification.cancel(appContext)
             }
             StrongroomRouting.SealIntegrity.BROKEN_TAMPER -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = true)
+                fireSensory(appContext, HapticEvent.PLATE_STRIKE_FAILURE)
                 MonolithShieldService.stopShield(appContext)
                 // A broken seal is not a session either.
                 SessionNotification.cancel(appContext)
