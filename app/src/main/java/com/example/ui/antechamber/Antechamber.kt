@@ -469,24 +469,43 @@ private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) 
                     // THE BRASS SHUTTER, closed over the metered
                     // apps: slat over slat, the drum's own brass —
                     // behind it the tokens are GONE (they are not
-                    // drawn at all below), never dimmed.
+                    // drawn at all below), never dimmed. Each slat
+                    // is GRAINED like the drum it covers (brass is
+                    // brass, open or shut — a flat band would be a
+                    // placeholder wearing the shutter's name), its
+                    // tone stepped a shade per leaf so the leaves
+                    // read as separate metal, seamed at each joint.
                     val slats = 7
+                    val band = size.height / slats
                     for (s in 0 until slats) {
-                        val y = size.height * s / slats
-                        val tone = AntechamberTexture.cellTone(
-                            StrongroomInks.Gold, StrongroomInks.Graphite,
-                            AntechamberTexture.Species.BRASS, s, 3,
-                            seed = 53, state = lightState
-                        )
-                        drawRect(
-                            color = tone,
-                            topLeft = Offset(0f, y),
-                            size = Size(size.width, size.height / slats + 1f)
-                        )
+                        val y0 = band * s
+                        var yy = y0
+                        var rowI = (y0 / cell).toInt()
+                        while (yy < y0 + band) {
+                            var xx = 0f
+                            var colI = 0
+                            while (xx < size.width) {
+                                val tone = AntechamberTexture.cellTone(
+                                    StrongroomLight.descend(
+                                        StrongroomInks.Gold, 1 + (s % 2)
+                                    ),
+                                    StrongroomInks.Graphite,
+                                    AntechamberTexture.Species.BRASS,
+                                    colI, rowI, seed = 53, state = lightState
+                                )
+                                drawRect(
+                                    color = tone,
+                                    topLeft = Offset(xx, yy),
+                                    size = Size(cell + 1f, cell + 1f)
+                                )
+                                xx += cell; colI++
+                            }
+                            yy += cell; rowI++
+                        }
                         drawLine(
                             color = StrongroomRoles.OnLeaf,
-                            start = Offset(0f, y),
-                            end = Offset(size.width, y),
+                            start = Offset(0f, y0),
+                            end = Offset(size.width, y0),
                             strokeWidth = 2.dp.toPx()
                         )
                     }
