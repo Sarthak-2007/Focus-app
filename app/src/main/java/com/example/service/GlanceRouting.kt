@@ -1,49 +1,33 @@
 package com.example.service
 
-import com.example.session.MonolithDestination
+import com.example.session.StrongroomPlace
 
 /**
- * Issue #155 F5 (WING-F, BUILDER-4): what a tap on a glance card is
- * ABOUT, and the one destination that tap may lawfully land on.
+ * Issue #155 F5 (WING-F, BUILDER-4), re-targeted by BUILD-SR-34:
+ * what a tap on a glance card is ABOUT, and the one place that
+ * tap may lawfully land on.
  *
- * The audit's F5 kernel was routing, not decoration: the shield
- * card's tap dumped the user on the arming Deck whatever the card
- * was saying. The first cure (PR #312) swung to the opposite
- * single destination — every shield tap called
- * `navigateTo(SHIELD)` — and that route is wrong twice over on
- * current main:
+ * The F5 kernel was routing, not decoration, and its per-state
+ * table stood: every row landed on the Deck, because the Deck was
+ * the one room each state lawfully shared. The Deck is dead. In
+ * the Strongroom's own order the successor room is the DOORWAY —
+ * the signing place, where the arm is composed and where the
+ * plate is read after the lifting — so every row now lands there:
  *
- *  - LIVE: [MonolithViewModel.navigateTo] refuses every non-DECK
- *    destination while a session is active (the #128 seal law: a
- *    live session holds the phone on the Deck). The SHIELD call is
- *    dead code mid-session — the tap lands wherever the persisted
- *    destination happened to be, by accident, not by routing.
- *  - COMPLETION: the session is over, so the SHIELD call succeeds —
- *    and lands on the one surface where the receipt the card
- *    announces is NOT. The standing receipt slip renders only
- *    while `currentDestination == DECK` (MainActivity's DECK gate);
- *    off the Deck it unmounts.
+ *  - [ARMING] — the card is about the signing in progress; the
+ *    signing lives at the doorway.
+ *  - [LIVE_SESSION] / [SAFE_BREAK] / [BREAK_OVER] — the tap names
+ *    the doorway, and [com.example.session.MonolithViewModel.moveToPlace]'s
+ *    seal law refuses the move while a session stands: the sealed
+ *    face holds, exactly as the old seal veto held the Deck rows.
+ *    The route is a request the order judges, never a promise.
+ *  - [COMPLETION] — the card is about the finished day; its
+ *    reading (the plate, the slip) stands at the doorway.
  *
- * The lawful table is therefore per-state, and every row is DECK —
- * not because routing does not matter, but because two standing
- * gates leave exactly one lawful room per state:
- *
- *  - [ARMING] — the arming card is about the arm in progress; the
- *    arming surface is the Deck.
- *  - [LIVE_SESSION] / [SAFE_BREAK] — the session surface under a
- *    seal is the Deck (hero, glance caption, break state); the
- *    seal law vetoes every other destination anyway.
- *  - [BREAK_OVER] — the summons is about the next block of the
- *    live session: the Deck, under the same seal.
- *  - [COMPLETION] — the card/summons is about the receipt; the
- *    standing slip stands on the Deck and nowhere else.
- *
- * The rows stay distinct in code so a future destination change
- * (e.g. a lawful session surface off the Deck) edits ONE row with
- * its gate named — never the whole table by a global replace.
- * No row may ever name a destination the seal vetoes while its
- * state is live, and no glance tap may carry a session-control
- * action: routing moves the user's eyes, never the seal.
+ * The rows stay distinct in code so a future change edits ONE
+ * row with its gate named — never the whole table by a global
+ * replace. No glance tap may carry a session-control action:
+ * routing moves the user's eyes, never the seal.
  */
 enum class GlanceAbout {
     ARMING,
@@ -68,23 +52,22 @@ object GlanceRouting {
     fun parseAbout(raw: String?): GlanceAbout? =
         raw?.let { runCatching { GlanceAbout.valueOf(it) }.getOrNull() }
 
-    /** The destination a glance tap lands on. Null only when the
-     *  tap is not a glance tap at all (no [about]) — the caller
-     *  then performs no routing, exactly as before this law. */
-    fun destinationFor(about: GlanceAbout?): MonolithDestination? = when (about) {
-        // About the receipt; the standing slip stands only on the
-        // Deck (MainActivity's DECK gate) — SHIELD was the #312
-        // route and the slip is not there.
-        GlanceAbout.COMPLETION -> MonolithDestination.DECK
+    /** The place a glance tap lands on. Null only when the tap is
+     *  not a glance tap at all (no [about]) — the caller then
+     *  performs no routing, exactly as before this law. */
+    fun placeFor(about: GlanceAbout?): StrongroomPlace? = when (about) {
+        // About the finished day; its reading stands at the
+        // doorway, where the plate is struck and read.
+        GlanceAbout.COMPLETION -> StrongroomPlace.DOORWAY
         // About the live session / its break / its next block /
-        // the arm in progress: the Deck is the sealed session
-        // surface, and the seal law in navigateTo vetoes every
-        // other destination while the session is live — a route
-        // naming SHIELD here would be a promise the VM refuses.
+        // the signing in progress: the doorway is the request;
+        // while a seal stands, moveToPlace refuses it and the
+        // sealed face holds — the tap moves eyes only where the
+        // Strongroom's order allows eyes to go.
         GlanceAbout.ARMING,
         GlanceAbout.LIVE_SESSION,
         GlanceAbout.SAFE_BREAK,
-        GlanceAbout.BREAK_OVER -> MonolithDestination.DECK
+        GlanceAbout.BREAK_OVER -> StrongroomPlace.DOORWAY
         null -> null
     }
 

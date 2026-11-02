@@ -15,10 +15,6 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -26,7 +22,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -46,8 +41,8 @@ import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
-import com.example.session.MonolithDestination
 import com.example.session.MonolithViewModel
+import com.example.ui.shell.StrongroomShell
 import kotlinx.coroutines.launch
 
 // ==================================================================
@@ -60,13 +55,18 @@ import kotlinx.coroutines.launch
 // census filed as ENGINE-WIRING: the five onCreate machinery
 // blocks, the intercept-intent consumption law, the FIX-trip
 // machinery (openFixPane / launchSettings / pinnedSettingsIntent),
-// the POST_NOTIFICATIONS re-ask, and the archive FLAG_SECURE law
-// (archiveSurfaceSecure). The old composition — MonolithRootApp,
-// the four screens, every overlay host — is DELETED with the rest
-// of com/example/ui/** in this same act. What composes here is
-// ShellHost below: the MINIMUM HOST, not a designed surface. The
-// foundation (PR #868) and the surface slices compose onto this
-// host in their own acts.
+// and the POST_NOTIFICATIONS re-ask. The old composition —
+// MonolithRootApp, the four screens, every overlay host — is
+// DELETED with the rest of com/example/ui/** in this same act.
+// What composes here is ShellHost below.
+//
+// BUILD-SR-34 (the shell slice): ShellHost now composes the
+// Strongroom's own order (com.example.ui.shell.StrongroomShell)
+// on the composed foundation (PR #868, merged). The archive
+// FLAG_SECURE law that rode the dead VAULT destination died
+// with the enum in this act — its successor surface is the
+// drawer's room inside the doorway, whose own slice (R-6)
+// re-earns FLAG_SECURE when the drawer stands.
 // ==================================================================
 
 /** Issue #78 (Audit R2, ipc-intents): the system Settings app's
@@ -233,7 +233,7 @@ class MainActivity : ComponentActivity() {
         // Issue #155 (F5): a tap on a glance card lands on the
         // surface the card is ABOUT, per GlanceRouting's per-state
         // table — not the #312 single route to SHIELD, which the
-        // seal law in navigateTo refuses mid-session (dead code)
+        // seal law in moveToPlace refuses mid-session (dead code)
         // and which, at completion, lands where the receipt is
         // not. The about extra is routing-only: it names a
         // destination, never a session action, so honouring it
@@ -262,7 +262,7 @@ class MainActivity : ComponentActivity() {
                 val about = glanceAbout ?: GlanceRouting.aboutForLegacyShieldTap(
                     sessionActive = viewModel.activeSession.value?.isActive == true
                 )
-                GlanceRouting.destinationFor(about)?.let { viewModel.navigateTo(it) }
+                GlanceRouting.placeFor(about)?.let { viewModel.moveToPlace(it) }
             }
             return
         }
@@ -345,21 +345,20 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * THE MINIMUM HOST — everything this composable is, stated plainly:
- * it carries the shell's lifecycle wiring (residency stamp, the
+ * THE HOST — everything this composable is, stated plainly: it
+ * carries the shell's lifecycle wiring (residency stamp, the
  * ON_RESUME watch sweep + return-service stop, the ON_STOP airlock
- * abandonment note), the archive FLAG_SECURE effect keyed on the
- * ViewModel's standing destination, and the airlock-holds-Back law.
- * Its entire visual content is one static word on the default
- * Material ground — a birth certificate, not a surface. No old
- * destination is composed here; no DECK/Shield/Sequencer/Drawer
- * surface exists anywhere in the tree from this act on.
+ * abandonment note) and the airlock-holds-Back law, and it composes
+ * the Strongroom's own order (StrongroomShell) as the app's whole
+ * visual structure. The archive FLAG_SECURE effect that keyed on
+ * the old standing destination died with the enum (BUILD-SR-34;
+ * named in the file head) — no place in the new order IS the
+ * archive; the drawer's slice re-earns the flag when it stands.
  */
 @Composable
 private fun ShellHost(viewModel: MonolithViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val currentDestination by viewModel.currentDestination.collectAsStateWithLifecycle()
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
 
     // Watch Store residency (census §2c, re-carried): the old
@@ -371,23 +370,6 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     LaunchedEffect(Unit) {
         WatchStore.noteResidencyStart()
         viewModel.runWatchSweep()
-    }
-
-    // Issue #264 B-264-31: the archive FLAG_SECURE law, verbatim
-    // from the old composition — while the standing destination
-    // is the archive, the window is FLAG_SECURE; every other
-    // destination clears it.
-    val archiveWindow = (context as? android.app.Activity)?.window
-    LaunchedEffect(currentDestination) {
-        if (archiveSurfaceSecure(currentDestination)) {
-            archiveWindow?.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        } else {
-            archiveWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
     }
 
     // The old composition's lifecycle observer, re-carried whole
@@ -427,11 +409,7 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // The door holds; Back is not an exit.
     }
 
-    MaterialTheme {
-        Box(modifier = Modifier.fillMaxSize()) {
-            Text(text = "ULYSSES")
-        }
-    }
+    StrongroomShell(viewModel = viewModel)
 }
 // Issue #27 (finding 5): a FIX trip must never die silently.
 // Every Settings launch goes through here: the exact pane
@@ -622,14 +600,3 @@ private fun reaskPostNotifications(
         notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 }
-
-/**
- * Issue #264 (B-264-31): which destinations carry the archive.
- * The Ledger (VAULT) holds every receipt, day word and finished
- * session — while it stands, the activity window is FLAG_SECURE
- * (no screenshot, no Recents thumbnail of the user's history).
- * Every other destination is a working surface, not the archive,
- * and stays capturable. Pure, so the matrix is unit-tested.
- */
-internal fun archiveSurfaceSecure(destination: MonolithDestination): Boolean =
-    destination == MonolithDestination.VAULT
