@@ -80,11 +80,16 @@ class StrongroomSigningRenderTest {
             val travelDp = delta / 2f + if (delta >= 0) 2f else -2f
             composeRule.onNodeWithTag("signing_hour_drag").performTouchInput {
                 val startX = if (travelDp >= 0) center.x - 120f else center.x + 120f
-                swipe(
-                    start = Offset(startX, center.y),
-                    end = Offset(startX + travelDp * density, center.y),
-                    durationMillis = 400
-                )
+                val travelPx = travelDp * density
+                // Down / stepped moves / up — this Compose
+                // version's touch scope has no swipe member;
+                // the strip accumulates per-event deltas, so
+                // the steps sum to the same travel.
+                down(Offset(startX, center.y))
+                repeat(10) {
+                    moveBy(Offset(travelPx / 10f, 0f))
+                }
+                up()
             }
             composeRule.waitForIdle()
         }
