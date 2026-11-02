@@ -623,6 +623,50 @@ private fun reaskPostNotifications(
     }
 }
 
+// ------------------------------------------------------------------
+// CENSUS-MISS CURE (gate step 5, named in the deletion record §5):
+// the two declarations below were filed COMPOSITION-DIES by the
+// census (§2a) — their production callers (the Park helpers) are
+// deleted with the composition. But Issue534FirstRunHonestyTest,
+// one of the protected 22 survive-by-repoint files, evidences the
+// spend verdict through these same-package symbols, and the
+// census's sweep (keyed on com.example.ui imports) could not see a
+// root-package reference. They are restored VERBATIM in their
+// original file so the survivor stands untouched; in production
+// they now have no caller — the intro they priced is rebuild
+// business, and their death, if the coordinator rules it, must
+// land with that test's disposition in the same act, never
+// silently here.
+// ------------------------------------------------------------------
+
+/**
+ * Issue #534 F2: how long the delivered intro must stand in front
+ * of the user before a dismissal counts as "read". A reflexive
+ * scrim tap lands inside a second or two; the intro is ~60 words
+ * and cannot have been read in that window. A FIX trip spends the
+ * bit immediately at any dwell — engaging with the board IS
+ * having read enough to act.
+ */
+internal const val PARK_INTRO_READ_DWELL_MS = 5_000L
+
+/**
+ * Issue #534 F2: the intro-spend verdict for one dismissal, as
+ * pure arithmetic so the acceptance cases table directly:
+ *  - never delivered this open -> never spends;
+ *  - a FIX trip was taken this open -> spends;
+ *  - otherwise spends only once the read dwell has elapsed.
+ */
+internal fun parkIntroSpendsOnDismiss(
+    deliveredThisOpen: Boolean,
+    fixTripTakenThisOpen: Boolean,
+    deliveredAtMonoMs: Long,
+    nowMonoMs: Long
+): Boolean =
+    deliveredThisOpen &&
+        (fixTripTakenThisOpen ||
+            (deliveredAtMonoMs > 0L && nowMonoMs - deliveredAtMonoMs >= PARK_INTRO_READ_DWELL_MS))
+
+
 /**
  * Issue #264 (B-264-31): which destinations carry the archive.
  * The Ledger (VAULT) holds every receipt, day word and finished
