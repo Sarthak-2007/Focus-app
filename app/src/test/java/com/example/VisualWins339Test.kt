@@ -39,7 +39,11 @@ import org.junit.Test
  */
 class VisualWins339Test {
 
-    private val ladder = setOf(104f, 72f, 50f, 22f, 15f, 10f)
+    // P0 (BUILD-SR-1): the census ladder is now the Stage 5 scale — the
+    // sizes the Material slots may carry are the SCR steps they draw
+    // from (12/14/16/18/20/24/32). The legacy named styles below keep
+    // their own retired ladder (104/72/50/22/15/10) byte-identical.
+    private val ladder = setOf(12f, 14f, 16f, 18f, 20f, 24f, 32f)
 
     @Test
     fun everyTypographySlotSitsOnTheLadder() {

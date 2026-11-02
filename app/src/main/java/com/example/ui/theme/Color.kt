@@ -3,6 +3,71 @@ package com.example.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // =========================================================================
+// STRONGROOM LAW LAYER — P0 FOUNDATION (BUILD-SR-1 · Slice 1)
+// The seven-ink palette is CLOSED (Audit A §4 — his eye + Stage 5/6/7):
+// these seven colours, plus their 1/8-step RELIGHT derivations
+// (Relight.kt), are the only colours the redesigned app may render.
+// Never green: every ink satisfies green < maxOf(red, blue) — the census
+// in FoundationP0Test proves it per ink, not by assertion.
+// HEADER LAW for every later slice: surfaces consume the semantic roles
+// below and the Material scheme (Theme.kt's StrongroomColorScheme) —
+// never a raw ink hex at a call site, never a legacy token from the
+// RETIRED layer further down. Slices refine roles; they do not re-found.
+// =========================================================================
+
+/** Ink — magenta #F04FCB. The palette's sharp signal ink. */
+val InkMagenta = Color(0xFFF04FCB)
+
+/** Ink — deep violet #493EA4. The ground: deep-violet enamelled steel. */
+val InkViolet = Color(0xFF493EA4)
+
+/** Ink — gold #E2BC39. Gold leaf and the hand-laid pinstripe. */
+val InkGold = Color(0xFFE2BC39)
+
+/** Ink — rose #C84481. The palette's second voice. */
+val InkRose = Color(0xFFC84481)
+
+/** Ink — orange #E47E35. Shellac warmth: RELIGHT's lit partner ink.
+ *  It exists as light falling on carriers, never as a field flood. */
+val InkOrange = Color(0xFFE47E35)
+
+/** Ink — blue #377ED0. The palette's cool ink. */
+val InkBlue = Color(0xFF377ED0)
+
+/** Ink — graphite #34323B. The four printings' dark line-work, and the
+ *  floor every RELIGHT descent walks toward. */
+val InkGraphite = Color(0xFF34323B)
+
+/** The closed census: exactly these seven, in palette order. */
+val MonolithInks: List<Color> = listOf(
+    InkMagenta, InkViolet, InkGold, InkRose, InkOrange, InkBlue, InkGraphite
+)
+
+// Semantic roles — the ONLY colour names new surfaces may consume.
+// A role is remapped here, once, when a later slice re-grades; a surface
+// that names an ink directly has forked the grade and will be sent back.
+val StrongroomGround = InkViolet      // the enamelled-steel ground
+val StrongroomLeaf = InkGold          // gold leaf + pinstripe
+val StrongroomLineWork = InkGraphite  // dark line-work of the printings
+val StrongroomWarmth = InkOrange      // lit-partner warmth (RELIGHT only)
+
+// =========================================================================
+// LEGACY LAYER — RETIRED BY P0, KEPT COMPILED, NO NEW CONSUMER.
+// The 19+19 warm-stone tokens and component tones below belong to the
+// outgoing Deck/Sequencer generation. They stay byte-identical because
+// the outgoing screens and their tests still consume them (39 token
+// names tree-wide at P0); deleting them is the surface lanes' act as
+// each surface is replaced (P3–P8), never a silent drop. Remap table:
+//   ground/surface roles  -> StrongroomGround (InkViolet)
+//   raised/leaf emphasis  -> StrongroomLeaf (InkGold)
+//   ink/line-work roles   -> StrongroomLineWork (InkGraphite)
+//   the old single accent (#F55314 family) -> NO successor: the accent
+//     idea itself is retired; the palette's voices are the seven inks,
+//     spent by role at the surface, not by a global accent slot.
+//   alert roles           -> InkMagenta at the surface that needs one.
+// =========================================================================
+
+// =========================================================================
 // MONOLITH 19 SEMANTIC COLOR TOKENS — DEVELOPER-GUIDE.pdf §1 & §1.1
 // Strictly Zero-Green: Every single color satisfies green < maxOf(red, blue)
 // =========================================================================

@@ -107,3 +107,90 @@ object MonolithKin {
     /** THROW easing: a dismissal accelerates away. */
     val EasingThrow: Easing = CubicBezierEasing(0.5f, 0.0f, 1.0f, 0.4f)
 }
+
+/**
+ * MONOLITH MOTION — THE MAXIMUM-IMPLEMENTATION PRIMITIVES (P0, BUILD-SR-1)
+ *
+ * The foundation the sealing clunks, the knock, the drum and the door's
+ * weight are built on (programme §2 maximum pass: every significant
+ * control first works, then is taken to its maximum — mass, inertia,
+ * detents, settle — before its piece closes; a default-feeling control
+ * is unfinished work). These are NAMED VALUES, not defaults: slices 5
+ * (motion) and 8 (maximum) tune the numbers here, in one place, and no
+ * lane hard-codes a private spring. Character, per primitive:
+ *  - BOLT: near-critically damped, very stiff — a heavy bolt drives
+ *    home and stops; the settle is a decision, not a bounce.
+ *  - KNOCK: critically damped dead mass — one dull thud, felt more than
+ *    heard; zero overshoot by construction (the door does not rebound
+ *    against a locked reach).
+ *  - DRUM: under-damped with one detent overshoot — the revolving drum
+ *    turns, passes its detent, and is caught by it.
+ *  - DOOR WEIGHT: soft spring, heavy mass — the door opens by its own
+ *    weight at the lifting: slow commitment, long settle.
+ *  - WHEEL/CRANK: spun mass with detents — freer than the drum, still
+ *    caught; the combination wheel and the governor's crank share the
+ *    family, at different stiffness.
+ */
+object MonolithMotion {
+
+    /** The bolt drive (the sealing's moving iron). */
+    val BoltSpring: androidx.compose.animation.core.SpringSpec<Float> =
+        androidx.compose.animation.core.SpringSpec(dampingRatio = 0.92f, stiffness = 900f)
+
+    /** The knock's dead stop. */
+    val KnockSpring: androidx.compose.animation.core.SpringSpec<Float> =
+        androidx.compose.animation.core.SpringSpec(dampingRatio = 1.0f, stiffness = 2600f)
+
+    /** The revolving drum's detent turn (the daily-allowance crank). */
+    val DrumSpring: androidx.compose.animation.core.SpringSpec<Float> =
+        androidx.compose.animation.core.SpringSpec(dampingRatio = 0.78f, stiffness = 420f)
+
+    /** The door's opening weight at the lifting. */
+    val DoorWeightSpring: androidx.compose.animation.core.SpringSpec<Float> =
+        androidx.compose.animation.core.SpringSpec(dampingRatio = 0.86f, stiffness = 55f)
+
+    /** The combination wheel's spin (the signature at the signing). */
+    val WheelSpring: androidx.compose.animation.core.SpringSpec<Float> =
+        androidx.compose.animation.core.SpringSpec(dampingRatio = 0.65f, stiffness = 180f)
+
+    /** The governor's crank: the week's emergency minute, wound by hand. */
+    val CrankSpring: androidx.compose.animation.core.SpringSpec<Float> =
+        androidx.compose.animation.core.SpringSpec(dampingRatio = 0.72f, stiffness = 300f)
+
+    /** One clunk of the sealing: when it lands, how long its body rings
+     *  in the felt/sound design, and its weight against the first. */
+    data class Clunk(val atMs: Int, val durationMs: Int, val weight: Float)
+
+    /** THE SEALING — three descending clunks (Audit A §2.1: bolts drive
+     *  home one by one, three descending clunks, felt). Descending in
+     *  weight, widening in interval, lengthening in body: the first
+     *  bolt is the loudest fact; the third is the door finishing its
+     *  sentence. Sound/haptic tuning is Slice 6/7's; the sequence's
+     *  shape is foundation law. */
+    val SealClunks: List<Clunk> = listOf(
+        Clunk(atMs = 0, durationMs = 120, weight = 1.0f),
+        Clunk(atMs = 190, durationMs = 150, weight = 0.82f),
+        Clunk(atMs = 420, durationMs = 190, weight = 0.64f)
+    )
+
+    /** The lifting's mirror: bolts withdraw one by one (Audit A §2.5)
+     *  on the same widening rhythm, ascending in weight — the door
+     *  gives its iron back in the order it took it. */
+    val LiftClunks: List<Clunk> = listOf(
+        Clunk(atMs = 0, durationMs = 120, weight = 0.64f),
+        Clunk(atMs = 190, durationMs = 150, weight = 0.82f),
+        Clunk(atMs = 420, durationMs = 190, weight = 1.0f)
+    )
+
+    /** Weight landing: fast commitment, no bounce, a settle you feel
+     *  in the last fifth. For driven iron (bolts, the plate's drop). */
+    val WeightEasing: Easing = CubicBezierEasing(0.22f, 0.9f, 0.26f, 1.0f)
+
+    /** Detent travel: even pull, caught at the end. For the drum and
+     *  the crank, whose ends are mechanical stops, not targets. */
+    val DetentEasing: Easing = CubicBezierEasing(0.3f, 0.0f, 0.2f, 1.0f)
+
+    /** The wind before a release: a crank or key gathering its price
+     *  before it moves. Anticipation is the tell that mass is real. */
+    val WindEasing: Easing = CubicBezierEasing(0.36f, -0.28f, 0.24f, 1.0f)
+}
