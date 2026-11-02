@@ -123,10 +123,12 @@ fun PlatePileScreen(
     }
 }
 
-/** A snapped crank seal lying in the tray: a small disc split
- *  in two, its halves parted — the spend's permanent testimony,
- *  drawn from the plate's own inks. [day] is carried for the
- *  tray's own record of which day's spend this was. */
+/** A snapped crank seal lying in the tray: ONE piece (R5-1 —
+ *  the concept's seal is a single lead crimp; when the crank
+ *  turns it parts and drops as one piece, kept whole in the
+ *  tray). Drawn as one disc with the parting crack across it —
+ *  snapped, never two pieces. [day] is carried for the tray's
+ *  own record of which day's spend this was. */
 @Composable
 private fun SnappedSealChip(day: String) {
     Canvas(
@@ -134,17 +136,18 @@ private fun SnappedSealChip(day: String) {
             .size(22.dp)
             .testTag("tray_snapped_seal_$day")
     ) {
-        drawArc(
+        val r = size.minDimension / 2f - 1.5f
+        drawCircle(
             color = PlateInkGold,
-            startAngle = 100f, sweepAngle = 160f,
-            useCenter = false,
+            radius = r,
+            center = center,
             style = Stroke(width = 3f)
         )
-        drawArc(
-            color = PlateInkGold,
-            startAngle = 285f, sweepAngle = 140f,
-            useCenter = false,
-            style = Stroke(width = 3f)
+        drawLine(
+            color = PlateLineWork,
+            start = androidx.compose.ui.geometry.Offset(center.x - r * 0.7f, center.y - r * 0.7f),
+            end = androidx.compose.ui.geometry.Offset(center.x + r * 0.6f, center.y + r * 0.75f),
+            strokeWidth = 1.8f
         )
         drawCircle(color = PlateLineWork, radius = 1.6f, center = center)
     }
