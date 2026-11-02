@@ -58,31 +58,6 @@ fun DoorwayLayout(
 }
 
 /**
- * The signing place at the open door. Holds the composition and the
- * signing's controls — and nothing from the tray side: there is no slot
- * here a plate, a pile or a record could be passed into (B-16). The
- * signing's order is the composition first (it stands composed before he
- * arrives; the signing amends, never creates — B-2), then his acts.
- */
-@Composable
-fun SigningPlaceLayout(
-    modifier: Modifier = Modifier,
-    composition: @Composable () -> Unit,
-    signingControls: @Composable () -> Unit,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(RoomGrid.dp(RoomGrid.FIELD_INSET_STEPS).dp),
-        verticalArrangement = Arrangement.Top,
-    ) {
-        composition()
-        Spacer(Modifier.height(RoomGrid.dp(RoomGrid.SECOND_STEP_BAND_STEPS).dp))
-        signingControls()
-    }
-}
-
-/**
  * The face's field: one field, composed once, carrying the four printings
  * in Stage 5 §3.3's hierarchy order down the field — hour first (the first
  * fact), door-word slot, sentence or its kept place, held-mark slot last
