@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.LiftingPlate
+import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
+import com.example.domain.StrongroomGuard
 import com.example.ui.doorway.DoorFace
 import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
@@ -42,6 +44,10 @@ import com.example.ui.lifting.StruckPlateView
 import com.example.ui.sealed.SealedFace
 import com.example.ui.sealed.SealedFaceActions
 import com.example.ui.sealed.SealedFaceState
+import com.example.ui.signing.Signing
+import com.example.ui.signing.SigningActions
+import com.example.ui.signing.SigningState
+import com.example.ui.signing.SigningToken
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
@@ -54,6 +60,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.io.FileOutputStream
+import java.time.DayOfWeek
 import java.time.LocalTime
 
 /**
@@ -837,5 +844,113 @@ class ScreenshotHarnessTest {
     fun sealedFace_keptPlaces() {
         val state = SealedFaceState.standing(sealedSigning(null), doorWord = null)!!
         shootSealedFace("sealed-face-kept-places.png", state)
+    }
+
+    // ── THE DOORWAY, POPULATED · THE SIGNING (METHODS-SEAT,
+    // 2026-11-03) — the two standings the harness still lacked:
+    // the doorway with its day standing in it (TEST-SEAT's shot
+    // carries the opening at rest; this one carries the sheet on
+    // the press, the waiting slip, and yesterday's struck plate
+    // at the press), and the signing table itself — the last
+    // face of the day with no shot at all. Same contract as
+    // every face above: fabricated standings, the harness's own
+    // gate, one PNG per face.
+
+    /** Tomorrow, standing composed from a fabricated week's
+     *  standing order (the P1 fixture's shape): every weekday
+     *  ordinary, the template carrying the harness labels into
+     *  the vault, a gym gap, and a task in his own words. */
+    private fun composedDay(): StrongroomComposition.ComposedDay {
+        val template = StrongroomComposition.DayTemplate(
+            lockedPackages = labels.keys.toSet(),
+            liftingTime = LocalTime.of(6, 0),
+            breakLengthMinutes = 30,
+            breakFiresAtOffsetMillis = 7_200_000L,
+            allowanceMinutes = 30,
+            gaps = listOf(
+                StrongroomDay.ShapedGap(
+                    StrongroomDay.GapKind.GYM, 7_200_000L, 3_600_000L
+                )
+            ),
+            taskLine = "finish the optics one-shot"
+        )
+        val order = StrongroomComposition.WeekStandingOrder(
+            shapeByWeekday = DayOfWeek.values().associateWith {
+                StrongroomComposition.DayShape.ORDINARY
+            },
+            templateByShape = mapOf(
+                StrongroomComposition.DayShape.ORDINARY to template
+            )
+        )
+        // 2026-11-03 is a Tuesday (the P1 fixture's own date).
+        return StrongroomComposition.compose(order, "2026-11-03")
+    }
+
+    /** A whole struck day, as the plate tells it: three graded
+     *  punches, the seal whole, the crank seal unbroken. */
+    private fun plateTruth(): LiftingPlate.PlateTruth = LiftingPlate.PlateTruth(
+        filingDateIso = "2026-11-02",
+        hoursHeldMillis = 6L * 3_600_000L,
+        punches = listOf(
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.REACH,
+                atOffsetMillis = 900_000L, packageName = "app.whatsapp"
+            ),
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.HELD,
+                atOffsetMillis = 1_800_000L, packageName = "app.youtube"
+            ),
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.FLOOR,
+                atOffsetMillis = 2_700_000L, packageName = "app.chrome"
+            )
+        ),
+        sealTruth = LiftingPlate.SealTruth.WHOLE,
+        crankSealBroken = false
+    )
+
+    @Test
+    fun doorway_theDayStanding() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Doorway(
+                        state = DoorwayState.fromFacts(
+                            composedDay = composedDay(),
+                            waitingSlipPresent = true,
+                            plate = plateTruth()
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("doorway-day-standing.png", bitmap)
+    }
+
+    @Test
+    fun signing_theTableStanding() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = SigningState(
+                            day = composedDay(),
+                            tokens = labels.map { (pkg, label) ->
+                                SigningToken(pkg, label)
+                            },
+                            guard = StrongroomGuard.GuardState(
+                                allowanceMinutes = 30
+                            )
+                        ),
+                        actions = SigningActions(
+                            onAmend = {},
+                            onAllowanceMove = {},
+                            onSignature = {}
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("signing.png", bitmap)
     }
 }
