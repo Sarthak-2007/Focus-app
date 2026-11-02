@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.ui.foundation.LocalStrongroomLightState
+import com.example.service.haptics.HapticEvent
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
 import com.example.ui.foundation.StrongroomLightState
@@ -387,8 +388,9 @@ private fun PrintBenchDial(
     Box(
         modifier = modifier.pointerInput(record.liftingTime) {
             var lastAngle: Double? = null
+            var lastDetent: Int? = null
             detectDragGestures(
-                onDragStart = { lastAngle = null },
+                onDragStart = { lastAngle = null; lastDetent = null },
                 onDragEnd = {
                     // THE RAIL'S CATCH + THE DETENT SPRING: settle
                     // reads the placed minute off the rail; the
@@ -416,7 +418,7 @@ private fun PrintBenchDial(
                         )
                     )
                 },
-                onDragCancel = { lastAngle = null },
+                onDragCancel = { lastAngle = null; lastDetent = null },
                 onDrag = { change, _ ->
                     val cx = size.width / 2.0
                     val cy = size.height / 2.0
@@ -428,7 +430,26 @@ private fun PrintBenchDial(
                         var delta = angle - prev
                         if (delta > 180.0) delta -= 360.0
                         if (delta < -180.0) delta += 360.0
-                        scope.launch { dial.snapTo(dial.value + delta.toFloat()) }
+                        val next = dial.value + delta.toFloat()
+                        scope.launch { dial.snapTo(next) }
+                        // The detent stones speak in feel as the
+                        // hand crosses them (FEEL-SR-3 C2.1, wired
+                        // by the SOUND seat into the drawn dial and
+                        // ported here at the swap's second merge —
+                        // the bench's dial keeps the drawn dial's
+                        // voice whole): a quarter stone, or the
+                        // whole-hour stone one size up — felt only.
+                        val detent = SigningDial.minuteFor(next.toDouble()) / 15
+                        if (lastDetent != null && detent != lastDetent) {
+                            actions.onFeelEvent(
+                                if ((detent * 15) % 60 == 0) {
+                                    HapticEvent.HOUR_DETENT_WHOLE
+                                } else {
+                                    HapticEvent.HOUR_DETENT_QUARTER
+                                }
+                            )
+                        }
+                        lastDetent = detent
                     }
                     lastAngle = angle
                     change.consume()

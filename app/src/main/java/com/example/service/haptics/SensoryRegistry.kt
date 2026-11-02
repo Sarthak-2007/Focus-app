@@ -244,7 +244,7 @@ object SensoryRegistry {
         SensoryRow(
             HapticEvent.COMBINATION_GATE,
             HapticWaveform(listOf(0L, 35L, 28L), listOf(0, 0, 165), fallbackMs = 28L),
-            SoundCue("spin-gate-clack"),
+            SoundCue("spin-gate-clack", pitchHz = 340f, durationMs = 30, gain = 0.55f, chordRatio = 2.76f),
             MotionCue.NONE,
             "FEEL-SR-3 C1.2: a 35 ms felt void, then one heavy tick — a gate is never a station"
         ),
@@ -389,7 +389,7 @@ object SensoryRegistry {
                 strikeAmplitude = 200, strikeMs = 14L, gapMs = 16L,
                 seatAmplitude = 130, seatMs = 10L, fallbackMs = 8L
             ),
-            SoundCue("drum-land"),
+            SoundCue("drum-land", pitchHz = 185f, durationMs = 34, gain = 0.58f, chordRatio = 1.2f),
             MotionCue("drum-rolls-app-to-him"),
             "Ledger A-7: the crank turns one app to him and it LANDS"
         ),
@@ -482,7 +482,7 @@ object SensoryRegistry {
             HapticWaveform(
                 listOf(0L, 16L, 10L, 10L), listOf(0, 140, 0, 100), fallbackMs = 10L
             ),
-            SoundCue("tightening-ratchet-tick"),
+            SoundCue("tightening-ratchet-tick", pitchHz = 700f, durationMs = 26, gain = 0.42f, chordRatio = 1.0f),
             MotionCue.NONE,
             "FEEL-SR-3 C3.1: the pawl's DOUBLE click, at the loosest step — amplitude climbs " +
                 "140/100 → 175/130 as the figure tightens (the caller's step); supersedes " +
@@ -491,7 +491,7 @@ object SensoryRegistry {
         SensoryRow(
             HapticEvent.GUARD_TIGHTEN_SEAT,
             HapticWaveform(listOf(0L, 35L), listOf(0, 210), fallbackMs = 35L),
-            SoundCue("tightening-seat-click"),
+            SoundCue("tightening-seat-click", pitchHz = 840f, durationMs = 14, gain = 0.58f, chordRatio = 1.2f),
             MotionCue.NONE,
             "FEEL-SR-3 C3.2: the CLICK-LOCK on finger-lift — one hard snap, no tail, no settle (D-1)"
         ),
@@ -511,7 +511,7 @@ object SensoryRegistry {
                 listOf(0L, 40L, 70L, 30L, 90L, 18L), listOf(0, 85, 0, 55, 0, 30),
                 fallbackMs = 40L
             ),
-            SoundCue("dawn-seat-filing"),
+            SoundCue("dawn-seat-filing", pitchHz = 165f, durationMs = 40, gain = 0.34f, chordRatio = 0.9f),
             MotionCue("dawn-seat-disc-rests-unseated"),
             "FEEL-SR-3 C4.2: the Unseated Rock — three dying pulses, NO terminal event; " +
                 "DESIGNER-SR-5's disc, in feel"
@@ -546,7 +546,7 @@ object SensoryRegistry {
                 listOf(0, 60, 65, 69, 74, 78, 83, 87, 92, 96, 101, 105, 110),
                 fallbackMs = 40L
             ),
-            SoundCue("carve-scrape"),
+            SoundCue("carve-scrape", pitchHz = 240f, durationMs = 136, gain = 0.30f, chordRatio = 5.40f),
             MotionCue("carve-scrape"),
             "FEEL-SR-3 C6.2: the scrape — 1.2 s of texture ramping 60→110 under the hold, " +
                 "rendered in 100 ms steps; a released hold fires nothing else, ever"
@@ -556,7 +556,7 @@ object SensoryRegistry {
             HapticWaveform(
                 listOf(0L, 55L, 30L, 30L), listOf(0, 240, 0, 120), fallbackMs = 55L
             ),
-            SoundCue("carve-cut"),
+            SoundCue("carve-cut", pitchHz = 175f, durationMs = 80, gain = 0.62f, chordRatio = 2.76f),
             MotionCue("carved-end"),
             "FEEL-SR-3 C6.2's canonical cut: blow, hush, chip — fires exactly once in a stretch's life"
         ),
@@ -635,7 +635,7 @@ object SensoryRegistry {
                 listOf(0L, 24L, 36L, 50L, 18L), listOf(0, 190, 120, 0, 70),
                 fallbackMs = 24L
             ),
-            SoundCue("plate-strike-failure"),
+            SoundCue("plate-strike-failure", pitchHz = 690f, durationMs = 88, gain = 0.50f, chordRatio = 1.5f),
             MotionCue("plate-is-struck"),
             "Ledger A-12 · SOUND-SR-4 FAILURE-STRIKE: lower, damped, a dead gap cut into the resonance"
         ),
@@ -644,7 +644,7 @@ object SensoryRegistry {
             HapticWaveform(
                 listOf(0L, 34L, 20L), listOf(0, 110, 70), fallbackMs = 10L
             ),
-            SoundCue("drawer-slide"),
+            SoundCue("drawer-slide", pitchHz = 132f, durationMs = 136, gain = 0.30f, chordRatio = 0.9f),
             MotionCue("drawer-opens"),
             "DESIGNER-SR-5 §10: the drawer's slide — low, soft, unhurried"
         ),

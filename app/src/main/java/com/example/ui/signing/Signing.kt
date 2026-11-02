@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomGuard
+import com.example.service.haptics.HapticEvent
 import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
@@ -333,8 +334,20 @@ private fun BreakRail(
                     .weight(1f)
                     .height(56.dp)
                     .pointerInput(record.breakLengthMinutes) {
+                        var lastPreview: Int? = null
                         detectDragGestures(
+                            onDragStart = { lastPreview = preview },
                             onDragEnd = {
+                                // The release speaks its landing
+                                // (FEEL-SR-3 C5.2, wired by the SOUND
+                                // seat): the zero floor flat, or the
+                                // resting pulse on a preset.
+                                when {
+                                    preview == 0 ->
+                                        actions.onFeelEvent(HapticEvent.BREAK_ZERO_STOP)
+                                    BreakChoice.isPreset(preview) ->
+                                        actions.onFeelEvent(HapticEvent.BREAK_PRESET_REST)
+                                }
                                 actions.onAmend(
                                     StrongroomComposition.SigningAmendment(
                                         breakLengthMinutes = preview
@@ -347,6 +360,24 @@ private fun BreakRail(
                                 preview = BreakChoice.place(
                                     (frac * BreakChoice.MAX_MINUTES).toDouble()
                                 )
+                                // The rail's grain under the hand
+                                // (FEEL-SR-3 C5.1/C5.2): a brush
+                                // per minute, a firmer grain at the
+                                // five-mark, the brass notch as a
+                                // preset is crossed — felt only.
+                                val prev = lastPreview
+                                if (prev != null && preview != prev) {
+                                    actions.onFeelEvent(
+                                        when {
+                                            BreakChoice.isPreset(preview) ->
+                                                HapticEvent.BREAK_PRESET_NOTCH
+                                            preview % 5 == 0 ->
+                                                HapticEvent.BREAK_GRAIN_FIVE
+                                            else -> HapticEvent.BREAK_GRAIN_MINUTE
+                                        }
+                                    )
+                                }
+                                lastPreview = preview
                                 change.consume()
                             }
                         )
@@ -409,6 +440,8 @@ private fun BreakRail(
                         .background(StrongroomInks.Gold, CircleShape)
                         .clickable {
                             preview = BreakChoice.shortcut(preset)
+                            // A tap lands ON the notch (C5.2).
+                            actions.onFeelEvent(HapticEvent.BREAK_PRESET_NOTCH)
                             actions.onAmend(
                                 StrongroomComposition.SigningAmendment(
                                     breakLengthMinutes = preview
@@ -460,6 +493,15 @@ private fun AllowancePawlSurface(
                             travelled = 0f
                         },
                         onDragEnd = {
+                            // The CLICK-LOCK on finger-lift
+                            // (FEEL-SR-3 C3.2, wired by the SOUND
+                            // seat): a tightening that stands gets
+                            // its one hard snap. A wound raise gets
+                            // none — it never seats today; its rock
+                            // is a dawn event, not a signing one.
+                            if (preview < startAllowance) {
+                                actions.onFeelEvent(HapticEvent.GUARD_TIGHTEN_SEAT)
+                            }
                             actions.onAllowanceMove(preview)
                         },
                         onDrag = { change, dragAmount ->
@@ -469,8 +511,18 @@ private fun AllowancePawlSurface(
                             // (clicks off instantly), upward winds a
                             // raise against the pawl's stop.
                             val steps = (travelled / 14.dp.toPx()).toInt()
+                            val before = preview
                             preview = (startAllowance - steps * 5)
                                 .coerceIn(0, 240)
+                            // Each tooth crossed speaks (C3.1/C4.1):
+                            // tightening, the pawl's double click;
+                            // winding a raise, the hollow detent —
+                            // felt only, late by design.
+                            if (preview < before) {
+                                actions.onFeelEvent(HapticEvent.GUARD_TIGHTEN_DETENT)
+                            } else if (preview > before) {
+                                actions.onFeelEvent(HapticEvent.GUARD_RAISE_DETENT)
+                            }
                             change.consume()
                         }
                     )

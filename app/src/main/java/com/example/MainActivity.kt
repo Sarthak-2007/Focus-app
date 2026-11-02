@@ -52,6 +52,7 @@ import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
 import com.example.service.StrongroomEngineBridge
+import com.example.service.haptics.HapticEvent
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
@@ -64,7 +65,6 @@ import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
 import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
-import com.example.ui.drawer.drawerSurfaceSecure
 import com.example.ui.lifting.Lifting
 import com.example.ui.lifting.LiftingState
 import com.example.ui.lifting.PlatePileView
@@ -98,16 +98,13 @@ import kotlinx.coroutines.withContext
 //
 // BUILD-SR-34 (the shell slice): ShellHost now composes the
 // Strongroom's own order (com.example.ui.shell.StrongroomShell)
-// on the composed foundation (PR #868, merged). The archive
-// FLAG_SECURE law that rode the dead VAULT destination died
-// with the enum in this act — its successor surface is the
-// drawer's room inside the doorway, whose own slice (R-6)
-// re-earns FLAG_SECURE when the drawer stands.
-// BUILD-SR-41 (the Drawer slice): R-6 DISCHARGED in this act —
-// ShellHost now holds the re-earned effect beside its predicate
-// (com.example.ui.drawer.drawerSurfaceSecure): while the drawer
-// stands open, the window is FLAG_SECURE, exactly as the old
-// archive law held it for the VAULT.
+// on the composed foundation (PR #868, merged).
+// SCREENSHOT RESTRICTIONS REMOVED (Sarthak's order, Nov 3, 2026:
+// "Remove screenshot restrictions from the app"): the drawer
+// slice's FLAG_SECURE effect (the old R-6 re-earn) is deleted
+// whole — no surface in this app sets FLAG_SECURE, and
+// screenshots and Recents thumbnails are allowed everywhere,
+// the drawer included.
 // ==================================================================
 
 /** Issue #78 (Audit R2, ipc-intents): the system Settings app's
@@ -391,13 +388,9 @@ class MainActivity : ComponentActivity() {
  * ON_RESUME watch sweep + return-service stop, the ON_STOP airlock
  * abandonment note) and the airlock-holds-Back law, and it composes
  * the Strongroom's own order (StrongroomShell) as the app's whole
- * visual structure. The archive FLAG_SECURE effect that keyed on
- * the old standing destination died with the enum (BUILD-SR-34;
- * named in the file head) — no place in the new order IS the
- * archive; the drawer's slice re-earns the flag when it stands.
- * BUILD-SR-41: the re-earn stands below — the effect keyed on
- * the drawer's own standing ([drawerSurfaceSecure]), beside the
- * doorway furniture it protects.
+ * visual structure. No window in this host is ever made secure:
+ * screenshot restrictions were removed whole on Sarthak's order
+ * (Nov 3, 2026) — see the file head.
  *
  * BUILD-SR-35 (composition, second act): the shell's DOORWAY
  * place-host carries the Doorway surface itself, its state read
@@ -461,12 +454,23 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         liftingState = loadLiftingState(appContext, finishForLifting?.e0Mono)
     }
     val sealedFaceActions = SealedFaceActions(
-        // The knock's sound/haptic substance rides the Stage 13/14
-        // slices through this seam; platform-edge reaches are
-        // already answered by the engine's knock voice via the
-        // bridge. The face itself changes nothing in answer.
-        onKnock = {},
+        // The knock's sound/haptic substance rides through this
+        // seam (collected by the SOUND seat, 2026-11-03): a rap on
+        // the face fires the KNOCK through the one bus — the same
+        // voice the bridge's platform-edge reach fires, once per
+        // rap, never twice (the reach and the rap are different
+        // acts). The face itself changes nothing in answer.
+        onKnock = {
+            StrongroomEngineBridge.fireSurfaceEvent(
+                appContext, HapticEvent.KNOCK
+            )
+        },
         onGrilleOpen = {
+            // The deliberate second touch speaks its low
+            // mechanical touch as the room opens (GRILLE_TOUCH).
+            StrongroomEngineBridge.fireSurfaceEvent(
+                appContext, HapticEvent.GRILLE_TOUCH
+            )
             viewModel.moveToPlace(com.example.session.StrongroomPlace.ANTECHAMBER)
         }
     )
@@ -481,38 +485,6 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     var drawerState by remember { mutableStateOf(DrawerState()) }
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
-    }
-
-    // R-6 · FLAG_SECURE, RE-EARNED (BUILD-SR-41, named obligation
-    // from BUILD-SR-34's enum-death accounting): the old VAULT's
-    // archive law (issue #264 B-264-31 — archiveSurfaceSecure +
-    // its effect: while the archive stood, no screenshot and no
-    // Recents thumbnail of his history) died with the enum. Its
-    // successor surface is this drawer — the room where every
-    // finished day is kept — and its successor predicate is
-    // [drawerSurfaceSecure]. While the drawer stands open the
-    // window is secure; every other standing clears the flag,
-    // exactly the old law's matrix. The flag is also cleared
-    // when this host leaves composition, so a secure standing
-    // can never leak past the drawer's own life.
-    val drawerWindow = (context as? android.app.Activity)?.window
-    LaunchedEffect(drawerOpen) {
-        if (drawerSurfaceSecure(drawerOpen)) {
-            drawerWindow?.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        } else {
-            drawerWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            drawerWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
     }
 
     // Watch Store residency (census §2c, re-carried): the old
@@ -699,7 +671,14 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                     }
                     // The drawer's shut front — the room's
                     // furniture at the foot of the signing place.
-                    DrawerFront(onOpen = { drawerOpen = true })
+                    // The opening act is the drawer's slide
+                    // (DRAWER_OPEN, wired by the SOUND seat).
+                    DrawerFront(onOpen = {
+                        StrongroomEngineBridge.fireSurfaceEvent(
+                            appContext, HapticEvent.DRAWER_OPEN
+                        )
+                        drawerOpen = true
+                    })
                 }
                 }
                 }
@@ -1094,7 +1073,14 @@ private fun BreakHost(viewModel: MonolithViewModel) {
                     refreshTick++
                 }
             },
-            onKnock = {}
+            // A rap on the break's face is the same knock (the
+            // break lives behind the same door) — fired through
+            // the one bus, as on the sealed face (SOUND seat).
+            onKnock = {
+                StrongroomEngineBridge.fireSurfaceEvent(
+                    appContext, HapticEvent.KNOCK
+                )
+            }
         )
     )
 }
