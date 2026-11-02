@@ -14,7 +14,22 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.LiftingPlate
+import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
+import com.example.domain.StrongroomGuard
+import com.example.ui.doorway.Doorway
+import com.example.ui.doorway.DoorwayState
+import com.example.ui.lifting.Lifting
+import com.example.ui.lifting.LiftingState
+import com.example.ui.lifting.PlatePileView
+import com.example.ui.lifting.StruckPlateView
+import com.example.ui.sealed.SealedFace
+import com.example.ui.sealed.SealedFaceActions
+import com.example.ui.sealed.SealedFaceState
+import com.example.ui.signing.Signing
+import com.example.ui.signing.SigningActions
+import com.example.ui.signing.SigningState
+import com.example.ui.signing.SigningToken
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
@@ -43,6 +58,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.io.FileOutputStream
+import java.time.DayOfWeek
 import java.time.LocalTime
 
 /**
@@ -57,9 +73,13 @@ import java.time.LocalTime
  * tokens and its pile standing, the pile's second step (reached
  * by the pile corner's own click, as his hand reaches it), the
  * code slip's cover lifted, and the brass shutter closed over a
- * spent purse. Other slices' faces join this harness at R-10; a
- * face that cannot yet look finished is named on its slice's PR,
- * never faked here.
+ * spent purse. The Break and the Drawer joined on their slices;
+ * the Doorway, the Signing, the Sealed Face and the Lifting
+ * joined 2026-11-03 (METHODS-SEAT) after the broken opening
+ * screen reached Sarthak with no main run holding a single shot
+ * of it — the harness now carries every face of the day, so the
+ * venue's screens artifact can too. A face that cannot yet look
+ * finished is named on its slice's PR, never faked here.
  *
  * The harness facts are FABRICATED STANDINGS, named as such: app
  * labels stand in for the phone's own (the host's token seam),
@@ -541,5 +561,166 @@ class ScreenshotHarnessTest {
                 actions = DrawerActions()
             )
         }
+    }
+
+    // ── THE DOORWAY · THE SIGNING · THE SEALED FACE · THE
+    // LIFTING (METHODS-SEAT, 2026-11-03) — the four faces the
+    // harness did not carry. The opening screen reached Sarthak
+    // broken (a thumbnail door in a corner of void) while no
+    // main run held a shot of it: the screenshots job uploaded
+    // only on a fully green harness, and these faces were not
+    // in the harness at all. Both halves are cured together —
+    // the venue now uploads whatever rendered (see the workflow),
+    // and every face of the day stands here. Same contract as
+    // the faces above: fabricated standings, the harness's own
+    // gate, one PNG per face.
+
+    /** Tomorrow, standing composed from a fabricated week's
+     *  standing order (the P1 fixture's shape): every weekday
+     *  ordinary, the template carrying the harness labels into
+     *  the vault, a gym gap, and a task in his own words. */
+    private fun composedDay(): StrongroomComposition.ComposedDay {
+        val template = StrongroomComposition.DayTemplate(
+            lockedPackages = labels.keys.toSet(),
+            liftingTime = LocalTime.of(6, 0),
+            breakLengthMinutes = 30,
+            breakFiresAtOffsetMillis = 7_200_000L,
+            allowanceMinutes = 30,
+            gaps = listOf(
+                StrongroomDay.ShapedGap(
+                    StrongroomDay.GapKind.GYM, 7_200_000L, 3_600_000L
+                )
+            ),
+            taskLine = "finish the optics one-shot"
+        )
+        val order = StrongroomComposition.WeekStandingOrder(
+            shapeByWeekday = DayOfWeek.values().associateWith {
+                StrongroomComposition.DayShape.ORDINARY
+            },
+            templateByShape = mapOf(
+                StrongroomComposition.DayShape.ORDINARY to template
+            )
+        )
+        // 2026-11-03 is a Tuesday (the P1 fixture's own date).
+        return StrongroomComposition.compose(order, "2026-11-03")
+    }
+
+    /** A whole struck day, as the plate tells it: three graded
+     *  punches, the seal whole, the crank seal unbroken. */
+    private fun plateTruth(): LiftingPlate.PlateTruth = LiftingPlate.PlateTruth(
+        filingDateIso = "2026-11-02",
+        hoursHeldMillis = 6L * 3_600_000L,
+        punches = listOf(
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.REACH,
+                atOffsetMillis = 900_000L, packageName = "app.whatsapp"
+            ),
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.HELD,
+                atOffsetMillis = 1_800_000L, packageName = "app.youtube"
+            ),
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.FLOOR,
+                atOffsetMillis = 2_700_000L, packageName = "app.chrome"
+            )
+        ),
+        sealTruth = LiftingPlate.SealTruth.WHOLE,
+        crankSealBroken = false
+    )
+
+    @Test
+    fun doorway_theDayStanding() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Doorway(
+                        state = DoorwayState.fromFacts(
+                            composedDay = composedDay(),
+                            waitingSlipPresent = true,
+                            plate = plateTruth()
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("doorway.png", bitmap)
+    }
+
+    @Test
+    fun signing_theTableStanding() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = SigningState(
+                            day = composedDay(),
+                            tokens = labels.map { (pkg, label) ->
+                                SigningToken(pkg, label)
+                            },
+                            guard = StrongroomGuard.GuardState(
+                                allowanceMinutes = 30
+                            )
+                        ),
+                        actions = SigningActions(
+                            onAmend = {},
+                            onAllowanceMove = {},
+                            onSignature = {}
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("signing.png", bitmap)
+    }
+
+    @Test
+    fun sealedFace_theDoorShut() {
+        // The door-word stands as its kept place (null): it is
+        // named everywhere and defined nowhere, Sarthak's to
+        // give — the harness does not invent it.
+        val face = SealedFaceState.standing(signing(), doorWord = null)
+        assertTrue("a standing seal must derive a face", face != null)
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    SealedFace(
+                        state = face!!,
+                        actions = SealedFaceActions(
+                            onKnock = {},
+                            onGrilleOpen = {}
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("sealed-face.png", bitmap)
+    }
+
+    @Test
+    fun lifting_thePlateStruck() {
+        val landing = StruckPlateView.fromPlateTruth(plateTruth())
+        val resting = StruckPlateView.fromPlateTruth(
+            plateTruth().copy(
+                filingDateIso = "2026-11-01",
+                crankSealBroken = true
+            )
+        )
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Lifting(
+                        state = LiftingState(
+                            plate = landing,
+                            pile = PlatePileView(
+                                landing = landing,
+                                resting = listOf(resting),
+                                snappedSealDates = listOf("2026-11-01")
+                            )
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("lifting.png", bitmap)
     }
 }
