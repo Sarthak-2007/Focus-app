@@ -5,7 +5,9 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import com.example.ui.strongroom.CompositionDraft
 import com.example.ui.strongroom.SigningAppOption
 import com.example.ui.strongroom.SigningResult
@@ -92,7 +94,24 @@ class StrongroomSigningRenderTest {
         composeRule.onNodeWithTag("signing_clause").assertIsDisplayed()
         composeRule.onNodeWithText(SigningWords.SIGNING_CLAUSE).assertExists()
         composeRule.onNodeWithTag("signing_leave").assertExists()
-        composeRule.onNodeWithTag("signing_dial_0_up").performClick()
+        // A-16 (BUILD-SR-22): the combination is worked through
+        // the great wheel — a drag around its centre turns it;
+        // the first detent crossed begins the signature.
+        composeRule.onNodeWithTag("signing_wheel").performTouchInput {
+            val c = center
+            val r = width / 4f
+            down(Offset(c.x + r, c.y))
+            for (step in 1..8) {
+                val a = step * (Math.PI / 8.0)
+                moveBy(
+                    Offset(
+                        c.x + (r * kotlin.math.cos(a)).toFloat(),
+                        c.y + (r * kotlin.math.sin(a)).toFloat()
+                    )
+                )
+            }
+            up()
+        }
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("signing_leave").assertDoesNotExist()
 

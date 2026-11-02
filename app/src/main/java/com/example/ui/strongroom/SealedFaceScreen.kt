@@ -117,7 +117,24 @@ fun SealedFaceScreen(
                     .testTag("sealed_face_ring")
             )
 
-            Spacer(Modifier.height(34.dp))
+            Spacer(Modifier.height(16.dp))
+
+            // THE GREAT WHEEL, AT REST (ledger A-16): the door's
+            // furniture, standing under the ring — still, drawn
+            // by the face's own relief law, never a control while
+            // sealed (a touch anywhere on this face is the knock,
+            // the face's one event; the wheel invites nothing).
+            // Its resting angle is FIXED at the drawing's zero:
+            // the combination is never written anywhere (A-2), so
+            // no sealing-time position may stand on this face to
+            // be read back — the wheel rests, it does not report.
+            GreatWheelCanvas(
+                angleDegrees = 0f,
+                lightState = lightState,
+                modifier = Modifier.size(148.dp)
+            )
+
+            Spacer(Modifier.height(16.dp))
 
             // RANK 2 — the door-word slot as its KEPT PLACE
             // (G-1): an empty, sized place — the slot's measure

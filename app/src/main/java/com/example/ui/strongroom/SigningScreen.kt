@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -89,7 +92,12 @@ fun SigningScreen(
     var flow by remember(draft) { mutableStateOf(SigningState(draft)) }
     // The combination — surface-local, unwritten, wiped at the
     // signature's completion. Never state that leaves this hand.
-    var dials by remember(draft) { mutableStateOf(listOf(0, 0, 0)) }
+    // A-16: it is worked THROUGH THE GREAT WHEEL — the wheel's
+    // turn (GreatWheel.kt) is the combination's only mechanism;
+    // the dials below are its tumbler, read by eye from the turn.
+    val wheel = remember(draft) { WheelTurn() }
+    var wheelVersion by remember(draft) { mutableStateOf(0) }
+    val dials = wheel.dials()
 
     val ink = InkGold.reliefHighlight(RelightState.SIGNING)
     val quietInk = InkGold.copy(alpha = 0.75f)
@@ -141,20 +149,23 @@ fun SigningScreen(
             )
             SigningStep.COMBINATION -> CombinationStep(
                 flow = flow,
+                wheel = wheel,
+                wheelVersion = wheelVersion,
                 dials = dials,
                 ink = ink,
                 quietInk = quietInk,
-                onDial = { index, delta ->
+                onWheelTurn = { crossed ->
                     if (!flow.signatureBegun) flow = flow.beginSignature()
-                    dials = dials.mapIndexed { i, d ->
-                        if (i == index) (d + delta).mod(10) else d
-                    }
-                    onDetent()
+                    crossed.forEach { _ -> onDetent() }
+                    wheelVersion++
                 },
                 onSign = {
                     onLatch()
                     flow = flow.completeSignature()
-                    dials = listOf(0, 0, 0)
+                    // Wiped: the turn is forgotten whole — the
+                    // wheel stands at zero again, as if untouched.
+                    wheel.reset()
+                    wheelVersion++
                 }
             )
             SigningStep.READY -> ReadyStep(
@@ -426,10 +437,12 @@ private fun SentenceStep(
 @Composable
 private fun CombinationStep(
     flow: SigningState,
+    wheel: WheelTurn,
+    wheelVersion: Int,
     dials: List<Int>,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
-    onDial: (Int, Int) -> Unit,
+    onWheelTurn: (List<Long>) -> Unit,
     onSign: () -> Unit
 ) {
     // B-5: the clause, spoken whole at the signing — here, and
@@ -442,35 +455,103 @@ private fun CombinationStep(
     )
     Spacer(Modifier.height(8.dp))
     Text(
-        text = "Spin the dials to your combination — it is written nowhere.",
+        text = "Turn the great wheel to your combination — it is written nowhere.",
         style = SigningQuietStyle,
         color = quietInk
     )
-    Spacer(Modifier.height(20.dp))
+    Spacer(Modifier.height(16.dp))
+    // THE WHEEL (A-16): the signer turns it; its turning works
+    // the combination's tumblers. Drag around its centre — the
+    // wheel answers under WheelPhysics (resistance rising,
+    // governed inertia, the seat at settle); every detent the
+    // travel crosses spends the surface's detent voice, keyed to
+    // position, so a slow turn and a fast turn speak the same
+    // sequence. wheelVersion is read so the drawing follows the
+    // mechanism's state.
+    @Suppress("UNUSED_EXPRESSION") wheelVersion
+    var lastAngle by remember { mutableStateOf<Float?>(null) }
+    var lastDelta by remember { mutableStateOf(0f) }
+    var lastMoveMs by remember { mutableStateOf(0L) }
+    fun angleOf(pos: androidx.compose.ui.geometry.Offset, size: androidx.compose.ui.unit.IntSize): Float {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        return Math.toDegrees(
+            kotlin.math.atan2((pos.y - cy).toDouble(), (pos.x - cx).toDouble())
+        ).toFloat()
+    }
+    fun wrappedDelta(from: Float, to: Float): Float {
+        var d = to - from
+        while (d > 180f) d -= 360f
+        while (d < -180f) d += 360f
+        return d
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("signing_wheel")
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { pos ->
+                        lastAngle = angleOf(pos, size)
+                        lastDelta = 0f
+                    },
+                    onDragEnd = {
+                        val now = System.currentTimeMillis()
+                        val dt = (now - lastMoveMs).coerceAtLeast(1L)
+                        val velocity = lastDelta / dt * 1000f
+                        onWheelTurn(wheel.release(velocity))
+                        lastAngle = null
+                    },
+                    onDragCancel = {
+                        wheel.interrupt()
+                        onWheelTurn(emptyList())
+                        lastAngle = null
+                    },
+                    onDrag = { change, _ ->
+                        val a = angleOf(change.position, size)
+                        val prev = lastAngle
+                        if (prev != null) {
+                            val d = wrappedDelta(prev, a)
+                            lastDelta = d
+                            lastMoveMs = System.currentTimeMillis()
+                            onWheelTurn(wheel.dragBy(d))
+                        }
+                        lastAngle = a
+                        change.consume()
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        GreatWheelCanvas(
+            angleDegrees = wheel.angleDegrees +
+                wheel.pendingFraction() * WheelPhysics.DETENT_DEGREES,
+            lightState = RelightState.SIGNING,
+            modifier = Modifier.size(232.dp)
+        )
+    }
+    Spacer(Modifier.height(14.dp))
+    // The tumbler, read by eye: three dials the wheel's turn
+    // carries (ones with the wheel, tens and hundreds by carry).
+    // They are a READOUT of the turn, never an input of their own.
     Row(
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         dials.forEachIndexed { index, digit ->
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.testTag("signing_dial_$index")
-            ) {
-                SigningStepper("+", ink, "signing_dial_${index}_up") { onDial(index, 1) }
-                Text(
-                    text = digit.toString(),
-                    style = SigningDigitsStyle,
-                    color = ink,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .width(64.dp)
-                        .padding(vertical = 10.dp)
-                )
-                SigningStepper("−", ink, "signing_dial_${index}_down") { onDial(index, -1) }
-            }
+            Text(
+                text = digit.toString(),
+                style = SigningDigitsStyle,
+                color = ink,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .width(64.dp)
+                    .padding(vertical = 6.dp)
+                    .testTag("signing_dial_$index")
+            )
         }
     }
-    Spacer(Modifier.height(24.dp))
+    Spacer(Modifier.height(18.dp))
     SigningContinue(
         label = "SIGN — SET THE DAY",
         ink = ink,
