@@ -48,6 +48,9 @@ import com.example.ui.strongroom.layout.OpenDoorProportion
 import com.example.ui.strongroom.layout.RoomGrid
 import com.example.ui.strongroom.layout.SigningPlaceLayout
 import com.example.ui.strongroom.layout.SigningSlot
+import com.example.ui.maximum.MaximumPresets
+import com.example.ui.motion.SpringState
+import kotlin.math.roundToInt
 import com.example.ui.theme.InkGold
 import com.example.ui.theme.InkLine
 import com.example.ui.theme.SigningBodyStyle
@@ -220,6 +223,7 @@ fun SigningScreen(
                             flow = flow,
                             ink = ink,
                             quietInk = quietInk,
+                            onHourDetent = onDetent,
                             onHour = { flow = flow.setHour(it) },
                             onContinue = { flow = flow.advance() }
                         )
@@ -251,7 +255,8 @@ fun SigningScreen(
                             flow = flow,
                             ink = ink,
                             quietInk = quietInk,
-                            onBreak = { flow = flow.setBreakMinutes(it) }
+                            onBreak = { flow = flow.setBreakMinutes(it) },
+                            onHourDetent = onDetent
                         )
                     }
                 },
@@ -269,20 +274,24 @@ fun SigningScreen(
                     if (flow.step == SigningStep.COMBINATION) {
                         CombinationSpin(
                             flow = flow,
+                            wheel = wheel,
+                            wheelVersion = wheelVersion,
                             dials = dials,
                             ink = ink,
                             quietInk = quietInk,
-                            onDial = { index, delta ->
+                            onWheelTurn = { crossed ->
                                 if (!flow.signatureBegun) flow = flow.beginSignature()
-                                dials = dials.mapIndexed { i, d ->
-                                    if (i == index) (d + delta).mod(10) else d
-                                }
-                                onDetent()
+                                crossed.forEach { _ -> onDetent() }
+                                wheelVersion++
                             },
                             onSign = {
                                 onLatch()
                                 flow = flow.completeSignature()
-                                dials = listOf(0, 0, 0)
+                                // Wiped: the turn is forgotten
+                                // whole — the wheel stands at zero
+                                // again, as if untouched (A-16).
+                                wheel.reset()
+                                wheelVersion++
                             }
                         )
                     }
@@ -447,12 +456,40 @@ private fun HourChoice(
         modifier = Modifier.testTag("signing_hour_value")
     )
     Spacer(Modifier.height(12.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        SigningStepper("HOUR −", quietInk, "signing_hour_down") { emit(hour - 1, minute) }
-        SigningStepper("HOUR +", quietInk, "signing_hour_up") { emit(hour + 1, minute) }
-        SigningStepper("MIN −", quietInk, "signing_minute_down") { emit(hour, minute - 5) }
-        SigningStepper("MIN +", quietInk, "signing_minute_up") { emit(hour, minute + 5) }
-    }
+    // E-15 AT MAXIMUM (Stage 11 assembly, BUILD-SR-18 — seated
+    // in BUILD-SR-16's hour slot by BUILD-SR-23, step 5): the
+    // hour setter is a drag, not steppers — sparse firm stones
+    // (quarter W[0,8/0,55], whole-hour W[0,14/0,85], silence
+    // between) on MaximumPresets.hourTrain, carried by hourDrag's
+    // inertia; release within ±4 min of a quarter pulls in and
+    // the detent fires at the snap; release elsewhere places the
+    // hour with no waveform at all. Travel is unbounded —
+    // wrapping past midnight is the same smooth travel. Figures
+    // UNPROVEN-ON-DEVICE.
+    SetterDragStrip(
+        value = (hour * 60 + minute).toFloat(),
+        minValue = 0f,
+        maxValue = 24f * 60f,
+        minutesPerDp = 2f,
+        wrap = true,
+        ink = ink,
+        quietInk = quietInk,
+        tag = "signing_hour_drag",
+        train = MaximumPresets.hourTrain(),
+        onCrossing = { onHourDetent() },
+        onRelease = { released ->
+            val snapped = MaximumPresets.hourDrag().release(
+                SpringState(released, 0f)
+            )
+            val quarter = snapped.target
+            val placed = if (kotlin.math.abs(released - quarter) <= MaximumPresets.HOUR_SNAP_WINDOW_MINUTES) {
+                onHourDetent()
+                quarter
+            } else released
+            val total = placed.roundToInt().mod(24 * 60)
+            emit(total / 60, total % 60)
+        }
+    )
     Spacer(Modifier.height(20.dp))
     SigningContinue(label = "SET THE SENTENCE", ink = ink, onClick = onContinue)
 }
@@ -467,7 +504,8 @@ private fun BreakChoice(
     flow: SigningState,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
-    onBreak: (Int) -> Unit
+    onBreak: (Int) -> Unit,
+    onHourDetent: () -> Unit
 ) {
     Text(
         text = "The break — its span is set now, and fires by the lock",
