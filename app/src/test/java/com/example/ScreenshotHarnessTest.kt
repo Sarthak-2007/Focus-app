@@ -30,6 +30,8 @@ import com.example.ui.`break`.Break
 import com.example.ui.`break`.BreakActions
 import com.example.ui.`break`.BreakClock
 import com.example.ui.`break`.BreakState
+import androidx.compose.ui.graphics.toArgb
+import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
 import org.junit.Assert.assertTrue
@@ -238,10 +240,21 @@ class ScreenshotHarnessTest {
         clickables[lowest].performClick()
     }
 
-    /** Write the shot and hold it to the harness's gate: it must
-     *  exist, be non-trivial in size, and carry real colour
-     *  variance — a blank, flat, or placeholder render FAILS, by
-     *  design (screenshots are user-facing). */
+    /** Write the shot and hold it to the harness's gate — the
+     *  gate measures what the visual bar actually cares about
+     *  (BUILD-SR-38, on landed evidence): the shot must exist and
+     *  be uncorrupted (a 5,000-byte floor — a truly blank 412x915
+     *  field compresses under it); it must carry real colour
+     *  VARIANCE (> 40 distinct sampled colours — the flat-banded
+     *  first shutter failed here in spirit: a handful of tones is
+     *  a placeholder, however large its file); and the surface
+     *  must be POPULATED (> 10% of sampled pixels off the field
+     *  colour — a lawful but field-heavy step, like the held
+     *  pile's second step at ~30% coverage, passes on its
+     *  furniture; an empty room at ~0% fails). The earlier
+     *  byte-size-only form (15,000) is retired: it passed stale
+     *  captures and failed a lawful sparse step — it measured
+     *  the file, not the surface. */
     private fun writeShot(name: String, bitmap: Bitmap) {
         val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
         dir.mkdirs()
@@ -249,15 +262,21 @@ class ScreenshotHarnessTest {
         FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
         assertTrue(
-            "shot must be a rich render, not a blank field (${file.length()} bytes)",
-            file.length() > 15_000
+            "shot must be an uncorrupted render (${file.length()} bytes)",
+            file.length() > 5_000
         )
+        val fieldArgb = StrongroomInks.Graphite.toArgb()
         val colors = HashSet<Int>()
+        var samples = 0
+        var offField = 0
         var x = 0
         while (x < bitmap.width) {
             var y = 0
             while (y < bitmap.height) {
-                colors.add(bitmap.getPixel(x, y))
+                val px = bitmap.getPixel(x, y)
+                colors.add(px)
+                samples++
+                if (px != fieldArgb) offField++
                 y += 7
             }
             x += 7
@@ -265,6 +284,11 @@ class ScreenshotHarnessTest {
         assertTrue(
             "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
             colors.size > 40
+        )
+        assertTrue(
+            "shot must be a populated surface (off-field coverage: " +
+                "${100 * offField / samples.coerceAtLeast(1)}%)",
+            samples > 0 && offField.toDouble() / samples > 0.10
         )
     }
 
