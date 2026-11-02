@@ -177,8 +177,23 @@ jobs:
       # Issue #24 (finding 1): unit tests run BEFORE the artifact is
       # built or uploaded. Single job on purpose: parallel jobs would
       # split the run across two checkouts and two Gradle homes inside
-      # GitHub's included-minutes budget. If tests fail the job stops
-      # here — no APK is produced at all.
+      # GitHub's included-minutes budget.
+      #
+      # R9-2 (Rulings Round 9, SUCCESSOR-21, 2026-11-02) — SUPERSEDES
+      # finding 1's artifact consequence ONLY: the monolith-debug
+      # upload now fires on the assemble/compile output regardless of
+      # the test steps' outcomes (Assemble debug, Verify APK signer
+      # and the upload below run on !cancelled() / their own success,
+      # never on the tests outcome). The tests still run first, still
+      # report their true verdict, and this job still concludes
+      # FAILURE when a test name fails — nothing is hidden. What
+      # changed: a carried, dispositioned failing name (A-4
+      # settlement-held) can no longer make the installable package
+      # structurally impossible. The package's provenance — its run
+      # and that run's suite state, carried names included — is
+      # written into the release ledger beside it (BUILD-SR-9's lane).
+      # The signer gate remains a hard precondition of the upload: a
+      # wrongly-signed APK still never becomes an artifact.
       - name: Unit tests
         id: tests
         run: |
@@ -204,7 +219,11 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+      # R9-2: assemble runs on the compile result, not the suite
+      # result — it executes even when the Unit tests step failed
+      # (but never on a cancelled run).
       - name: Assemble debug
+        if: ${{ !cancelled() }}
         id: assemble
         run: ./gradlew --console=plain assembleDebug
 
@@ -217,6 +236,7 @@ jobs:
       # runs BEFORE upload, so a wrongly-signed APK never becomes an
       # artifact, and it dies loudly.
       - name: Verify APK signer (install-over proof)
+        if: ${{ !cancelled() }}
         id: apksigner
         run: |
           APKSIGNER="$(command -v apksigner || echo "$ANDROID_HOME/build-tools/37.0.0/apksigner")"
@@ -230,7 +250,14 @@ jobs:
             exit 1
           fi
           echo "APK signer verified: $FP - versionCode $VC"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # R9-2: the upload fires on the assemble output + the signer
+      # gate's proof, regardless of the Unit tests outcome — and ONLY
+      # on those two: if assemble failed there is no package, and if
+      # the signer gate failed the package is not the install-over
+      # key and must never become an artifact.
+      - name: Upload monolith-debug (installable package)
+        if: ${{ !cancelled() && steps.assemble.outcome == 'success' && steps.apksigner.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
@@ -260,14 +287,13 @@ jobs:
           if-no-files-found: ignore
 
       # Wave-2 (Feel/Finisher pass): the run page must tell the truth
-      # in plain words without anyone opening a log. This APK is
-      # uploaded BEFORE the test step, so while tests are red the
-      # artifact is UNTESTED — the summary says so, every run.
-      # Wave-2 (Feel/Finisher pass), corrected by issue #24: the run
-      # page tells the truth in plain words without anyone opening a
-      # log. Since finding 1 was fixed, the artifact is built and
-      # uploaded ONLY after its unit tests pass — the summary says
-      # which of those two things happened, every run.
+      # in plain words without anyone opening a log.
+      # Corrected by R9-2 (2026-11-02): since the R9-2 amendment the
+      # artifact is built and uploaded on the assemble output +
+      # signer-gate proof, regardless of the unit tests outcome — so
+      # while tests are red the uploaded package is UNTESTED BY THIS
+      # RUN'S SUITE, and the summary says exactly which of those
+      # things happened, every run. The job's verdict stays red.
       - name: Verdict summary
         if: always()
         run: |
@@ -277,7 +303,7 @@ jobs:
             echo "- Unit tests executed: ${{ steps.tests.outcome != 'skipped' }}"
             echo "- Unit test verdict: ${{ steps.tests.outcome }}"
             if [ "${{ steps.tests.outcome }}" != "success" ]; then
-              echo "- ⚠️ NO APK was uploaded in this run — the artifact is only built after unit tests pass."
+              echo "- ⚠️ APK WAS uploaded in this run (R9-2) — built by the assemble step and signer-gated, DESPITE the unit-test failure above. This package is UNTESTED BY THIS RUN'S SUITE; its provenance (this run + its suite state) is recorded in the release ledger beside it. This job's verdict remains FAILURE."
             else
               echo "- APK in this run was built and uploaded AFTER its unit tests passed."
             fi
