@@ -672,6 +672,11 @@ class MonolithShieldService : Service() {
                     Log.e(TAG, "storage full: progress tick not persisted", e)
                     null
                 }
+                // KB01 spike instrumentation (Stage 4P, Row 1): observe
+                // the row this tick persisted; changes nothing.
+                if (updated != null) {
+                    Kb01ProbeLog.onTickRow(applicationContext, updated)
+                }
                 if (updated == null) {
                     delay(2000L)
                     continue
