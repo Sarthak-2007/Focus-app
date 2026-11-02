@@ -152,12 +152,13 @@ fun DayPlateView(
                         color = PlateLineWork
                     )
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "standing at the last check, fallen by the first check that found it",
-                    style = PlateBodyStyle,
-                    color = PlateLineWork
-                )
+                // A-12's settled words — "standing at the last
+                // check, fallen by the first check that found it" —
+                // are the bracket's READING, not its lettering
+                // (TYPE-SR-3's ruling to this lane): the plate is
+                // struck with the two bracket hours as figures,
+                // above, and carries no sentence. The words live
+                // on the reading surfaces of a later slice.
             }
         }
 

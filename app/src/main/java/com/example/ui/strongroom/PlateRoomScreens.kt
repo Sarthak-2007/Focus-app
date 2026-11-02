@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.domain.LiftingPlate
+import com.example.ui.theme.PlateBodyStyle
 import com.example.ui.theme.PlateBrass
 import com.example.ui.theme.PlateBrassDark
 import com.example.ui.theme.PlateDarkRoom
@@ -117,9 +118,12 @@ fun StrongroomDrawerScreen(
         LazyColumn(Modifier.testTag("strongroom_drawer_list")) {
             for ((day, tasks) in byDay) {
                 item(key = "day-$day") {
+                    // The slip's finished-date in the telemetry
+                    // hand (Anonymous Pro 400 — DESIGNER-SR-5 §9);
+                    // the task's own words below stay his, verbatim.
                     Text(
                         text = day,
-                        style = RoomListStyle,
+                        style = PlateBodyStyle,
                         color = PlateInkGold,
                         modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
                     )

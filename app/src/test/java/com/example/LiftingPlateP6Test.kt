@@ -122,6 +122,33 @@ class LiftingPlateP6Test {
     }
 
     @Test
+    fun ceremony_unreadPlateClosesTheDay_andStaysUnreadInThePile() {
+        // CRITIC-SR-6 DF-10 / B-15: the reading is offered, owed
+        // never. From PLATE, leaving unread closes the day exactly
+        // as reading does — and the plate that enters the pile is
+        // the same unread object (no mark, no debt).
+        val plate = (LiftingPlate.PlateStrikeGuard.strike(null, wholeTruth(), 100L)
+            as LiftingPlate.StrikeOutcome.Struck).plate
+        var s = LiftingPlate.CeremonyState.begin(LiftingPlate.HandingBack(emptyList()))
+        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.LIFT_FIRED)
+        repeat(LiftingPlate.LiftingScore.BOLT_COUNT) {
+            s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.BOLT_WITHDRAWN)
+        }
+        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.DOOR_SETTLED)
+        assertEquals(LiftingPlate.LiftPhase.PLATE, s.phase)
+        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.PLATE_LEFT_UNREAD)
+        assertEquals(LiftingPlate.LiftPhase.OPEN, s.phase)
+        assertFalse(plate.isRead)
+        val pile = LiftingPlate.PlatePile(listOf(plate))
+        assertSame(plate, pile.plateFor(plate.truth.filingDateIso))
+
+        // The ajar day closes unread on the same arm.
+        var a = LiftingPlate.CeremonyState.beginAjar(LiftingPlate.HandingBack(emptyList()))
+        a = LiftingPlate.advance(a, LiftingPlate.LiftEvent.PLATE_LEFT_UNREAD)
+        assertEquals(LiftingPlate.LiftPhase.OPEN, a.phase)
+    }
+
+    @Test
     fun handingBack_dedupesByOwnListRef_keepsFirstWaitedOrder() {
         val hb = LiftingPlate.HandingBack.prepare(
             listOf(

@@ -348,7 +348,13 @@ object LiftingPlate {
 
     /** Events the wiring layer reports into the ceremony. */
     enum class LiftEvent {
-        LIFT_FIRED, BOLT_WITHDRAWN, DOOR_SETTLED, HANDED_BACK, PLATE_READ, FAILURE_FOUND
+        LIFT_FIRED, BOLT_WITHDRAWN, DOOR_SETTLED, HANDED_BACK, PLATE_READ, FAILURE_FOUND,
+
+        /** The plate is left UNREAD and the day closes (B-15:
+         *  the reading is offered nightly, owed never — an unread
+         *  plate passes to the pile and taxes nothing: not the
+         *  night, not tomorrow's signing. CRITIC-SR-6 DF-10). */
+        PLATE_LEFT_UNREAD
     }
 
     /**
@@ -427,14 +433,18 @@ object LiftingPlate {
         }
         LiftPhase.PLATE -> when (event) {
             LiftEvent.PLATE_READ -> state.copy(phase = LiftPhase.OPEN)
+            // B-15's other arm: he may simply not read it tonight.
+            // The plate passes to the pile unread; the day closes
+            // exactly as a read day closes.
+            LiftEvent.PLATE_LEFT_UNREAD -> state.copy(phase = LiftPhase.OPEN)
             else -> state
         }
         LiftPhase.AJAR -> when (event) {
             // Even at the ajar door, the people who waited are
             // handed back — the failure is the seal's, not theirs —
-            // and only then is the room his again.
+            // and only then is the room his again, read or unread.
             LiftEvent.HANDED_BACK -> state.copy(handingBackDelivered = true)
-            LiftEvent.PLATE_READ ->
+            LiftEvent.PLATE_READ, LiftEvent.PLATE_LEFT_UNREAD ->
                 if (state.handingBackDelivered || state.handingBack.isEmpty) {
                     state.copy(phase = LiftPhase.OPEN, handingBackDelivered = true)
                 } else state
@@ -459,6 +469,11 @@ object LiftingPlate {
      * lands, this mirror is deleted and the surfaces read P0's
      * primitives directly; the figures must not drift apart — the
      * token test in this lane pins them to the cited values.
+     *
+     * STAMP (KEEPER-SR-5 naming L-1, register N-5): these are FEEL
+     * figures — proven as arithmetic by the venue tests, UNPROVEN
+     * AS FEEL until the running build is in his hand. They travel
+     * stamped UNPROVEN-as-feel wherever this lane quotes them.
      */
     object LiftingScore {
         data class BoltWithdrawal(val atMs: Int, val durationMs: Int, val weight: Float)

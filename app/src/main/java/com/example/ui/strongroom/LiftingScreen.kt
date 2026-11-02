@@ -207,6 +207,23 @@ fun LiftingScreen(
             ) {
                 DayPlateView(plate = plate)
             }
+            // B-15's other arm, one quiet touch (CRITIC-SR-6
+            // DF-10): leave the plate unread — it passes to the
+            // pile, the day closes, and nothing is owed. The
+            // plate is never badged or counted for this anywhere.
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "Leave it unread",
+                style = RoomListStyle,
+                color = PlateInkGold,
+                modifier = Modifier
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { fire(LiftingPlate.LiftEvent.PLATE_LEFT_UNREAD) }
+                    .padding(vertical = 6.dp)
+                    .testTag("lifting_leave_unread")
+            )
         }
     }
 }
