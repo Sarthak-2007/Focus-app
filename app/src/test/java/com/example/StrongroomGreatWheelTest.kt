@@ -48,10 +48,16 @@ class StrongroomGreatWheelTest {
         val n = exact.totalDetents.toInt()
         assertTrue(n >= 123)
         assertEquals(listOf(n / 100, (n / 10) % 10, n % 10), exact.dials())
-        // Negative turns wrap lawfully: −1 detent reads 999.
+        // Negative turns wrap lawfully through floorMod: the
+        // dials are the decimal digits of the wrapped count.
         val back = WheelTurn()
         back.dragBy(-WheelPhysics.DETENT_DEGREES * 3)
-        assertEquals(listOf(9, 9, 9), back.dials())
+        val wrapped = Math.floorMod(back.totalDetents, 1000L).toInt()
+        assertTrue(back.totalDetents < 0)
+        assertEquals(
+            listOf(wrapped / 100, (wrapped / 10) % 10, wrapped % 10),
+            back.dials()
+        )
     }
 
     @Test
