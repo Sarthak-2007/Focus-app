@@ -78,19 +78,11 @@ fun appMatchesQuery(app: BlockedAppEntity, query: String): Boolean {
     return app.category.contains(q, ignoreCase = true)
 }
 
-enum class MonolithDestination(val route: String, val label: String) {
-    // Issue #115: ONE name per destination, everywhere — the labels
-    // here are the rail's printed words (DECK · SHIELD · TASKS ·
-    // LEDGER). The old second vocabulary (Focus / Receipts) meant
-    // the same screens answered to two names depending on the layer.
-    DECK("deck", "Deck"),
-    TASKS("tasks", "Tasks"),
-    SHIELD("shield", "Shield"),
-    VAULT("vault", "Ledger")
-    // GUARD is DISSOLVED (chrome wave): the destination, its screen,
-    // and its -1 tab mapping are deleted. What Guard held lives in
-    // PARK (the rail's end zone) and on Shield (the websites editor).
-}
+// MonolithDestination (DECK / TASKS / SHIELD / VAULT) is DEAD —
+// struck by BUILD-SR-34 under ruling A-1's rebuild obligation.
+// Its successor is StrongroomPlace (StrongroomPlace.kt): the
+// Strongroom's own order, state-driven, with the persisted-name
+// migration (old names resolve to the doorway) carried there.
 
 /**
  * The theme evaluation (chrome C4, Sten's precedence, §8.10): ONE
@@ -755,18 +747,25 @@ class MonolithViewModel(
     // silently reset all five to their birth values, and the user
     // could seal a session with a duration and an intention they
     // never chose. Seeded from the store at birth; the five setters
-    // (navigateTo / setDialMinutes / setStudyBlocksCount /
+    // (moveToPlace / setDialMinutes / setStudyBlocksCount /
     // selectStudyPreset / setIntentionText) write through. Other
     // writers (task collectors, profile application) keep their
     // existing in-memory behaviour and do not move the store.
     private val preArmStore = com.example.data.PreArmStore(appContext)
 
-    private val _currentDestination = MutableStateFlow(
-        runCatching {
-            MonolithDestination.valueOf(preArmStore.destinationName())
-        }.getOrNull() ?: MonolithDestination.DECK
+    // BUILD-SR-34 (A-1 executed): the standing place, seeded
+    // through the migration — a name persisted by an old build
+    // (DECK / TASKS / SHIELD / VAULT) resolves to the doorway,
+    // never a crash, never a dead route (StrongroomPlace's
+    // fromPersistedName). The place is a substate only: the day's
+    // shape (sealed / break / lifting) is derived by the shell
+    // host from the live session state, and this flow carries the
+    // one movement that is his act — the antechamber's second
+    // touch and the return to the face.
+    private val _currentPlace = MutableStateFlow(
+        StrongroomPlace.fromPersistedName(preArmStore.destinationName())
     )
-    val currentDestination: StateFlow<MonolithDestination> = _currentDestination.asStateFlow()
+    val currentPlace: StateFlow<StrongroomPlace> = _currentPlace.asStateFlow()
 
     // The manual theme is DEAD (chrome C4): _darkTheme and
     // toggleTheme() are deleted with the DAY/NIGHT pill. The theme
@@ -935,7 +934,7 @@ class MonolithViewModel(
 
     /** E-1 (Ruhe R-3): the bloom belongs to the VERB, never to
      *  the touch. Called at the head of the verb handlers
-     *  (navigateTo, arm, disarm request, dismissReceipt, task /
+     *  (moveToPlace, arm, disarm request, dismissReceipt, task /
      *  checklist commits, preset / profile / loadout / blocks
      *  selection, endSafeBreakEarly, and inside the
      *  changed-guards of setDialMinutes / setIntentionText).
@@ -3455,20 +3454,47 @@ class MonolithViewModel(
 
     private var lastNavRefusalMono = 0L
 
-    fun navigateTo(destination: MonolithDestination) {
-        // Ruhe R-3: navigation is a true verb — it blooms the
-        // Landing (at the head, per the cure; a refused
-        // navigation still reads as his committed intent to
-        // move, and the bloom never gates the verb).
+    /**
+     * BUILD-SR-34: movement in the Strongroom's own order — the
+     * successor of the dead navigateTo. There is almost nothing
+     * left to "navigate": the day's shape is state-driven, and
+     * the only movements that are his acts are the antechamber's
+     * second touch (SEALED_FACE → ANTECHAMBER) and the return
+     * (ANTECHAMBER → SEALED_FACE). The law, by state:
+     *
+     *  - Hard locks (proving / the seal shot / a detaining finish)
+     *    refuse every movement, as before.
+     *  - While a session is active, the lawful targets are the
+     *    sealed face and the antechamber — never the doorway
+     *    (while sealed, the launcher is the room; there is no
+     *    route out of it, ledger D-7), and never BREAK or
+     *    LIFTING, which are the time-lock's firings, not places
+     *    a hand can choose.
+     *  - While no session stands, the only lawful target is the
+     *    doorway — a sealed place cannot be entered without a
+     *    seal.
+     *
+     * A refused movement keeps the old refusal tick (tries and
+     * stays). The old travel detent dies with travel itself: the
+     * grille's own slice voices the second touch. The sled-return
+     * void that rode "navigation away from the Deck" has no
+     * successor move — the doorway is left by the seal's act, not
+     * by navigation — so it is not re-homed here; the sled
+     * machinery and its other triggers stand untouched.
+     */
+    fun moveToPlace(place: StrongroomPlace) {
+        // Ruhe R-3, carried: the verb blooms the Landing at the
+        // head — a refused movement still reads as his committed
+        // intent to move, and the bloom never gates the verb.
         bloomNightLanding()
-        // Sealed return (main): travelling TO the Deck under a seal
-        // is not an escape, it is the way back — the seal alone
-        // never refuses it. The hard locks refuse even that.
-        val refused = destination != _currentDestination.value &&
-            (hardNavigationLocked() ||
-                (activeSession.value?.isActive == true &&
-                    destination != MonolithDestination.DECK))
-        if (refused) {
+        val sealed = activeSession.value?.isActive == true
+        val lawful = when {
+            hardNavigationLocked() -> false
+            sealed -> place == StrongroomPlace.SEALED_FACE ||
+                place == StrongroomPlace.ANTECHAMBER
+            else -> place == StrongroomPlace.DOORWAY
+        }
+        if (!lawful && place != _currentPlace.value) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastNavRefusalMono >= 250L) {
                 lastNavRefusalMono = now
@@ -3479,15 +3505,13 @@ class MonolithViewModel(
             }
             return
         }
-        if (destination != MonolithDestination.DECK) {
-            // Schlitten §3.3: navigation away voids the sled
-            // return (the receipt itself stands).
-            _receiptState.value?.let { sledReturnGate.void(it.sessionId) }
-        }
-        soundEngine.playRotaryDetent(540.0)
-        _currentDestination.value = destination
-        preArmStore.putDestinationName(destination.name)
-        if (destination == MonolithDestination.VAULT) {
+        if (!lawful) return
+        _currentPlace.value = place
+        preArmStore.putDestinationName(place.name)
+        if (place == StrongroomPlace.DOORWAY) {
+            // The drawer lives in the doorway's room now (the
+            // dead VAULT's successor furniture): arriving at the
+            // doorway refreshes it, as arriving at VAULT did.
             refreshDrawer()
         }
     }
@@ -4616,7 +4640,7 @@ class MonolithViewModel(
             if (promoted != null) {
                 seedDialFromTask(promoted)
             }
-            _currentDestination.value = MonolithDestination.DECK
+            _currentPlace.value = StrongroomPlace.DOORWAY
         }
     }
 
@@ -4892,14 +4916,14 @@ class MonolithViewModel(
      *  lands here (LoadoutShortcuts). The shortcut's whole power
      *  is the in-app tap's: the loadout is applied through the
      *  same verb, ratchet guards included, and the user stands
-     *  on the Deck — where the arm and its proving path live.
+     *  at the doorway — where the signing and its proving path live.
      *  Nothing is armed from the launcher. A stale id (the
      *  loadout was deleted after the shortcut was published)
      *  is a no-op; the next publish prunes the shortcut. */
     fun openLoadoutFromShortcut(profileId: Int) {
         val profile = profiles.value.firstOrNull { it.id == profileId } ?: return
         selectAndApplyProfile(profile)
-        navigateTo(MonolithDestination.DECK)
+        moveToPlace(StrongroomPlace.DOORWAY)
     }
 
     /** Issue #139 F4: one-tap undo of the last profile application —
