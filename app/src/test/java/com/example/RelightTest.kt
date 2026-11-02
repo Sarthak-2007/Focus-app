@@ -121,6 +121,14 @@ class RelightTest {
     }
 
     @Test
+    fun `dark face descents are exposed as data per class`() {
+        assertEquals(5, Relight.darkFaceDescentEighths(Relight.InkClass.ENAMEL))
+        assertEquals(4, Relight.darkFaceDescentEighths(Relight.InkClass.GOLD))
+        assertEquals(0, Relight.darkFaceDescentEighths(Relight.InkClass.GRAPHITE))
+        assertEquals(0, Relight.darkFaceDescentEighths(Relight.InkClass.OTHER))
+    }
+
+    @Test
     fun `state parameters carry the filed directions and descent fractions`() {
         val signing = Relight.paramsFor(RelightState.SIGNING)
         assertEquals(-0.83f, signing.lightDirectionX, 0.0f)

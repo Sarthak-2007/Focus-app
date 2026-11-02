@@ -186,6 +186,20 @@ object Relight {
         }
     }
 
+    /** L-DARK's per-class FACE descents, exposed as data (RELIGHT §3;
+     *  DESIGNER-SR-1's named extension, granted by P0): enamel 5/8, door
+     *  gold 1/2, graphite already at the floor, OTHER unmoved. Consumers
+     *  (shaders, faces) read this table — a consumer encoding 4/8 for
+     *  gold from the filing's prose has forked the law. The PLATE's dark
+     *  descent is not per-class: it is paramsFor(DARK).plateDescentEighths
+     *  (1/8) for every class. */
+    fun darkFaceDescentEighths(inkClass: InkClass): Int = when (inkClass) {
+        InkClass.ENAMEL -> 5
+        InkClass.GOLD -> 4
+        InkClass.GRAPHITE -> 0
+        InkClass.OTHER -> 0
+    }
+
     /** A whole surface's mass under a state, before per-mark relief:
      *  the filed descents. SEALED descends the face 3/8 and carries the
      *  plate exact; DARK descends per class (below); DAY and SIGNING
@@ -194,13 +208,8 @@ object Relight {
         val params = paramsFor(state)
         if (classify(base) == InkClass.OTHER) return base
         if (state == RelightState.DARK && surface == RelightSurface.FACE) {
-            // Per-class L-DARK descents (RELIGHT §3): enamel 5/8, door
-            // gold 1/2, graphite already at the floor.
-            return when (classify(base)) {
-                InkClass.ENAMEL -> descend(base, 5)
-                InkClass.GOLD -> descend(base, 4)
-                else -> base
-            }
+            // Per-class L-DARK descents, from the exposed table.
+            return descend(base, darkFaceDescentEighths(classify(base)))
         }
         val eighths = if (surface == RelightSurface.FACE) {
             params.faceDescentEighths
