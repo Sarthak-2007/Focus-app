@@ -57,6 +57,9 @@ class MonolithBootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
+        // KB07 spike instrumentation (Stage 4P, Row 7): timestamp every
+        // boot / clock-change reconcile on the monotonic reference.
+        Kb07ProbeLog.log(context.applicationContext, "RECEIVER_FIRED", "action=$action")
         val appContext = context.applicationContext
         when (action) {
             // Issue #122: the battery turned — the shield's

@@ -676,6 +676,9 @@ class MonolithShieldService : Service() {
                     delay(2000L)
                     continue
                 }
+                // KB07 spike instrumentation (Stage 4P, Row 7): observe
+                // the row this tick persisted; changes nothing.
+                Kb07ProbeLog.onTickRow(applicationContext, updated)
                 if (!usageGranted) {
                     // Latched AFTER the progress write on purpose:
                     // updateSession is a full-row @Update, so a latch
