@@ -66,7 +66,11 @@ class StrongroomSealedFaceModelTest {
         // are exactly the hour and the sentence — a slot that could
         // hold a value would invite one to be invented.
         val components = SealedFaceState::class.java.declaredFields
-            .filter { !it.isSynthetic }
+            .filter {
+                !it.isSynthetic &&
+                    !java.lang.reflect.Modifier.isStatic(it.modifiers) &&
+                    !it.name.startsWith("$")
+            }
             .map { it.name }
             .sorted()
         assertEquals(listOf("hasSentence", "liftingHour", "sentence"), components)
