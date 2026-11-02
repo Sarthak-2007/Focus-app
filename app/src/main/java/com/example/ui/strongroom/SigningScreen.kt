@@ -172,7 +172,6 @@ fun SigningScreen(
                     crossed.forEach { _ -> onDetent() }
                     wheelVersion++
                 },
-                onDialDetent = { onDetent() },
                 onSign = {
                     onLatch()
                     flow = flow.completeSignature()
