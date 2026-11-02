@@ -178,6 +178,7 @@ enum class SoundEvent {
     GOVERNOR_CRANK_TURN,
     LEAD_SEAL_SNAP,
     CRANK_SPENT_REFUSAL,
+    CRANK_REDRIVE,
 
     // -- The break (a firing of the time-lock, invocable by no one) --
     BREAK_FIRING,
@@ -437,10 +438,27 @@ object SoundRegistry {
         row(
             SoundEvent.CRANK_SPENT_REFUSAL, SoundFamily.PRIVATE_HAND,
             SoundDecision.FELT_ONLY, attended = true,
-            haptic = HARD_STOP,
+            // FEEL-SR-4's C-01 arbitration: the governor's refusal
+            // carries its OWN figures, distinct from the drum's —
+            // a longer, heavier stop for the bigger mechanism.
+            haptic = HapticSpec(listOf(0, 34, 24), listOf(0, 230, 110), 34),
             latencyClass = LatencyClass.TOUCH_COINCIDENT,
             source = "CRITIC W-9: the spent crank says so by not turning — " +
-                "the same hard-stop feel as the drum's, no voice"
+                "no voice; its figures are its own (FEEL-SR-4 C-01), " +
+                "heavier and longer than the drum's HARD_STOP"
+        ),
+        row(
+            SoundEvent.CRANK_REDRIVE, SoundFamily.ROOM_CEREMONY,
+            SoundDecision.SOUNDS, attended = false,
+            voice = VoiceSpec(205f, 130, 0.56f, 1.2f),
+            haptic = HapticSpec(listOf(0, 24, 38, 16), listOf(0, 225, 0, 160), 8),
+            latencyClass = LatencyClass.CEREMONY_STEP,
+            source = "Coordinator Ruling R5-2 (2026-11-02): the governor's " +
+                "minute ends by re-driving the SAME three bolts and seating " +
+                "the door (FEEL-SR-2's 3 rising bolts + door seat governs " +
+                "the ceremony's shape); one representative registry voice " +
+                "for the re-drive family, PROVISIONAL until the Stage 13 " +
+                "spec set lands"
         ),
 
         // -- The break ----------------------------------------------
