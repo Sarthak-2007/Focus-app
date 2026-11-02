@@ -98,38 +98,55 @@ object DoorBody {
 
     /** Simulate the whole opening swing once; the table is the test fixture and the player's source. */
     fun simulateOpen(maxMs: Long = 3800L): DoorOpenSimulation {
-        var theta = 0f
-        var omega = 0f
+        // Integrated in Double, as the spec's own simulation is —
+        // 3,000+ Float steps drift the settle moment measurably
+        // past the filed figures (found by DoorMotionTest on run
+        // 41432543918: the body's settle read late against the
+        // ceremony's filed DOOR_SETTLED). Samples are filed as
+        // Float poses; the integration never is.
+        var theta = 0.0
+        var omega = 0.0
         var strikeMs: Long? = null
         var settleMs: Long? = null
-        var peakOmega = 0f
+        var peakOmega = 0.0
         var peakAtMs = 0L
-        var minOmegaAfterStrike = 0f
+        var minOmegaAfterStrike = 0.0
         val samples = ArrayList<DrivenState>((maxMs + 1).toInt())
-        samples.add(DrivenState(theta, omega))
+        samples.add(DrivenState(theta.toFloat(), omega.toFloat()))
         var t = 0L
         while (t < maxMs) {
-            if (strikeMs == null && theta >= STRIKE_DEG) strikeMs = t
-            val a = openAcceleration(theta, omega, t)
-            omega += a * DrivenIntegrator.STEP_SECONDS
-            theta += omega * DrivenIntegrator.STEP_SECONDS
+            if (strikeMs == null && theta >= STRIKE_DEG.toDouble()) strikeMs = t
+            var torque = 0.0
+            if (theta > STOP_FROM_DEG.toDouble()) {
+                torque += -STOP_STIFFNESS.toDouble() * (theta - REST_DEG.toDouble()) -
+                    STOP_RESISTANCE.toDouble() * omega
+            }
+            val rampRaw = min(1.0, t.toDouble() / OPEN_RAMP_MS.toDouble())
+            val ramp = rampRaw * rampRaw * (3.0 - 2.0 * rampRaw)
+            val drive = OPEN_DRIVE.p0.toDouble() *
+                max(0.0, 1.0 - theta / OPEN_DRIVE.p1.toDouble()) * ramp
+            val bandK = min(1.0, max(0.0, (theta - BAND_FROM_DEG.toDouble()) / 10.0))
+            val resistance = RESISTANCE.toDouble() + BAND_RESISTANCE.toDouble() * bandK
+            val a = (drive - resistance * omega + torque) / INERTIA.toDouble()
+            omega += a * DrivenIntegrator.STEP_SECONDS.toDouble()
+            theta += omega * DrivenIntegrator.STEP_SECONDS.toDouble()
             t += 1L
             if (omega > peakOmega) { peakOmega = omega; peakAtMs = t }
             if (strikeMs != null && omega < minOmegaAfterStrike) minOmegaAfterStrike = omega
-            if (settleMs == null && abs(theta - REST_DEG) <= SETTLE.distanceEpsilon &&
-                abs(omega) <= SETTLE.velocityEpsilon
+            if (settleMs == null && abs(theta - REST_DEG.toDouble()) <= SETTLE.distanceEpsilon.toDouble() &&
+                abs(omega) <= SETTLE.velocityEpsilon.toDouble()
             ) settleMs = t
-            samples.add(DrivenState(theta, omega))
+            samples.add(DrivenState(theta.toFloat(), omega.toFloat()))
         }
-        if (strikeMs == null && theta >= STRIKE_DEG) strikeMs = t
+        if (strikeMs == null && theta >= STRIKE_DEG.toDouble()) strikeMs = t
         return DoorOpenSimulation(
             samplesPerMs = samples,
             strikeMs = strikeMs,
             settleMs = settleMs,
-            peakOmegaDegS = peakOmega,
+            peakOmegaDegS = peakOmega.toFloat(),
             peakOmegaAtMs = peakAtMs,
-            finalThetaDeg = theta,
-            minOmegaAfterStrikeDegS = minOmegaAfterStrike
+            finalThetaDeg = theta.toFloat(),
+            minOmegaAfterStrikeDegS = minOmegaAfterStrike.toFloat()
         )
     }
 }
@@ -169,33 +186,33 @@ object DrivenClampBody {
     /** Time for the body to reach x = 1 from rest under a constant drive. */
     fun travel(mass: Float, drive: DriveSpec, resistance: Float): Travel {
         require(drive.kind == "constantForce") { "a clamp body takes a constant force" }
-        var x = 0f
-        var v = 0f
+        var x = 0.0
+        var v = 0.0
         var t = 0L
         while (t < 2000L) {
-            val a = (drive.p0 - resistance * v) / mass
-            v += a * DrivenIntegrator.STEP_SECONDS
-            x += v * DrivenIntegrator.STEP_SECONDS
+            val a = (drive.p0.toDouble() - resistance.toDouble() * v) / mass.toDouble()
+            v += a * DrivenIntegrator.STEP_SECONDS.toDouble()
+            x += v * DrivenIntegrator.STEP_SECONDS.toDouble()
             t += 1L
-            if (x >= 1f) return Travel(travelMs = t, arrivalVelocity = v)
+            if (x >= 1.0) return Travel(travelMs = t, arrivalVelocity = v.toFloat())
         }
-        return Travel(travelMs = t, arrivalVelocity = v)
+        return Travel(travelMs = t, arrivalVelocity = v.toFloat())
     }
 
     /** Travel fraction at [elapsedMs] — 0 before/at rest, exactly 1 at and after the clamp. */
     fun fractionAt(mass: Float, drive: DriveSpec, resistance: Float, elapsedMs: Long): Float {
         if (elapsedMs <= 0L) return 0f
-        var x = 0f
-        var v = 0f
+        var x = 0.0
+        var v = 0.0
         var t = 0L
         while (t < elapsedMs && t < 2000L) {
-            val a = (drive.p0 - resistance * v) / mass
-            v += a * DrivenIntegrator.STEP_SECONDS
-            x += v * DrivenIntegrator.STEP_SECONDS
+            val a = (drive.p0.toDouble() - resistance.toDouble() * v) / mass.toDouble()
+            v += a * DrivenIntegrator.STEP_SECONDS.toDouble()
+            x += v * DrivenIntegrator.STEP_SECONDS.toDouble()
             t += 1L
-            if (x >= 1f) return 1f
+            if (x >= 1.0) return 1f
         }
-        return min(1f, x)
+        return min(1.0, x).toFloat()
     }
 }
 
@@ -251,22 +268,24 @@ object PressBody {
 
     /** Simulate the press at 1 ms (the spec's scheme) → its settle moment and overshoot. */
     fun simulate(maxMs: Long = 600L): PressSimulation {
-        var x = 0f
-        var v = 0f
-        var overshoot = 0f
+        var x = 0.0
+        var v = 0.0
+        var overshoot = 0.0
         var settleMs: Long? = null
         var t = 0L
         while (t < maxMs) {
-            val a = (-BODY.stiffness * (x - 1f) - BODY.resistance * v) / BODY.mass
-            v += a * DrivenIntegrator.STEP_SECONDS
-            x += v * DrivenIntegrator.STEP_SECONDS
+            val a = (-BODY.stiffness.toDouble() * (x - 1.0) - BODY.resistance.toDouble() * v) / BODY.mass.toDouble()
+            v += a * DrivenIntegrator.STEP_SECONDS.toDouble()
+            x += v * DrivenIntegrator.STEP_SECONDS.toDouble()
             t += 1L
-            if (x - 1f > overshoot) overshoot = x - 1f
-            if (settleMs == null && abs(x - 1f) <= SETTLE.distanceEpsilon && abs(v) <= SETTLE.velocityEpsilon) {
+            if (x - 1.0 > overshoot) overshoot = x - 1.0
+            if (settleMs == null && abs(x - 1.0) <= SETTLE.distanceEpsilon.toDouble() &&
+                abs(v) <= SETTLE.velocityEpsilon.toDouble()
+            ) {
                 settleMs = t
             }
         }
-        return PressSimulation(settleMs = settleMs, overshoot = overshoot, finalValue = x)
+        return PressSimulation(settleMs = settleMs, overshoot = overshoot.toFloat(), finalValue = x.toFloat())
     }
 }
 
