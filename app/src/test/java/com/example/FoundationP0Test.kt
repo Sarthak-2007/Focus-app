@@ -117,12 +117,19 @@ class FoundationP0Test {
         assertStyle(MonolithType.Prt2, SoraFamily, FontWeight.SemiBold, 18f, 25f, 1.08f)
         assertStyle(MonolithType.Prt3, SoraFamily, FontWeight.Bold, 24f, 30f, 1.20f)
         assertStyle(MonolithType.Prt4, SoraFamily, FontWeight.SemiBold, 32f, 40f, 1.28f)
-        assertStyle(MonolithType.Prt5, AnonymousProFamily, FontWeight.Bold, 48f, 50f, 0.96f)
-        // ENG-1 is the PRT-5 figure class, Anonymous Pro 700 (§1.3, A-6.6).
-        assertEquals(MonolithType.Prt5, MonolithType.Eng1)
-        for (style in listOf(MonolithType.Prt2, MonolithType.Prt3, MonolithType.Prt4, MonolithType.Prt5)) {
+        // ENG-1 is the hour's only setting: Anonymous Pro 700 at the PRT-5
+        // figure class (§1.3). Its 0.96sp tracking is the in-app
+        // approximation of §5.3's figure tracking — EL-1/EL-2 file no
+        // letterSpacing (TYPE-SR-5 cure D-02).
+        assertStyle(MonolithType.Eng1, AnonymousProFamily, FontWeight.Bold, 48f, 50f, 0.96f)
+        for (style in listOf(MonolithType.Prt2, MonolithType.Prt3, MonolithType.Prt4, MonolithType.Eng1)) {
             assertTrue("printed tracking is never negative (§5.3)", style.letterSpacing.value > 0f)
         }
+        // PRT-5 is a citation, never a consumable style (A-6.6; cure D-01):
+        // it names the size-class ENG-1 binds to, and nothing else.
+        assertEquals("Anonymous Pro", MonolithType.Prt5.face)
+        assertEquals(700, MonolithType.Prt5.weight)
+        assertTrue(MonolithType.Prt5.law.contains("ENG-1"))
     }
 
     @Test
@@ -133,7 +140,7 @@ class FoundationP0Test {
         assertTrue(atkinsonWeights.all { it == FontWeight.Normal || it == FontWeight.Bold })
         val anonWeights = listOf(
             MonolithType.Anon0, MonolithType.Anon1, MonolithType.Anon2,
-            MonolithType.Anon3, MonolithType.Anon4, MonolithType.Prt5, MonolithType.Eng1
+            MonolithType.Anon3, MonolithType.Anon4, MonolithType.Eng1
         ).map { it.fontWeight }
         assertTrue(anonWeights.all { it == FontWeight.Normal || it == FontWeight.Bold })
         val soraWeights = listOf(
@@ -153,9 +160,12 @@ class FoundationP0Test {
         // The notification's wording is RULED (type-system A-6.2).
         assertEquals("Locked until the hour", MonolithType.Hld1Wording)
         // FRM-1: Atkinson 400 at the SCR-2 size class, size equivalence only.
+        // Its tracking is set once at the completed-form value (FL-2/CF-1):
+        // SCR-2's +0.01em at 16sp = 0.16sp (TYPE-SR-5 cure D-03).
         assertEquals(AtkinsonHyperlegibleFamily, MonolithType.Frm1.fontFamily)
         assertEquals(FontWeight.Normal, MonolithType.Frm1.fontWeight)
         assertEquals(16.sp, MonolithType.Frm1.fontSize)
+        assertEquals(0.16.sp, MonolithType.Frm1.letterSpacing)
     }
 
     @Test
