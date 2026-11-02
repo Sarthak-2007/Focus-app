@@ -68,6 +68,13 @@ import com.example.ui.signing.SigningToken
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
+import com.example.data.AppBlockTier
+import com.example.ui.setup.Setup
+import com.example.ui.setup.SetupActions
+import com.example.ui.setup.SetupAppRow
+import com.example.ui.setup.SetupPermissionRow
+import com.example.ui.setup.SetupSection
+import com.example.ui.setup.SetupState
 import com.example.ui.signing.PrintBenchPose
 import com.example.ui.signing.SigningPrintBench
 import androidx.compose.ui.test.onRoot
@@ -878,6 +885,84 @@ class ScreenshotHarnessTest {
             holder.set(bmp)
         }
         return holder.get()
+    }
+
+    // ── SETUP-FLOW (the setup side, plain and working) ────────
+    // The three setup screens at device spec, fabricated
+    // standings as everywhere in this harness: the permission
+    // rows carry a plausible grant split, the app rows a
+    // plausible catalogue, the guard its default posture. The
+    // renders are the witness that the screens stand and read —
+    // the wiring itself is proven in SetupFlowSeamTest.
+
+    @Test
+    fun setup_permissions_deviceSpec() {
+        val rows = listOf(
+            SetupPermissionRow("ACCESSIBILITY", "Accessibility", "MISSING", false),
+            SetupPermissionRow("USAGE_ACCESS", "Usage access", "GRANTED", true),
+            SetupPermissionRow("NOTIFICATIONS", "Notifications", "GRANTED", true),
+            SetupPermissionRow("NOTIFICATION_LISTENER", "Held calls (notification access)", "MISSING", false),
+            SetupPermissionRow("OVERLAY", "Display over other apps", "GRANTED", true),
+            SetupPermissionRow("BATTERY", "Battery exemption", "MISSING", false),
+            SetupPermissionRow("DEVICE_ADMIN", "Device admin", "MISSING", false),
+            SetupPermissionRow(
+                "AUTOSTART", "Autostart",
+                "NOT SET — Android can't report this one; open it, set it, mark it done",
+                false
+            )
+        )
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Setup(
+                    state = SetupState(
+                        section = SetupSection.PERMISSIONS,
+                        permissions = rows
+                    ),
+                    actions = SetupActions()
+                )
+            }
+        }
+        writeShotSparse("setup-permissions-device.png", bitmap)
+    }
+
+    @Test
+    fun setup_apps_deviceSpec() {
+        val rows = listOf(
+            SetupAppRow("app.whatsapp", "WhatsApp", AppBlockTier.PEEK_2M),
+            SetupAppRow("app.youtube", "YouTube", AppBlockTier.OPEN),
+            SetupAppRow("app.instagram", "Instagram", AppBlockTier.LOCKED),
+            SetupAppRow("app.chrome", "Chrome", AppBlockTier.OPEN),
+            SetupAppRow("app.spotify", "Spotify", AppBlockTier.LOCKED),
+            SetupAppRow("app.notes", "Notes", AppBlockTier.OPEN)
+        )
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Setup(
+                    state = SetupState(
+                        section = SetupSection.APPS,
+                        apps = rows
+                    ),
+                    actions = SetupActions()
+                )
+            }
+        }
+        writeShotSparse("setup-apps-device.png", bitmap)
+    }
+
+    @Test
+    fun setup_guard_deviceSpec() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Setup(
+                    state = SetupState(
+                        section = SetupSection.GUARD,
+                        guard = StrongroomGuard.GuardState(allowanceMinutes = 30)
+                    ),
+                    actions = SetupActions()
+                )
+            }
+        }
+        writeShotSparse("setup-guard-device.png", bitmap)
     }
 
     // ── THE SIGNING PRINT BENCH (DESIGN-MOTION) ────────────────
