@@ -37,7 +37,7 @@ import java.time.ZoneId
  *    Hours held · each reach AND each held call a punched hole at
  *    graded sizes · the seal whole or broken · the crank's snapped
  *    seal kept. A second strike returns the standing plate
- *    untouched ([PlateStrikeGuard]).
+ *    untouched (the store's struck-once guard — see the retirement note below).
  *  - B-14: hours the hold did NOT cover strike NOTHING. A day no
  *    seal stood over produces no plate at all — not an empty
  *    plate, no plate ([plateTruthFor] returns null). Punches
@@ -245,47 +245,22 @@ object LiftingPlate {
         val isRead: Boolean get() = readAtMillis != null
     }
 
-    /** The outcome of asking for a strike. */
-    sealed interface StrikeOutcome {
-        /** The strike landed; this plate now stands. */
-        data class Struck(val plate: StruckPlate) : StrikeOutcome
-
-        /** A plate already stands for this day. It is returned
-         *  untouched — the new truth was NOT struck over it, and
-         *  whatever it carries belongs in a confession, not a
-         *  re-strike. */
-        data class AlreadyStruck(val plate: StruckPlate) : StrikeOutcome
-    }
-
-    /**
-     * THE STRUCK-ONCE GUARD (B-14) — RETIREMENT CONDITION NAMED.
-     * BUILD-SR-3 has since landed the guard INSIDE
-     * `StrongroomStore.strikePlate` (their e357ae49, test-proven:
-     * struck states return as struck, never recomputed, nothing
-     * written), and per METHODS-SR-3's plate-guard rule the law
-     * lives in ONE home — the store. This object therefore
-     * RETIRES at composition, in the same act that wires the
-     * surfaces to the store: it exists in this PR only because
-     * the store is not yet on main and this lane's struck-once
-     * law must stand enforced standalone until then. Its one
-     * caller pattern — an AlreadyStruck routes late standings to
-     * a confession — survives retirement as caller behaviour on
-     * the store's standing-plate return; no law case lives here
-     * that the store's guard does not carry (agreed with
-     * BUILD-SR-3 by letter, this act).
-     */
-    object PlateStrikeGuard {
-        fun strike(
-            existing: StruckPlate?,
-            truth: PlateTruth,
-            struckAtElapsedMillis: Long
-        ): StrikeOutcome {
-            if (existing != null && existing.truth.filingDateIso == truth.filingDateIso) {
-                return StrikeOutcome.AlreadyStruck(existing)
-            }
-            return StrikeOutcome.Struck(StruckPlate(truth, struckAtElapsedMillis))
-        }
-    }
+    // ------------------------------------------------------------------
+    // THE STRUCK-ONCE GUARD — RETIRED AT COMPOSITION (BUILD-SR-13)
+    // ------------------------------------------------------------------
+    // This file carried a standalone PlateStrikeGuard + StrikeOutcome
+    // pair, filed with its retirement condition named in its own
+    // header: the struck-once law (B-14) lives in ONE home, the
+    // store — StrongroomStore.strikePlate / strikePlateWithStanding
+    // (P1, PR #841), whose StrikeOutcome.FreshlyStruck /
+    // AlreadyStanding is the surviving form, test-carried by
+    // StrongroomMigrationP1Test (first strike stands; a second
+    // strike returns the plate as struck and writes nothing).
+    // The guard object and its outcome type are deleted here at
+    // composition, as agreed between BUILD-SR-4 and BUILD-SR-3 by
+    // letter; StruckPlate itself stands (the plate is P6's type —
+    // only the duplicate guard retired). Named in the composition
+    // record (work/build-sr-13/composition-record.md).
 
     // ------------------------------------------------------------------
     // The handing back — first at the lift (B-13)

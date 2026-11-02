@@ -65,13 +65,13 @@ class MonolithTileService : TileService() {
         val mirror = SessionMirror.read(this)
         if (mirror.active) {
             tile.state = Tile.STATE_ACTIVE
-            tile.label = "Monolith"
+            tile.label = "Ulysses"
             tile.subtitle = SessionMirrorFormat.remainingLabel(
                 mirror.endWallMs, System.currentTimeMillis()
             ) ?: "Session live"
         } else {
             tile.state = Tile.STATE_INACTIVE
-            tile.label = "Monolith"
+            tile.label = "Ulysses"
             tile.subtitle = "Tap to open"
         }
         tile.updateTile()

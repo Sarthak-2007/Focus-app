@@ -32,7 +32,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.ui.theme.FaceDoorWordStyle
-import com.example.ui.theme.FaceLightState
+import com.example.ui.theme.RelightState
 import com.example.ui.theme.FaceSentenceStyle
 import com.example.ui.theme.StrongroomGold
 import com.example.ui.theme.StrongroomGround
@@ -47,7 +47,7 @@ import com.example.ui.theme.reliefShade
  * kept ground & finish (deep-violet enamelled steel, gold leaf +
  * pinstripe — sitting walk record 2, L1/L2 KEPT), the four
  * printings at the Stage 5 §3 hierarchy, relief light per the
- * KEPT mechanism ([FaceLightState] — derived from the surface's
+ * KEPT mechanism ([RelightState] — derived from the surface's
  * own luminance, per state; the sealed home state carries it at
  * working strength, Audit A G-5).
  *
@@ -75,7 +75,7 @@ import com.example.ui.theme.reliefShade
 @Composable
 fun SealedFaceScreen(
     state: SealedFaceState,
-    lightState: FaceLightState = FaceLightState.SEALED,
+    lightState: RelightState = RelightState.SEALED,
     onKnockReach: () -> Unit,
     onAntechamberRequest: () -> Unit,
     modifier: Modifier = Modifier
@@ -204,7 +204,7 @@ fun SealedFaceScreen(
  *  a best-judgement software value (Audit A G-4, UNPROVEN) —
  *  struck at the test-condition fineness and judged at Slice 4. */
 @Composable
-private fun PinstripeField(lightState: FaceLightState) {
+private fun PinstripeField(lightState: RelightState) {
     val gold = StrongroomGold
     val goldHigh = gold.reliefHighlight(lightState)
     Canvas(Modifier.fillMaxSize()) {
@@ -238,7 +238,7 @@ private fun PinstripeField(lightState: FaceLightState) {
 @Composable
 private fun RingCanvas(
     hour: String,
-    lightState: FaceLightState,
+    lightState: RelightState,
     modifier: Modifier = Modifier
 ) {
     val gold = StrongroomGold
@@ -382,7 +382,7 @@ private fun glyphPath(
  *  inner edge catching the relief light. Empty, by law (G-2). */
 @Composable
 private fun HeldMarkKeptPlace(
-    lightState: FaceLightState,
+    lightState: RelightState,
     modifier: Modifier = Modifier
 ) {
     val deep = StrongroomGround.reliefShade(lightState)

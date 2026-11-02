@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.sp
  * #F04FCB · #493EA4 · #E2BC39 · #C84481 · #E47E35 · #377ED0 ·
  * #34323B — never green. Every other tone a Strongroom surface
  * shows is one of these inks moved along its own luminance by
- * the RELIGHT rule ([ReliefLight]) — a derivation, never a new
+ * the RELIGHT rule ([Relight], P0's canonical mechanism) — a derivation, never a new
  * hex.
  */
 
@@ -65,24 +65,26 @@ val StrongroomLineWork = InkLine
 val StrongroomLamp = InkEmber
 
 // ---------------------------------------------------------------------
-// RELIGHT BRIDGE — a Compose Color through the pure rule
+// RELIGHT BRIDGE — a Compose Color through P0's canonical rule
 // ---------------------------------------------------------------------
+//
+// COMPOSITION CURE (BUILD-SR-13, Ruling R2-6): the faces lane's
+// divergent tuning table (ReliefLight.kt — FaceLightState strengths
+// with SEALED strongest) is DELETED at composition; P0's Relight.kt
+// is the one surviving mechanism and this bridge now derives
+// through it. The raised edge is the mark at its full light-facing
+// lip (gradient +1); the cut edge is the mark at its full shadow
+// side (gradient -1); the field a mark is cut into is itself for
+// these surface tones. The deletion and this re-point are named in
+// the composition record (work/build-sr-13/composition-record.md).
 
-private fun Color.toSrgb(): Srgb = Srgb(red, green, blue)
+/** This colour's raised edge under [state] (P0 RELIGHT law). */
+fun Color.reliefHighlight(state: RelightState): Color =
+    Relight.relief(this, this, 1f, state)
 
-private fun Srgb.toColor(): Color = Color(
-    red = r.coerceIn(0f, 1f),
-    green = g.coerceIn(0f, 1f),
-    blue = b.coerceIn(0f, 1f)
-)
-
-/** This colour's raised edge under [state] (RELIGHT rule). */
-fun Color.reliefHighlight(state: FaceLightState): Color =
-    ReliefLight.highlight(toSrgb(), state).toColor()
-
-/** This colour's cut edge under [state] (RELIGHT rule). */
-fun Color.reliefShade(state: FaceLightState): Color =
-    ReliefLight.shade(toSrgb(), state).toColor()
+/** This colour's cut edge under [state] (P0 RELIGHT law). */
+fun Color.reliefShade(state: RelightState): Color =
+    Relight.relief(this, this, -1f, state)
 
 // ---------------------------------------------------------------------
 // THE FACE'S TYPE — Stage 5 §1.2 printed steps, carried to screen

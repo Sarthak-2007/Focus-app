@@ -161,16 +161,21 @@ object MonolithMotion {
      *  in the felt/sound design, and its weight against the first. */
     data class Clunk(val atMs: Int, val durationMs: Int, val weight: Float)
 
-    /** THE SEALING — three descending clunks (Audit A §2.1: bolts drive
-     *  home one by one, three descending clunks, felt). Descending in
-     *  weight, widening in interval, lengthening in body: the first
-     *  bolt is the loudest fact; the third is the door finishing its
-     *  sentence. Sound/haptic tuning is Slice 6/7's; the sequence's
-     *  shape is foundation law. */
+    /** THE SEALING — three clunks (Audit A §2.1: bolts drive home
+     *  one by one, felt). R7-4 (composition cure, BUILD-SR-13):
+     *  the clunks DESCEND IN PITCH and ASCEND IN WEIGHT — widening
+     *  in interval, lengthening in body, the LAST bolt the
+     *  heaviest fact: the door finishing its sentence is the
+     *  loudest thing it says. This table originally descended in
+     *  weight (1.0 -> 0.64); that direction was the outlier
+     *  against SOUND-SR-1 / FEEL-SR-1 / CRITIC-SR-1 W-0d and is
+     *  cured here — survivor named in the composition record:
+     *  ascending weights 0.64 / 0.82 / 1.0. Sound/haptic tuning
+     *  is Slice 6/7's; the sequence's shape is foundation law. */
     val SealClunks: List<Clunk> = listOf(
-        Clunk(atMs = 0, durationMs = 120, weight = 1.0f),
+        Clunk(atMs = 0, durationMs = 120, weight = 0.64f),
         Clunk(atMs = 190, durationMs = 150, weight = 0.82f),
-        Clunk(atMs = 420, durationMs = 190, weight = 0.64f)
+        Clunk(atMs = 420, durationMs = 190, weight = 1.0f)
     )
 
     /** The lifting's mirror: bolts withdraw one by one (Audit A §2.5)

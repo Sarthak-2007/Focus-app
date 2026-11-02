@@ -49,15 +49,15 @@ class MonolithDeviceAdminReceiver : DeviceAdminReceiver() {
  */
 internal fun deviceAdminDisableMessage(sessionActive: Boolean): String {
     return if (sessionActive) {
-        "A Monolith focus session is active right now. Warning only: " +
+        "A Ulysses focus session is active right now. Warning only: " +
             "Android still allows you to deactivate this device admin, " +
             "and device admin does not prevent deactivation or uninstall " +
             "— it only adds friction and this warning. If you continue, " +
-            "you can deactivate and then uninstall Monolith even during " +
+            "you can deactivate and then uninstall Ulysses even during " +
             "the session. Ending the focus block cleanly first is your " +
             "choice, not a lock this admin can enforce."
     } else {
-        "No active Monolith focus session is running right now. " +
+        "No active Ulysses focus session is running right now. " +
             "Warning only: Android still allows you to deactivate this " +
             "device admin, and device admin does not prevent " +
             "deactivation or uninstall — it only adds friction and " +

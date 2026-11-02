@@ -32,7 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
-import com.example.ui.theme.FaceLightState
+import com.example.ui.theme.RelightState
 import com.example.ui.theme.InkGold
 import com.example.ui.theme.InkLine
 import com.example.ui.theme.SigningBodyStyle
@@ -100,9 +100,9 @@ fun AntechamberScreen(
     var room by remember(initialState) { mutableStateOf(initialState) }
     var inPile by remember { mutableStateOf(false) }
 
-    val ink = InkGold.reliefHighlight(FaceLightState.SIGNING)
+    val ink = InkGold.reliefHighlight(RelightState.SIGNING)
     val quietInk = InkGold.copy(alpha = 0.75f)
-    val lampShade = StrongroomLamp.reliefShade(FaceLightState.SIGNING)
+    val lampShade = StrongroomLamp.reliefShade(RelightState.SIGNING)
 
     Column(
         modifier = modifier

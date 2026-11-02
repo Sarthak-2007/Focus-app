@@ -148,8 +148,7 @@ class LiftingPlateP6Test {
         // never. From PLATE, leaving unread closes the day exactly
         // as reading does — and the plate that enters the pile is
         // the same unread object (no mark, no debt).
-        val plate = (LiftingPlate.PlateStrikeGuard.strike(null, wholeTruth(), 100L)
-            as LiftingPlate.StrikeOutcome.Struck).plate
+        val plate = LiftingPlate.StruckPlate(wholeTruth(), 100L)
         var s = LiftingPlate.CeremonyState.begin(LiftingPlate.HandingBack(emptyList()))
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.LIFT_FIRED)
         repeat(LiftingPlate.LiftingScore.BOLT_COUNT) {
@@ -180,10 +179,8 @@ class LiftingPlateP6Test {
             punches = emptyList(), sealTruth = LiftingPlate.SealTruth.WHOLE, crankSealBroken = true
         )!!
         val whole = wholeTruth("2026-11-02")
-        val pSnapped = (LiftingPlate.PlateStrikeGuard.strike(null, snapped, 1L)
-            as LiftingPlate.StrikeOutcome.Struck).plate
-        val pWhole = (LiftingPlate.PlateStrikeGuard.strike(null, whole, 2L)
-            as LiftingPlate.StrikeOutcome.Struck).plate
+        val pSnapped = LiftingPlate.StruckPlate(snapped, 1L)
+        val pWhole = LiftingPlate.StruckPlate(whole, 2L)
         val pile = LiftingPlate.PlatePile(listOf(pWhole, pSnapped))
         assertEquals(listOf("2026-10-30"), pile.snappedSealDays())
     }
@@ -224,17 +221,13 @@ class LiftingPlateP6Test {
 
     // -- Struck once, never re-struck ------------------------------
 
-    @Test
-    fun strikeGuard_secondStrikeReturnsTheStandingPlateUntouched() {
-        val first = LiftingPlate.PlateStrikeGuard.strike(null, wholeTruth(), struckAtElapsedMillis = 100L)
-        val plate = (first as LiftingPlate.StrikeOutcome.Struck).plate
-
-        val differentTruth = wholeTruth().copy(hoursHeldMillis = 1L)
-        val second = LiftingPlate.PlateStrikeGuard.strike(plate, differentTruth, struckAtElapsedMillis = 200L)
-        assertTrue(second is LiftingPlate.StrikeOutcome.AlreadyStruck)
-        assertSame(plate, (second as LiftingPlate.StrikeOutcome.AlreadyStruck).plate)
-        assertEquals(8L * 3_600_000L, plate.truth.hoursHeldMillis)
-    }
+    // RETIRED AT COMPOSITION (BUILD-SR-13): the dedicated
+    // strikeGuard_secondStrikeReturnsTheStandingPlateUntouched test
+    // asserted the standalone PlateStrikeGuard, retired above into
+    // the store. The struck-once law it carried is test-carried
+    // against its surviving home by StrongroomMigrationP1Test
+    // (P1): a second store.strikePlate returns the plate as struck
+    // and writes nothing. Named in the composition record.
 
     // -- B-14: uncovered hours strike nothing ----------------------
 
@@ -295,8 +288,7 @@ class LiftingPlateP6Test {
 
     @Test
     fun confession_appendsBesideThePlate_neverBackdated_neverTouchingTheStrike() {
-        val plate = (LiftingPlate.PlateStrikeGuard.strike(null, wholeTruth(), 100L)
-            as LiftingPlate.StrikeOutcome.Struck).plate
+        val plate = LiftingPlate.StruckPlate(wholeTruth(), 100L)
         try {
             LiftingPlate.PlateConfession("late standing", aboutMomentMillis = 500L, confessedAtMillis = 400L)
             fail("a backdated confession must be refused")
@@ -320,10 +312,8 @@ class LiftingPlateP6Test {
 
     @Test
     fun pile_livesOnlyInTheRoomTray_newestOnTop_refusesDuplicates() {
-        val p1 = (LiftingPlate.PlateStrikeGuard.strike(null, wholeTruth("2026-11-01"), 1L)
-            as LiftingPlate.StrikeOutcome.Struck).plate
-        val p2 = (LiftingPlate.PlateStrikeGuard.strike(null, wholeTruth("2026-11-02"), 2L)
-            as LiftingPlate.StrikeOutcome.Struck).plate
+        val p1 = LiftingPlate.StruckPlate(wholeTruth("2026-11-01"), 1L)
+        val p2 = LiftingPlate.StruckPlate(wholeTruth("2026-11-02"), 2L)
         val pile = LiftingPlate.PlatePile(listOf(p1)).stacked(p2)
         assertEquals(LiftingPlate.PilePlace.ROOM_TRAY, pile.place)
         assertEquals(1, LiftingPlate.PilePlace.values().size)

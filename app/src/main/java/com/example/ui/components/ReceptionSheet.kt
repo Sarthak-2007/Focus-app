@@ -164,10 +164,10 @@ fun receptionDoorJob(item: WatchItemId): String = when (item) {
         "THE INTERCEPTOR. Shuts the apps you named, the moment they open. " +
             "MONOLITH HOLDS NO NETWORK PERMISSION."
     WatchItemId.USAGE_ACCESS ->
-        "THE WITNESS. Tells Monolith which app is in front, so the seal can be proved."
+        "THE WITNESS. Tells Ulysses which app is in front, so the seal can be proved."
     WatchItemId.DEVICE_ADMIN ->
         // S-6 job cure + §5 stranger line (Door 3 way-back).
-        "THE ANCHOR. While this stands, Android refuses to uninstall Monolith. " +
+        "THE ANCHOR. While this stands, Android refuses to uninstall Ulysses. " +
             "TO TAKE IT BACK: SWITCH MONOLITH OFF IN THAT SAME LIST — " +
             "THEN IT UNINSTALLS LIKE ANY APP."
     WatchItemId.NOTIFICATION_LISTENER ->
@@ -187,7 +187,7 @@ fun receptionDoorJob(item: WatchItemId): String = when (item) {
         // #70-F2 remainder (owned by #14): the board's own
         // rationale, same treatment — the shield's wakefulness
         // is the whole job, and the limit is printed with it.
-        "THE NIGHT WATCH. Keeps Android from putting Monolith " +
+        "THE NIGHT WATCH. Keeps Android from putting Ulysses " +
             "to sleep mid-session — the shield stays awake " +
             "through the day's work. Nothing else changes."
     else -> ""

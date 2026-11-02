@@ -671,7 +671,7 @@ fun ParkDrawer(
                     Text(
                         text = "Every line names a guard and whether it is SET or MISSING. " +
                             "FIX takes you to the first one that is missing. " +
-                            "Monolith asks for six system grants, one at a time, " +
+                            "Ulysses asks for six system grants, one at a time, " +
                             "plus one Android prompt of its own — permission to post " +
                             "notifications, whose answer is printed as a note on this " +
                             "board and is not one of the six; " +

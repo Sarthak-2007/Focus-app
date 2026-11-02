@@ -239,7 +239,7 @@ object WatchStore {
         WatchItemId.ACCESSIBILITY ->
             "ACCESSIBILITY — brings you back when a blocked app opens. It never reads what is on your screen."
         WatchItemId.USAGE_ACCESS ->
-            "USAGE ACCESS — tells Monolith which app is in front, so the seal knows what to hold. It never leaves this phone."
+            "USAGE ACCESS — tells Ulysses which app is in front, so the seal knows what to hold. It never leaves this phone."
         WatchItemId.DEVICE_ADMIN ->
             "DEVICE ADMIN — adds friction if the seal is switched off mid-session. It cannot stop you uninstalling, ever."
         WatchItemId.NOTIFICATION_LISTENER ->

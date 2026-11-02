@@ -465,11 +465,11 @@ class MonolithShieldService : Service() {
         // Boolean replaces main's Int return because #78's
         // dispatch has four call paths, not one.)
         // Issue #155 (F2): the guarded call below carries the
-        // honest arming text ("Monolith" / "Arming shield\u2026"),
+        // honest arming text ("Ulysses" / "Arming shield\u2026"),
         // not a claim of a lock that has not happened yet.
         // Issue #122: remember that BASE form so a battery
         // broadcast can re-post it with a fresh warning segment.
-        lastBaseTitle = "Monolith"
+        lastBaseTitle = "Ulysses"
         lastBaseSubtitle = "Arming shield\u2026"
         try {
             ServiceCompat.startForeground(
@@ -1065,7 +1065,7 @@ class MonolithShieldService : Service() {
                     blindEpisodeActive = true
                     postSummons(
                         "SHIELD BLIND",
-                        "Usage Access is off — Monolith cannot see the foreground. " +
+                        "Usage Access is off — Ulysses cannot see the foreground. " +
                             "This stretch is booked as a shield gap, not as protection."
                     )
                 }
@@ -1135,9 +1135,9 @@ class MonolithShieldService : Service() {
                 // session — the title drops the segment instead of
                 // carrying a dangling separator.
                 val standingTitle = if (updated.intention.isBlank()) {
-                    "Monolith"
+                    "Ulysses"
                 } else {
-                    "Monolith • ${updated.intention}"
+                    "Ulysses • ${updated.intention}"
                 }
                 // Merge composition with #337 (from main): the
                 // repair actions are probed at build time inside
@@ -1159,10 +1159,10 @@ class MonolithShieldService : Service() {
                     // the standing card (its key differs from the
                     // arming key the guard last recorded).
                     if (notificationGuard.shouldPost(
-                            shieldNotificationKey("Monolith", "Arming shield\u2026", null, null, repairKey)
+                            shieldNotificationKey("Ulysses", "Arming shield\u2026", null, null, repairKey)
                         )
                     ) {
-                        updateNotification("Monolith", "Arming shield\u2026")
+                        updateNotification("Ulysses", "Arming shield\u2026")
                     }
                 } else if (notificationGuard.shouldPost(
                         shieldNotificationKey(standingTitle, standingSubtitle, bigText, badgeNumber, repairKey)
@@ -1304,7 +1304,7 @@ class MonolithShieldService : Service() {
                     // it with the honest arming card and refresh
                     // the widget on the falling edge.
                     runCatching {
-                        updateNotification("Monolith", "Arming shield\u2026")
+                        updateNotification("Ulysses", "Arming shield\u2026")
                         MonolithWidgetProvider.requestUpdate(applicationContext)
                     }
                     // One cadence before the next attempt. If the
@@ -1591,7 +1591,7 @@ class MonolithShieldService : Service() {
         )
         val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_shield)
-            .setContentTitle("Monolith")
+            .setContentTitle("Ulysses")
             .setContentText(publicText)
             .setOngoing(ongoing)
             .apply {
@@ -1606,8 +1606,23 @@ class MonolithShieldService : Service() {
             .setOngoing(ongoing)
             .setAutoCancel(autoCancel)
             .setOnlyAlertOnce(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(publicVersion)
+            // COMPOSITION RETIREMENT (BUILD-SR-13, ledger E-4): the
+            // legacy standing card is retired as a LOCK-SCREEN
+            // presence. The ongoing foreground card — the platform
+            // witness the service must carry to stay foreground —
+            // is now VISIBILITY_SECRET with no public version: it
+            // never shows on the lock screen. The session's only
+            // lock-screen presence in the composed build is P8's
+            // one notification (service/SessionNotification.kt,
+            // "Locked until the hour"). Non-ongoing cards (the
+            // completion card) keep their PRIVATE + public form.
+            // Named in the composition record
+            // (work/build-sr-13/composition-record.md).
+            .setVisibility(
+                if (ongoing) NotificationCompat.VISIBILITY_SECRET
+                else NotificationCompat.VISIBILITY_PRIVATE
+            )
+            .apply { if (!ongoing) setPublicVersion(publicVersion) }
             .setContentIntent(pendingIntent)
         if (timeoutAfterMs > 0) {
             builder.setTimeoutAfter(timeoutAfterMs)
@@ -1659,7 +1674,7 @@ class MonolithShieldService : Service() {
                     missing.joinToString(", ") {
                         when (it) {
                             RepairAction.ACCESSIBILITY -> "Accessibility (blocking is OFF)"
-                            RepairAction.USAGE_ACCESS -> "Usage access (off — Monolith may miss app launches)"
+                            RepairAction.USAGE_ACCESS -> "Usage access (off — Ulysses may miss app launches)"
                         }
                     }
                 )
@@ -1672,7 +1687,7 @@ class MonolithShieldService : Service() {
         }
         // Issue #274: the standing notification was a dead label -
         // no actions at all. One explicit action: open Monolith.
-        builder.addAction(0, "Open Monolith", pendingIntent)
+        builder.addAction(0, "Open Ulysses", pendingIntent)
         // Issue #274: a live countdown must be a system chronometer,
         // not hand-rendered static text re-posted every second. When
         // the caller passed no explicit end (#155 seam above) and no
@@ -1958,10 +1973,10 @@ class MonolithShieldService : Service() {
             inSafeBreak: Boolean
         ): String = when {
             !ongoing -> "Session complete"
-            arming -> "Monolith session in progress"
-            !protecting -> "Monolith session in progress"
-            missingCount > 0 -> "Monolith session in progress"
-            inSafeBreak -> "Monolith \u2014 on a break \u00b7 peek apps open"
+            arming -> "Ulysses session in progress"
+            !protecting -> "Ulysses session in progress"
+            missingCount > 0 -> "Ulysses session in progress"
+            inSafeBreak -> "Ulysses \u2014 on a break \u00b7 peek apps open"
             else -> "Focus session protected"
         }
         /** Issue #155 (F5): present (true) on the shield card's content

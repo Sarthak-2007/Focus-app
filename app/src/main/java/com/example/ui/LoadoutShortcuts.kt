@@ -13,7 +13,7 @@ import com.example.data.FocusProfileEntity
  * Issue #274 (Audit R5 — Platform execution), finding #14's
  * remainder: dynamic per-loadout launcher shortcuts.
  *
- * PR #492 landed the static half (one "open Monolith" shortcut in
+ * PR #492 landed the static half (one "open Ulysses" shortcut in
  * res/xml/shortcuts.xml). The per-configuration half stood open:
  * no shortcut named a loadout. This file is that half — one
  * dynamic shortcut per loadout (profile), republished whenever
@@ -80,7 +80,7 @@ object LoadoutShortcuts {
                     id = SHORTCUT_ID_PREFIX + profile.id,
                     profileId = profile.id,
                     shortLabel = label,
-                    longLabel = "Apply $label in Monolith"
+                    longLabel = "Apply $label in Ulysses"
                 )
             }
             .toList()

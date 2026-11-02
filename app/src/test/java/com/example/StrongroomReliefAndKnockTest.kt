@@ -1,24 +1,29 @@
 package com.example
 
+import androidx.compose.ui.graphics.Color
 import com.example.service.StrongroomKnock
-import com.example.ui.theme.FaceLightState
-import com.example.ui.theme.ReliefLight
-import com.example.ui.theme.Srgb
+import com.example.ui.theme.InkViolet
+import com.example.ui.theme.Relight
+import com.example.ui.theme.RelightState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * THE RELIGHT RULE and THE KNOCK — two contracts in one file,
- * each stated against its filing:
+ * THE RELIGHT RULE and THE KNOCK — two contracts in one file.
  *
- * RELIGHT (ui/theme/ReliefLight.kt; Audit A §4 KEPT mechanism,
- * G-5 tuning): relief is derived from the surface's OWN luminance
- * — for the kept violet ground the highlight's luminance stands
- * above the ground's and the shade's below it, in EVERY state;
- * the four states carry four distinct strengths; the sealed home
- * state visibly carries the relief (strength ≥ 0.8); and the
- * arithmetic never leaves the 0..1 cube, at black or white either.
+ * RELIGHT — RE-AIMED AT COMPOSITION (BUILD-SR-13, Ruling R2-6):
+ * this file originally asserted the faces lane's divergent tuning
+ * table (ReliefLight.kt: FaceLightState strengths, SEALED
+ * strongest at >= 0.8). That table is DELETED at composition —
+ * P0's Relight.kt is the canonical mechanism — and the relief
+ * tests below now assert P0's law instead: the lit side of a mark
+ * never darkens it and the shadow side never lightens it, in every
+ * state; DARK is subtraction-only (its lit side is the mark
+ * itself, unchanged); SEALED's warm lit blend is capped at 1/8 —
+ * the descended, poorest-lit state, the exact opposite of the
+ * deleted table's claim. The re-aim is named in the composition
+ * record (work/build-sr-13/composition-record.md).
  *
  * THE KNOCK (service/StrongroomKnock.kt; Audit A §2.3): one dull
  * heavy thud, felt more than heard — its pitch sits below every
@@ -29,46 +34,48 @@ import org.junit.Test
  */
 class StrongroomReliefAndKnockTest {
 
-    private val violet = Srgb(0x49 / 255f, 0x3E / 255f, 0xA4 / 255f)
+    private val violet: Color = InkViolet
 
     @Test
-    fun relief_bracketsTheGroundsOwnLuminance_inEveryState() {
-        val base = violet.luminance()
-        FaceLightState.values().forEach { state ->
-            val (highlight, shade) = ReliefLight.reliefPair(violet, state)
+    fun relief_litSideNeverDarkens_shadowSideNeverLightens_inEveryState() {
+        val base = Relight.luminance(violet)
+        RelightState.values().forEach { state ->
+            val lit = Relight.relief(violet, violet, 1f, state)
+            val shadow = Relight.relief(violet, violet, -1f, state)
             assertTrue(
-                "$state highlight must rise above the ground",
-                highlight.luminance() > base
+                "$state lit side must not fall below the mark",
+                Relight.luminance(lit) >= base - 0.0001f
             )
             assertTrue(
-                "$state shade must fall below the ground",
-                shade.luminance() < base
+                "$state shadow side must not rise above the mark",
+                Relight.luminance(shadow) <= base + 0.0001f
             )
         }
     }
 
     @Test
-    fun relief_statesAreDistinct_andTheSealedStateCarriesIt() {
-        val strengths = FaceLightState.values().map { it.strength }
-        assertEquals(strengths.size, strengths.toSet().size)
-        assertTrue(
-            "G-5: the sealed home state must visibly carry the relief",
-            FaceLightState.SEALED.strength >= 0.8f
-        )
-        // The dark room's relief is the faintest — present, never performed.
-        assertEquals(
-            FaceLightState.DARK,
-            FaceLightState.values().minByOrNull { it.strength }
-        )
+    fun relief_darkIsSubtractionOnly_andSealedLitCapIsOneEighth() {
+        // DARK: no warm partner, subtraction only — the lit side
+        // is the mark itself, unchanged.
+        assertEquals(violet, Relight.relief(violet, violet, 1f, RelightState.DARK))
+        assertEquals(violet, Relight.relief(violet, violet, 1f, RelightState.DAY))
+        // SEALED is the descended state: its lit cap is 1/8, the
+        // smallest non-zero cap in the table (P0 Relight.kt).
+        val caps = RelightState.values().map { Relight.paramsFor(it).maxLitEighths }
+        assertEquals(1, Relight.paramsFor(RelightState.SEALED).maxLitEighths)
+        assertTrue(caps.all { it == 0 || it >= 1 })
+        assertEquals(8, Relight.paramsFor(RelightState.SIGNING).maxLitEighths)
     }
 
     @Test
     fun relief_neverLeavesTheCube_atTheExtremes() {
-        listOf(Srgb(0f, 0f, 0f), Srgb(1f, 1f, 1f), violet).forEach { base ->
-            FaceLightState.values().forEach { state ->
-                val (h, s) = ReliefLight.reliefPair(base, state)
-                listOf(h, s).forEach { c ->
-                    assertTrue(c.r in 0f..1f && c.g in 0f..1f && c.b in 0f..1f)
+        listOf(Color.Black, Color.White, violet).forEach { base ->
+            RelightState.values().forEach { state ->
+                listOf(
+                    Relight.relief(base, base, 1f, state),
+                    Relight.relief(base, base, -1f, state)
+                ).forEach { c ->
+                    assertTrue(c.red in 0f..1f && c.green in 0f..1f && c.blue in 0f..1f)
                 }
             }
         }

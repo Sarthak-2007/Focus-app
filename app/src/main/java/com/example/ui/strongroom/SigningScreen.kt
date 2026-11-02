@@ -44,7 +44,7 @@ import com.example.ui.theme.SigningQuietStyle
 import com.example.ui.theme.StrongroomGround
 import com.example.ui.theme.reliefHighlight
 import com.example.ui.theme.reliefShade
-import com.example.ui.theme.FaceLightState
+import com.example.ui.theme.RelightState
 import java.util.Locale
 
 /**
@@ -91,10 +91,10 @@ fun SigningScreen(
     // signature's completion. Never state that leaves this hand.
     var dials by remember(draft) { mutableStateOf(listOf(0, 0, 0)) }
 
-    val ink = InkGold.reliefHighlight(FaceLightState.SIGNING)
+    val ink = InkGold.reliefHighlight(RelightState.SIGNING)
     val quietInk = InkGold.copy(alpha = 0.75f)
     val roomDeep = InkLine
-    val roomShade = StrongroomGround.reliefShade(FaceLightState.SIGNING)
+    val roomShade = StrongroomGround.reliefShade(RelightState.SIGNING)
 
     Column(
         modifier = modifier

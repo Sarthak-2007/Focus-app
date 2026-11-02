@@ -141,17 +141,17 @@ object PermissionStepLogic {
  */
 fun permissionExplainer(item: WatchItemId): String = when (item) {
     WatchItemId.USAGE_ACCESS ->
-        "Lets Monolith see which apps you open and for how long, so the shield knows a blocked app when it appears. It reads usage, never content."
+        "Lets Ulysses see which apps you open and for how long, so the shield knows a blocked app when it appears. It reads usage, never content."
     WatchItemId.OVERLAY ->
-        "Lets Monolith draw over other apps — the floating timer pill that rides above a peek or a break and counts it down."
+        "Lets Ulysses draw over other apps — the floating timer pill that rides above a peek or a break and counts it down."
     WatchItemId.NOTIFICATION_LISTENER ->
-        "Lets Monolith hold your notifications while a block runs and hand them back afterwards, instead of letting them pull you out of the block."
+        "Lets Ulysses hold your notifications while a block runs and hand them back afterwards, instead of letting them pull you out of the block."
     WatchItemId.ACCESSIBILITY ->
-        "The shield itself. Monolith's accessibility service is what notices a blocked app opening and steps in front of it. Without this, nothing can be blocked."
+        "The shield itself. Ulysses's accessibility service is what notices a blocked app opening and steps in front of it. Without this, nothing can be blocked."
     WatchItemId.DEVICE_ADMIN ->
-        "Registers Monolith as a device admin. On its own it blocks nothing and does not prevent uninstalling the app — it is one of the grants the guard watch keeps an eye on."
+        "Registers Ulysses as a device admin. On its own it blocks nothing and does not prevent uninstalling the app — it is one of the grants the guard watch keeps an eye on."
     WatchItemId.BATTERY ->
-        "Exempts Monolith from battery optimisation, so Android does not quietly kill the shield in the background mid-block."
+        "Exempts Ulysses from battery optimisation, so Android does not quietly kill the shield in the background mid-block."
     else ->
         "One of the grants the guard watch measures."
 }

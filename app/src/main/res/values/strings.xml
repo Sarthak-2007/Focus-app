@@ -1,29 +1,29 @@
 <resources>
-    <string name="app_name">Monolith</string>
-    <string name="accessibility_service_label">Monolith Distraction Airlock</string>
-    <string name="accessibility_service_description">During an active Monolith focus session only, Monolith reads the content of the foreground window on this device to detect blocked app launches, Shorts and Reels feeds, blocked website addresses in the browser, and tampering in Settings or the installer, and presents the Intention Airlock screen. Everything is processed on this device; nothing is sent anywhere.</string>
-    <string name="device_admin_label">Monolith Device Admin</string>
-    <string name="device_admin_description">Shows a warning when Monolith\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Monolith; it does not prevent either.</string>
-    <string name="device_admin_add_explanation">Turning this on only lets Monolith show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
-    <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts and Reels feeds, and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Monolith to configure what is blocked.</string>
+    <string name="app_name">ULYSSES</string>
+    <string name="accessibility_service_label">Ulysses Distraction Airlock</string>
+    <string name="accessibility_service_description">During an active Ulysses focus session only, Ulysses reads the content of the foreground window on this device to detect blocked app launches, Shorts and Reels feeds, blocked website addresses in the browser, and tampering in Settings or the installer, and presents the Intention Airlock screen. Everything is processed on this device; nothing is sent anywhere.</string>
+    <string name="device_admin_label">Ulysses Device Admin</string>
+    <string name="device_admin_description">Shows a warning when Ulysses\'s device admin is about to be turned off. It only adds friction and a warning — Android still lets you deactivate it and uninstall Ulysses; it does not prevent either.</string>
+    <string name="device_admin_add_explanation">Turning this on only lets Ulysses show a warning if you later go to turn its device admin off. It adds friction and a warning — it does not prevent deactivation or uninstall, and Android still lets you do both.</string>
+    <string name="accessibility_service_summary">Guards a sealed focus session: blocked apps, Shorts and Reels feeds, and blocked sites are intercepted, including in split-screen and picture-in-picture. Open Ulysses to configure what is blocked.</string>
     <string name="widget_description">Seal status at a glance: sealed, open, or the next seal.</string>
-    <string name="notification_channel_name">Monolith Active Shield</string>
+    <string name="notification_channel_name">Ulysses Active Shield</string>
     <string name="notification_channel_desc">Shows the active focus session\'s countdown and shield status.</string>
     <!-- Issue #115: one name per destination — the rail's words.
          tab_reliability (Guard, dissolved into PARK) and
          tab_web_studio (no such destination; sites live on Shield)
          are deleted with the names they carried. -->
     <string name="tab_deck">Deck</string>
-    <string name="shortcut_open_short">Open Monolith</string>
-    <string name="shortcut_open_long">Open Monolith</string>
-    <string name="tile_label">Monolith</string>
+    <string name="shortcut_open_short">Open Ulysses</string>
+    <string name="shortcut_open_long">Open Ulysses</string>
+    <string name="tile_label">ULYSSES</string>
     <string name="tab_tasks">Tasks</string>
     <string name="tab_shield">Shield</string>
     <string name="tab_vault">Ledger</string>
 
 
     <!-- UI strings (issue #64 migration, re-ported: every migrated UI literal reads from here) -->
-    <string name="notification_catcher_label">Monolith Notification Catcher</string>
+    <string name="notification_catcher_label">Ulysses Notification Catcher</string>
     <string name="brand_word">MONOLITH</string>
     <string name="label_held">HELD</string>
     <string name="label_back">BACK</string>
@@ -38,7 +38,7 @@
     <string name="nightstand_desk_clock_hint">NIGHTSTAND DESK CLOCK • TAP ANYWHERE TO EXIT</string>
     <string name="frozen_snapshot_note">Everything here is as of the time above. Nothing here opens. Anything newer waits until the session ends.</string>
     <string name="guard_preflight_title">SYSTEM GUARD PRE-FLIGHT</string>
-    <string name="guard_preflight_body">Grant Accessibility &amp; Usage Access so Monolith can intercept distracting apps, or arm the session immediately.</string>
+    <string name="guard_preflight_body">Grant Accessibility &amp; Usage Access so Ulysses can intercept distracting apps, or arm the session immediately.</string>
     <string name="airlock_interception_badge">AIRLOCK INTERCEPTION • %1$s</string>
     <string name="active_intention">ACTIVE INTENTION: %1$s</string>
     <string name="peek_already_running">A PEEK IS ALREADY RUNNING</string>
@@ -144,7 +144,7 @@
     <string name="reception_nameplate">MONOLITH ML-01</string>
     <string name="reception_title">SETUP + INTRODUCTION</string>
     <string name="reception_what_it_is">WHAT IT IS</string>
-    <string name="reception_identity_line">While a session runs, Monolith shuts the apps you ruled shut and the sites on your list — and backs you out of Shorts and Reels.</string>
+    <string name="reception_identity_line">While a session runs, Ulysses shuts the apps you ruled shut and the sites on your list — and backs you out of Shorts and Reels.</string>
     <string name="reception_boundary_line">YOUR STUDY HOURS LIVE IN YPT. MONOLITH KEEPS NO SCORE AND GRADES NOTHING.</string>
     <string name="reception_four_doors">THE FOUR DOORS</string>
     <string name="reception_rank_line">THE FIRST TWO MAKE BLOCKING REAL. THE THIRD GUARDS THE MACHINE ITSELF. THE FOURTH MAKES IT QUIET.</string>
@@ -174,7 +174,7 @@
     <string name="overlay_valve_spent">VALVE SPENT — THIS WEEK\'S BREAK IS USED</string>
     <string name="shield_break_started_text">Break clock %1$s — PEEK apps are open. Locked apps, Shorts, Reels and blocked sites stay shut.</string>
     <string name="shield_break_final_minute_text">Under a minute left — finish up. Blocking resumes when the break clock hits 00:00.</string>
-    <string name="deck_intro_what">Monolith shuts the apps you name while a study session runs.</string>
+    <string name="deck_intro_what">Ulysses shuts the apps you name while a study session runs.</string>
     <string name="deck_intro_switches">Two switches make it work. Both live in PARK, at the far end of the rail.</string>
     <string name="deck_intro_privacy">Nothing leaves this phone.</string>
     <string name="deck_last_receipt">LAST RECEIPT</string>

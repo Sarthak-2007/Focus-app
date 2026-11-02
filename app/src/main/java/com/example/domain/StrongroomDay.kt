@@ -412,10 +412,15 @@ object StrongroomDay {
     // ------------------------------------------------------------------
 
     /** Punch sizes a finger could learn (Audit A §2.6, design
-     *  figures): reach Ø-large, held Ø-medium, floor Ø-small. */
+     *  figures): reach Ø-large, held Ø-medium, floor Ø-small.
+     *  SHOWING (R7-2, added at composition by BUILD-SR-13) renders
+     *  at the held grade, Ø 2.0 mm. */
     enum class PunchKind(val size: PunchSize) {
         REACH(PunchSize.LARGE),
         HELD(PunchSize.MEDIUM),
+        /** A code-showing handed a price (R7-2): a held-family
+         *  taking, struck at the HELD grade (MEDIUM, Ø 2.0 mm). */
+        SHOWING(PunchSize.MEDIUM),
         FLOOR(PunchSize.SMALL)
     }
 
