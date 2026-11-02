@@ -1,7 +1,10 @@
 package com.example
 
+import android.content.Context
 import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
@@ -12,7 +15,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import com.example.data.MonolithDatabase
+import com.example.data.StrongroomDayBirth
 import com.example.data.StrongroomHeldArrivalEntity
+import com.example.data.StrongroomStore
+import kotlinx.coroutines.runBlocking
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
@@ -925,6 +932,66 @@ class ScreenshotHarnessTest {
             }
         }
         writeShot("doorway-day-standing.png", bitmap)
+    }
+
+    /** THE BORN DAY ON THE TABLE (DAYBIRTH, 2026-11-03): unlike
+     *  every shot above, this standing is NOT fabricated — it is
+     *  produced by the production producer itself
+     *  ([StrongroomDayBirth]) over the P9 production fixtures in
+     *  an in-memory store, exactly as the composed app's entry
+     *  paths run it: an evening open births tomorrow COMPOSED
+     *  from his loadout, and the table stands alive on it. This
+     *  is the shot of FLOW-SEAT's step-1 cure: the signing table
+     *  a real user can now reach. */
+    @Test
+    fun signing_bornDay_theTableAlive() {
+        val fx = P9ProductionFixtures
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val born = runBlocking {
+            val db = Room.inMemoryDatabaseBuilder(
+                context, MonolithDatabase::class.java
+            ).allowMainThreadQueries().build()
+            try {
+                val dao = db.monolithDao()
+                dao.insertApps(fx.blockedApps)
+                dao.insertSite(fx.blockedSite)
+                dao.insertProfile(fx.profile)
+                dao.insertGuardSettings(fx.guardSettings)
+                fx.sessions().forEach { dao.insertSession(it) }
+                val outcome = StrongroomDayBirth.ensureStandingDays(
+                    StrongroomStore(dao), dao,
+                    fx.NOW_MILLIS + 7 * 3_600_000L, fx.UTC
+                )
+                (outcome as StrongroomDayBirth.Outcome.Standing).tomorrow
+            } finally {
+                db.close()
+            }
+        }
+        val names = fx.blockedApps.associate { it.packageName to it.appName }
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = SigningState(
+                            day = born,
+                            tokens = names.map { (pkg, label) ->
+                                SigningToken(pkg, label)
+                            },
+                            guard = StrongroomGuard.GuardState(
+                                allowanceMinutes = born.record.allowanceMinutes
+                            ),
+                            firstSigning = true
+                        ),
+                        actions = SigningActions(
+                            onAmend = {},
+                            onAllowanceMove = {},
+                            onSignature = {}
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("signing-born-day.png", bitmap)
     }
 
     @Test

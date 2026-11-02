@@ -1103,14 +1103,17 @@ private fun BreakHost(viewModel: MonolithViewModel) {
  * BUILD-SR-36 composition glue — the Signing (census C-02, a HERO)
  * in the doorway place, under the Doorway's furniture.
  *
- * The standing day is read from the Strongroom store exactly as
- * [loadDoorwayState] reads it (the composed main's own pattern):
- * today's filing-day row standing COMPOSED or SIGNED, re-expressed
- * as a [com.example.domain.StrongroomComposition.ComposedDay]. No
- * week standing order exists in the kept engine, so none is
- * invented: a day that does not stand in the store does not stand
- * at the table — the host renders nothing until it stands
- * (stillness, census GAP-R03), and the Doorway above stands AtRest.
+ * The standing day is read from the Strongroom store: TOMORROW's
+ * filing-day row standing COMPOSED or SIGNED (the signing is the
+ * evening's act for tomorrow's day), re-expressed as a
+ * [com.example.domain.StrongroomComposition.ComposedDay], with
+ * today's row as the fallback when tomorrow's cannot stand. The
+ * day stands because the birth composed it
+ * ([com.example.data.StrongroomDayBirth]: the standing order is
+ * his loadout's carry, composed through the store's own path at
+ * every entry load) — a day that cannot be born (no lifting hour
+ * in his data) does not stand at the table, and the host renders
+ * nothing until one stands (stillness, census GAP-R03).
  *
  * Amendments amend the standing composition in memory AND persist
  * through the store's own verb for a fully-formed record
@@ -1154,13 +1157,31 @@ private fun SigningHost(viewModel: MonolithViewModel) {
 
     LaunchedEffect(Unit) {
         val facts = withContext(Dispatchers.IO) {
-            val store = StrongroomStore(AppContainer.dao(appContext))
+            val dao = AppContainer.dao(appContext)
+            val store = StrongroomStore(dao)
+            // THE DAY'S BIRTH (DAYBIRTH): the signing table stands
+            // on a born day — the host ensures the standing days
+            // before it reads, exactly as the doorway and the
+            // seal's facts do. THE TABLE'S DAY: the signing is the
+            // evening's act for TOMORROW's filing day (the page
+            // tonight's settling seals at tomorrow's first
+            // sitting), so tomorrow's standing row is the table's
+            // day; today's row serves only when tomorrow's cannot
+            // stand (e.g. the morning's own signing before the
+            // swing, when the birth has not carried a tomorrow).
+            com.example.data.StrongroomDayBirth.ensureStandingDays(
+                store, dao, System.currentTimeMillis()
+            )
             val todayIso = com.example.domain.StrongroomDay.filingDateIso(
                 System.currentTimeMillis()
             )
-            val row = store.day(todayIso)?.takeIf {
-                it.state == StrongroomDayEntity.STATE_COMPOSED ||
-                    it.state == StrongroomDayEntity.STATE_SIGNED
+            val tomorrowIso = java.time.LocalDate.parse(todayIso)
+                .plusDays(1).toString()
+            val row = listOf(tomorrowIso, todayIso).firstNotNullOfOrNull { iso ->
+                store.day(iso)?.takeIf {
+                    it.state == StrongroomDayEntity.STATE_COMPOSED ||
+                        it.state == StrongroomDayEntity.STATE_SIGNED
+                }
             }
             Triple(
                 row?.let {
@@ -1305,9 +1326,12 @@ private fun SigningHost(viewModel: MonolithViewModel) {
  *    record from the row, the signing-amendment fact from the
  *    row), then mapped by the Doorway's own
  *    [com.example.ui.doorway.DoorwayComposition.fromComposedDay]
- *    inside [DoorwayState.fromFacts]. No week standing order
- *    exists in the kept engine, so none is invented here: a day
- *    that does not stand in the store does not stand at the door.
+ *    inside [DoorwayState.fromFacts]. The standing order the
+ *    birth composes from is his own loadout's carry
+ *    ([com.example.data.StrongroomDayBirth] — the LegacyCarry
+ *    route); when his data holds no lifting hour, no day is born
+ *    and a day that does not stand in the store does not stand
+ *    at the door.
  *  - **The held-waiting fact**: any arrival still WAITING in
  *    today's held pile.
  *  - **Yesterday's plate**: the plate of the filing day before
@@ -1321,7 +1345,16 @@ private fun SigningHost(viewModel: MonolithViewModel) {
  */
 private suspend fun loadDoorwayState(context: Context): DoorwayState =
     withContext(Dispatchers.IO) {
-        val store = StrongroomStore(AppContainer.dao(context.applicationContext))
+        val dao = AppContainer.dao(context.applicationContext)
+        val store = StrongroomStore(dao)
+        // THE DAY'S BIRTH (DAYBIRTH): the doorway's read ensures
+        // the standing days first — today + tomorrow composed
+        // through the store's own compose path from his loadout,
+        // so a day stands at the door whether or not he came to
+        // it (B-2). Idempotent: standing days are not recomposed.
+        com.example.data.StrongroomDayBirth.ensureStandingDays(
+            store, dao, System.currentTimeMillis()
+        )
         val todayIso = StrongroomDay.filingDateIso(System.currentTimeMillis())
         val yesterdayIso = java.time.LocalDate.parse(todayIso).minusDays(1).toString()
 
@@ -1461,7 +1494,15 @@ private suspend fun loadDrawerState(context: Context): DrawerState =
 private suspend fun loadSealFacts(context: Context): Pair<SealedFaceState?, Boolean> =
     withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
-        val store = StrongroomStore(AppContainer.dao(appContext))
+        val dao = AppContainer.dao(appContext)
+        val store = StrongroomStore(dao)
+        // THE DAY'S BIRTH (DAYBIRTH): today's day must stand
+        // before the swing can be read as standing — the seal's
+        // facts load ensures the birth first, as the doorway's
+        // does. Idempotent; a sealed/struck day is never recomposed.
+        com.example.data.StrongroomDayBirth.ensureStandingDays(
+            store, dao, System.currentTimeMillis()
+        )
         val sealedRow = store.sealedDay()
         val face = sealedRow?.let { row ->
             SealedFaceState.standing(
