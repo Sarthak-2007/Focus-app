@@ -24,7 +24,20 @@ class SessionNotificationP8Test {
     @Test
     fun wording_isTheRuledLine_exactly() {
         assertEquals("Locked until the hour", SessionNotificationSpec.WORDING)
-        assertEquals("Monolith", SessionNotificationSpec.TITLE)
+    }
+
+    @Test
+    fun oneTextFieldOnly_noContentTitle() {
+        // TYPE-SR-4 Spec 1 §4: the line stands in the content text;
+        // the content title is never set — never both, never doubled.
+        assertFalse(SessionNotificationSpec.HAS_CONTENT_TITLE)
+    }
+
+    @Test
+    fun aDismissedLine_isNotRepostedForTheSession() {
+        // Spec 1 §5.6: a dismissal is honoured until the lifting.
+        assertTrue(SessionNotificationSpec.shouldPost(dismissedThisSession = false))
+        assertFalse(SessionNotificationSpec.shouldPost(dismissedThisSession = true))
     }
 
     @Test

@@ -55,6 +55,42 @@ object ClockInks {
 }
 
 /**
+ * THE FORMING PLATE'S GEOMETRY — DESIGNER-SR-6's §6 drawing
+ * contract, as constants in this one seam file so that P6's plate
+ * renderer consumes THE SAME field anatomy and punch geometry at
+ * composition (flagged by DESIGNER-SR-6 to the coordinator): the
+ * re-point there is a rename of this object, never a re-derivation.
+ * All values are ratios of the plate's drawn width W (height =
+ * 0.6 W) or reference units at W = 328 — design figures, stamped
+ * UNPROVEN (Audit A G-4), never physical claims.
+ */
+object FormingPlateGeometry {
+    const val REFERENCE_WIDTH: Float = 328f
+    const val HEIGHT_FRACTION: Float = 0.6f
+    const val HOURS_MARGIN_FRACTION: Float = 0.134f
+    const val FIELD_FRACTION: Float = 0.707f
+    const val SEAL_MARGIN_FRACTION: Float = 0.159f
+    const val FIELD_INSET_FRACTION: Float = 0.082f
+    const val PINSTRIPE_INSET_FRACTION: Float = 0.012f
+
+    /** Strike-grain rows per column (spec §3: 8 ticks to a column). */
+    const val TICKS_PER_COLUMN: Int = 8
+
+    /** Punch diameters at the reference width (spec §5, E-9). */
+    const val REACH_DIAMETER: Float = 11f
+    const val HELD_DIAMETER: Float = 7.5f
+    const val SHOWING_DIAMETER: Float = 4.5f
+
+    /** Lane centres, as fractions of the field's height. */
+    const val LANE_UPPER_FRACTION: Float = 1f / 6f
+    const val LANE_MIDDLE_FRACTION: Float = 3f / 6f
+    const val LANE_LOWER_FRACTION: Float = 5f / 6f
+
+    /** The seal place's ring radius at the reference width. */
+    const val SEAL_RING_RADIUS: Float = 20f
+}
+
+/**
  * FRM-1 — the forming record's step (Stage 5 §1.3): Atkinson
  * Hyperlegible 400 at the record's body step (SCR-2 class — a size
  * equivalence only, per Amendment A-6.7; no screen law reaches the

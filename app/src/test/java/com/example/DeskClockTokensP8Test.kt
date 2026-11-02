@@ -7,6 +7,7 @@ import com.example.ui.strongroom.ClockInks
 import com.example.ui.strongroom.ClockRelight
 import com.example.ui.strongroom.ClockRelightState
 import com.example.ui.strongroom.ClockFrm1
+import com.example.ui.strongroom.FormingPlateGeometry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -43,6 +44,25 @@ class DeskClockTokensP8Test {
                 ink.green > ink.red && ink.green > ink.blue
             )
         }
+    }
+
+    @Test
+    fun formingPlateGeometry_isTheSpec6Contract() {
+        // The anatomy sums to the plate's whole width.
+        assertEquals(
+            1.0f,
+            FormingPlateGeometry.HOURS_MARGIN_FRACTION +
+                FormingPlateGeometry.FIELD_FRACTION +
+                FormingPlateGeometry.SEAL_MARGIN_FRACTION,
+            0.001f
+        )
+        assertEquals(328f, FormingPlateGeometry.REFERENCE_WIDTH, 0.001f)
+        assertEquals(0.6f, FormingPlateGeometry.HEIGHT_FRACTION, 0.001f)
+        // The graded diameters, in the plate's finger-learnable scale.
+        assertEquals(11f, FormingPlateGeometry.REACH_DIAMETER, 0.001f)
+        assertEquals(7.5f, FormingPlateGeometry.HELD_DIAMETER, 0.001f)
+        assertEquals(4.5f, FormingPlateGeometry.SHOWING_DIAMETER, 0.001f)
+        assertEquals(8, FormingPlateGeometry.TICKS_PER_COLUMN)
     }
 
     @Test

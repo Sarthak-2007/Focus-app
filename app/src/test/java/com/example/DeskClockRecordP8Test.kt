@@ -8,38 +8,38 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 /**
- * P8a — THE DESK CLOCK'S FORMING RECORD (domain/DeskClockRecord.kt):
+ * P8a — THE FORMING PLATE'S RECORD (domain/DeskClockRecord.kt;
+ * DESIGNER-SR-6's §6 seam):
  *
- *  - PREFIX: formed extent is the span's elapsed fraction, floored
- *    at nothing and capped at the whole rim; marks and gaps appear
- *    only inside the formed extent, never ahead of it.
+ *  - PREFIX: formed columns are the span's elapsed fraction of the
+ *    field, floored at nothing, capped at the whole field.
  *  - MONOTONIC: later readings never form less.
- *  - NO NUMBERS: the record's types carry no string and no display
- *    figure — extent is the only quantity.
- *  - GRADED MARKS: P1's grades ride the kinds (reach large · held
- *    medium · floor small).
- *  - HANDS: positions for the time of day (C-2) — twelve is up,
- *    the hour hand travels with the minutes.
+ *  - COLUMN-KIND TRUTH: a column is SMOOTH iff its centre falls in
+ *    a gap span, SMOOTH_FIRING iff in the break's firing span.
+ *  - PUNCH-PLACE TRUTH: an inscribed punch's place (x · lane ·
+ *    diameter class) matches its fact exactly; a punch inscribes
+ *    only once its moment has passed.
+ *  - CF-1: the completed record equals the static completed field.
+ *  - NO NUMBERS: the record's types carry no string; the seal
+ *    place is EMPTY by constant.
  */
 class DeskClockRecordP8Test {
 
-    private val span = 12L * 60L * 60L * 1000L // a twelve-hour span, in elapsed millis
+    private val span = 12L * 60L * 60L * 1000L
 
     @Test
-    fun prefix_formsByExtent_andCapsAtTheSpan() {
-        assertEquals(0, DeskClockRecord.record(span, 0L, emptyList(), emptyList()).formedGrains)
-        assertEquals(12, DeskClockRecord.record(span, span / 4, emptyList(), emptyList()).formedGrains)
-        assertEquals(24, DeskClockRecord.record(span, span / 2, emptyList(), emptyList()).formedGrains)
+    fun prefix_formsByExtent_andCapsAtTheField() {
+        assertEquals(0, DeskClockRecord.record(span, 0L, emptyList(), emptyList()).formedColumns)
+        assertEquals(29, DeskClockRecord.record(span, span / 4, emptyList(), emptyList()).formedColumns)
+        assertEquals(58, DeskClockRecord.record(span, span / 2, emptyList(), emptyList()).formedColumns)
         val done = DeskClockRecord.record(span, span, emptyList(), emptyList())
-        assertEquals(DeskClockRecord.GRAINS, done.formedGrains)
-        assertTrue(done.isComplete)
-        // A reading past the lifting stands complete and still.
+        assertEquals(DeskClockRecord.COLUMNS, done.formedColumns)
+        assertTrue(done.completed)
         val past = DeskClockRecord.record(span, span * 2, emptyList(), emptyList())
-        assertEquals(DeskClockRecord.GRAINS, past.formedGrains)
-        assertTrue(past.isComplete)
-        // A reading before the seal floors at nothing formed.
-        assertEquals(0, DeskClockRecord.record(span, -5_000L, emptyList(), emptyList()).formedGrains)
-        assertFalse(DeskClockRecord.record(span, span / 2, emptyList(), emptyList()).isComplete)
+        assertEquals(DeskClockRecord.COLUMNS, past.formedColumns)
+        assertTrue(past.completed)
+        assertEquals(0, DeskClockRecord.record(span, -5_000L, emptyList(), emptyList()).formedColumns)
+        assertFalse(DeskClockRecord.record(span, span / 2, emptyList(), emptyList()).completed)
     }
 
     @Test
@@ -47,55 +47,90 @@ class DeskClockRecordP8Test {
         var last = -1
         var elapsed = 0L
         while (elapsed <= span) {
-            val formed = DeskClockRecord.record(span, elapsed, emptyList(), emptyList()).formedGrains
-            assertTrue("formed extent reversed at $elapsed", formed >= last)
+            val formed = DeskClockRecord.record(span, elapsed, emptyList(), emptyList()).formedColumns
+            assertTrue("formed count reversed at $elapsed", formed >= last)
             last = formed
             elapsed += span / 97 // an unaligned step, on purpose
         }
-        // The sweep's unaligned step never lands on the span's end;
-        // the record at the end itself stands complete.
         assertEquals(
-            DeskClockRecord.GRAINS,
-            DeskClockRecord.record(span, span, emptyList(), emptyList()).formedGrains
+            DeskClockRecord.COLUMNS,
+            DeskClockRecord.record(span, span, emptyList(), emptyList()).formedColumns
         )
     }
 
     @Test
-    fun marks_inscribeOnlyOnceTheirMomentHasPassed_inTimeOrder() {
-        val late = DeskClockRecord.Mark(DeskClockRecord.MarkKind.REACH, span / 2)
-        val early = DeskClockRecord.Mark(DeskClockRecord.MarkKind.HELD, span / 4)
-        val before = DeskClockRecord.record(span, span / 3, listOf(late, early), emptyList())
-        assertEquals(listOf(early), before.marks)
-        val after = DeskClockRecord.record(span, span, listOf(late, early), emptyList())
-        assertEquals(listOf(early, late), after.marks)
+    fun columnKindTruth_centreInGapIsSmooth_centreInFiringIsSmoothFiring() {
+        val gap = DeskClockRecord.GapSpan(
+            startOffsetMillis = (span * 0.30).toLong(),
+            durationMillis = (span * 0.08).toLong()
+        )
+        val firing = DeskClockRecord.GapSpan(
+            startOffsetMillis = (span * 0.52).toLong(),
+            durationMillis = (span * 0.05).toLong(),
+            isBreakFiring = true
+        )
+        val plate = DeskClockRecord.record(span, span / 2, emptyList(), listOf(gap, firing))
+        assertEquals(DeskClockRecord.COLUMNS, plate.columnKinds.size)
+        for (column in 0 until DeskClockRecord.COLUMNS) {
+            val centre = (column + 0.5) / DeskClockRecord.COLUMNS
+            val expected = when {
+                centre >= 0.52 && centre < 0.57 -> DeskClockRecord.ColumnKind.SMOOTH_FIRING
+                centre >= 0.30 && centre < 0.38 -> DeskClockRecord.ColumnKind.SMOOTH
+                else -> DeskClockRecord.ColumnKind.GRAIN
+            }
+            assertEquals("column $column", expected, plate.columnKinds[column])
+        }
     }
 
     @Test
-    fun gaps_drawOnlyTheirLivedPart() {
-        val gap = DeskClockRecord.GapSpan(startOffsetMillis = span / 4, durationMillis = span / 4)
-        val future = DeskClockRecord.GapSpan(startOffsetMillis = span / 2, durationMillis = span / 4)
-        val during = DeskClockRecord.record(span, span / 4 + span / 8, emptyList(), listOf(gap, future))
-        assertEquals(1, during.gaps.size)
-        assertEquals(span / 4, during.gaps[0].startOffsetMillis)
-        assertEquals(span / 8, during.gaps[0].durationMillis)
-        val after = DeskClockRecord.record(span, span, emptyList(), listOf(gap, future))
-        assertEquals(listOf(gap, future), after.gaps)
+    fun punchPlaceTruth_placeLaneAndClassMatchTheFact() {
+        val facts = listOf(
+            DeskClockRecord.PunchFact(DeskClockRecord.PunchKind.REACH, span / 4),
+            DeskClockRecord.PunchFact(DeskClockRecord.PunchKind.HELD, span / 2),
+            DeskClockRecord.PunchFact(DeskClockRecord.PunchKind.SHOWING, span * 3 / 4)
+        )
+        val plate = DeskClockRecord.record(span, span, facts, emptyList())
+        assertEquals(3, plate.punches.size)
+        assertEquals(0.25f, plate.punches[0].xFraction, 0.001f)
+        assertEquals(DeskClockRecord.Lane.UPPER, plate.punches[0].lane)
+        assertEquals(DeskClockRecord.DiameterClass.LARGE, plate.punches[0].diameterClass)
+        assertEquals(0.5f, plate.punches[1].xFraction, 0.001f)
+        assertEquals(DeskClockRecord.Lane.MIDDLE, plate.punches[1].lane)
+        assertEquals(DeskClockRecord.DiameterClass.MEDIUM, plate.punches[1].diameterClass)
+        assertEquals(0.75f, plate.punches[2].xFraction, 0.001f)
+        assertEquals(DeskClockRecord.Lane.LOWER, plate.punches[2].lane)
+        assertEquals(DeskClockRecord.DiameterClass.SMALL, plate.punches[2].diameterClass)
+        // A punch whose moment has not come is not inscribed.
+        val early = DeskClockRecord.record(span, span / 3, facts, emptyList())
+        assertEquals(listOf(facts[0].kind), early.punches.map { it.kind })
     }
 
     @Test
-    fun grades_rideTheKinds_asRuled() {
-        assertEquals(DeskClockRecord.MarkSize.LARGE, DeskClockRecord.MarkKind.REACH.size)
-        assertEquals(DeskClockRecord.MarkSize.MEDIUM, DeskClockRecord.MarkKind.HELD.size)
-        assertEquals(DeskClockRecord.MarkSize.SMALL, DeskClockRecord.MarkKind.FLOOR.size)
+    fun cf1_theCompletedRecordEqualsTheStaticCompletedField() {
+        val facts = listOf(DeskClockRecord.PunchFact(DeskClockRecord.PunchKind.REACH, span / 5))
+        val gaps = listOf(DeskClockRecord.GapSpan(span / 4, span / 8))
+        assertEquals(
+            DeskClockRecord.completedField(span, facts, gaps),
+            DeskClockRecord.record(span, span, facts, gaps)
+        )
     }
 
     @Test
-    fun theRecord_carriesNoString_andNoDisplayFigure() {
-        // The no-numbers law at the type level: nothing in the
-        // record's data can be rendered as text or a figure.
+    fun theSealPlace_isEmpty_byConstant_atEveryReading() {
+        for (elapsed in listOf(0L, span / 2, span)) {
+            assertEquals(
+                DeskClockRecord.SealPlace.EMPTY,
+                DeskClockRecord.record(span, elapsed, emptyList(), emptyList()).sealPlace
+            )
+        }
+    }
+
+    @Test
+    fun theRecord_carriesNoString() {
         for (type in listOf(
-            DeskClockRecord.FormingRecord::class.java,
-            DeskClockRecord.Mark::class.java,
+            DeskClockRecord.FormingPlate::class.java,
+            DeskClockRecord.Punch::class.java,
+            DeskClockRecord.PunchFact::class.java,
             DeskClockRecord.GapSpan::class.java
         )) {
             for (field in type.declaredFields) {
@@ -115,30 +150,5 @@ class DeskClockRecordP8Test {
         } catch (expected: IllegalArgumentException) {
             // refused, as filed
         }
-    }
-
-    @Test
-    fun hands_standWhereTheTimeStands() {
-        val twelve = DeskClockRecord.hands(12, 0)
-        assertEquals(0f, twelve.hourAngleDegrees, 0.001f)
-        assertEquals(0f, twelve.minuteAngleDegrees, 0.001f)
-        val halfPastThree = DeskClockRecord.hands(3, 30)
-        assertEquals(105f, halfPastThree.hourAngleDegrees, 0.001f)
-        assertEquals(180f, halfPastThree.minuteAngleDegrees, 0.001f)
-        val gym = DeskClockRecord.hands(8, 0)
-        assertEquals(240f, gym.hourAngleDegrees, 0.001f)
-        // Midnight and noon are the same place on a regulator's dial.
-        assertEquals(
-            DeskClockRecord.hands(0, 0).hourAngleDegrees,
-            DeskClockRecord.hands(12, 0).hourAngleDegrees,
-            0.001f
-        )
-    }
-
-    @Test
-    fun fractionAt_isAPlace_notAFigure() {
-        assertEquals(0f, DeskClockRecord.fractionAt(span, 0L), 0.001f)
-        assertEquals(0.5f, DeskClockRecord.fractionAt(span, span / 2), 0.001f)
-        assertEquals(1f, DeskClockRecord.fractionAt(span, span * 3), 0.001f)
     }
 }

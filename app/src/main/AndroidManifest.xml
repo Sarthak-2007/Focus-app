@@ -243,6 +243,14 @@
             </intent-filter>
         </service>
 
+        <!-- P8: the one notification's delete-intent target — a
+             dismissal is recorded and honoured for the standing
+             session (no re-post). Explicit intents only. -->
+        <receiver
+            android:name=".service.SessionNotificationDismissReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- Direct-Boot Receiver (LOCKED_BOOT_COMPLETED + BOOT_COMPLETED) -->
         <receiver
             android:name=".service.MonolithBootReceiver"
