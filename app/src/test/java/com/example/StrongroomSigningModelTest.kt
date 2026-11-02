@@ -157,7 +157,7 @@ class StrongroomSigningModelTest {
             .map { it.name }
             .sorted()
         assertEquals(
-            listOf("liftingHour", "lockedPackages", "sentence", "taskLine"),
+            listOf("breakMinutes", "liftingHour", "lockedPackages", "sentence", "taskLine"),
             fields
         )
     }
@@ -186,6 +186,34 @@ class StrongroomSigningModelTest {
         assertEquals("07:15", s.result?.liftingHour)
         assertEquals("Hold the morning.", s.result?.sentence)
         assertEquals("Physics, in his words", s.result?.taskLine)
+    }
+
+    @Test
+    fun breakSpan_setAtTheSigning_freeToTheMinute() {
+        // S-6/D-6 + ruling C-4: the choosing moment is the
+        // signing, at the HOUR step with the lock's other setting.
+        val start = SigningState(draft())
+        assertEquals(20, start.breakMinutes)
+        // Not settable at the composition step.
+        assertEquals(20, start.setBreakMinutes(45).breakMinutes)
+        val atHour = start.advance()
+        // Free to the minute — an un-preset span lands whole.
+        assertEquals(37, atHour.setBreakMinutes(37).breakMinutes)
+        assertEquals(1, atHour.setBreakMinutes(1).breakMinutes)
+        assertEquals(720, atHour.setBreakMinutes(720).breakMinutes)
+        try {
+            atHour.setBreakMinutes(0)
+            fail("a zero span is no firing at all — refused")
+        } catch (expected: IllegalArgumentException) {
+            // refused
+        }
+        // Unamended, the composed span stands in the result.
+        val result = atCombination().beginSignature().completeSignature().result
+        assertEquals(20, result?.breakMinutes)
+        // Amended, the amendment is what the result carries.
+        var s = SigningState(draft()).advance().setBreakMinutes(45)
+        s = s.advance().advance().beginSignature().completeSignature()
+        assertEquals(45, s.result?.breakMinutes)
     }
 
     @Test

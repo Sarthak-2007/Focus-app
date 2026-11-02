@@ -128,6 +128,7 @@ fun SigningScreen(
                 ink = ink,
                 quietInk = quietInk,
                 onHour = { flow = flow.setHour(it) },
+                onBreak = { flow = flow.setBreakMinutes(it) },
                 onContinue = { flow = flow.advance() }
             )
             SigningStep.SENTENCE -> SentenceStep(
@@ -234,6 +235,17 @@ private fun CompositionStep(
         color = ink,
         modifier = Modifier.testTag("signing_purpose")
     )
+    if (flow.draft.teachingLine != null) {
+        Spacer(Modifier.height(12.dp))
+        // R2-8: the swing taught at the FIRST signing only —
+        // standing furniture on the composition, not a step.
+        Text(
+            text = flow.draft.teachingLine.orEmpty(),
+            style = SigningBodyStyle,
+            color = ink,
+            modifier = Modifier.testTag("signing_teaching")
+        )
+    }
     if (flow.draft.spentDay) {
         Spacer(Modifier.height(12.dp))
         // B-4: the spent-day telling, in plain words, verbatim —
@@ -284,6 +296,7 @@ private fun HourStep(
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
     onHour: (String) -> Unit,
+    onBreak: (Int) -> Unit,
     onContinue: () -> Unit
 ) {
     val parts = flow.liftingHour.split(":")
@@ -310,6 +323,52 @@ private fun HourStep(
         SigningStepper("HOUR +", quietInk, "signing_hour_up") { emit(hour + 1, minute) }
         SigningStepper("MIN −", quietInk, "signing_minute_down") { emit(hour, minute - 5) }
         SigningStepper("MIN +", quietInk, "signing_minute_up") { emit(hour, minute + 5) }
+    }
+    Spacer(Modifier.height(22.dp))
+    // The break's span, chosen HERE (ruling C-4: the choosing
+    // moment is the signing; the firing itself is invocable by
+    // no one inside the day). Free to the minute — the preset
+    // row is one-tap shortcuts, never the ceiling (S-6/D-6).
+    Text(
+        text = "The break — its span is set now, and fires by the lock",
+        style = SigningBodyStyle,
+        color = ink
+    )
+    Spacer(Modifier.height(10.dp))
+    Text(
+        text = "${flow.breakMinutes} MIN",
+        style = SigningFiguresStyle,
+        color = ink,
+        modifier = Modifier.testTag("signing_break_value")
+    )
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        SigningStepper("−10", quietInk, "signing_break_down10") {
+            onBreak((flow.breakMinutes - 10).coerceAtLeast(1))
+        }
+        SigningStepper("−1", quietInk, "signing_break_down1") {
+            onBreak((flow.breakMinutes - 1).coerceAtLeast(1))
+        }
+        SigningStepper("+1", quietInk, "signing_break_up1") {
+            onBreak((flow.breakMinutes + 1).coerceAtMost(720))
+        }
+        SigningStepper("+10", quietInk, "signing_break_up10") {
+            onBreak((flow.breakMinutes + 10).coerceAtMost(720))
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        listOf(10, 20, 30).forEach { preset ->
+            SigningStepper("$preset", quietInk, "signing_break_preset_$preset") {
+                onBreak(preset)
+            }
+        }
+        Text(
+            text = "shortcuts, never the ceiling",
+            style = SigningQuietStyle,
+            color = quietInk,
+            modifier = Modifier.padding(top = 10.dp)
+        )
     }
     Spacer(Modifier.height(20.dp))
     SigningContinue(label = "SET THE SENTENCE", ink = ink, onClick = onContinue)
@@ -456,6 +515,11 @@ private fun ReadyStep(
             color = ink
         )
         Text(
+            text = "Break ${result.breakMinutes} minutes — fires by the lock, summoned by no one",
+            style = SigningBodyStyle,
+            color = ink
+        )
+        Text(
             text = result.sentence ?: "The kept place stands on the face",
             style = SigningBodyStyle,
             color = quietInk
@@ -483,6 +547,13 @@ private fun SigningTextField(
     BasicTextField(
         value = value,
         onValueChange = onValue,
+        // S-3 (B-3): his words travel byte-for-byte — no
+        // autocorrect, no capitalisation, no suggestion pipeline
+        // may touch them anywhere between his hand and the record.
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            autoCorrect = false,
+            capitalization = androidx.compose.ui.text.input.KeyboardCapitalization.None
+        ),
         textStyle = SigningBodyStyle.copy(color = ink),
         cursorBrush = SolidColor(ink),
         modifier = Modifier

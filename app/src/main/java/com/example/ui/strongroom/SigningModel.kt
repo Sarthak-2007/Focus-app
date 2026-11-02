@@ -73,7 +73,18 @@ data class CompositionDraft(
     val composedLocked: Set<String>,
     val composedHour: String,
     val composedSentence: String?,
-    val spentDay: Boolean
+    val spentDay: Boolean,
+    /** The break firing's span as composed (minutes, free). The
+     *  signing sets it (ledger B-12 + ruling C-4: the choosing
+     *  moment is the signing; his Oct 30 ruling: any session ↔
+     *  any break, presets as shortcuts only — never a ceiling). */
+    val composedBreakMinutes: Int = 20,
+    /** R2-8: the swing is TAUGHT at the first signing — one plain
+     *  telling, first-run furniture only, owned as copy by
+     *  TYPE-SR-1. Null on every ordinary signing; when present it
+     *  stands on the composition step as furniture, never as a
+     *  step in the sequence (C-4 untouched). */
+    val teachingLine: String? = null
 ) {
     init {
         require(RingGeometry.isLawfulHour(composedHour)) {
@@ -97,7 +108,9 @@ data class SigningResult(
     val lockedPackages: Set<String>,
     val liftingHour: String,
     val sentence: String?,
-    val taskLine: String?
+    val taskLine: String?,
+    /** The break firing's span, set at this signing (minutes). */
+    val breakMinutes: Int
 )
 
 /** The signing's standing words — verbatim, as filed. */
@@ -139,6 +152,7 @@ data class SigningState(
     val step: SigningStep = SigningStep.COMPOSITION,
     val lockedPackages: Set<String> = draft.composedLocked,
     val liftingHour: String = draft.composedHour,
+    val breakMinutes: Int = draft.composedBreakMinutes,
     val sentence: String? = draft.composedSentence,
     val taskLine: String? = null,
     val signatureBegun: Boolean = false,
@@ -169,6 +183,18 @@ data class SigningState(
             "The lifting hour must be the lawful HH:MM form: $hour"
         }
         return copy(liftingHour = hour)
+    }
+
+    /** The break firing's span, set at the HOUR step (the
+     *  time-lock's two settings stand together: the lifting hour
+     *  and the firing's span). Free to the minute — any span a
+     *  day can hold; no preset caps it, ever (S-6/D-6). */
+    fun setBreakMinutes(minutes: Int): SigningState {
+        if (step != SigningStep.HOUR || result != null) return this
+        require(minutes in 1..720) {
+            "The break span must be a span a day can hold: $minutes"
+        }
+        return copy(breakMinutes = minutes)
     }
 
     fun setSentence(text: String?): SigningState {
@@ -213,7 +239,8 @@ data class SigningState(
                 lockedPackages = lockedPackages,
                 liftingHour = liftingHour,
                 sentence = sentence?.takeIf { it.isNotBlank() },
-                taskLine = taskLine?.takeIf { it.isNotBlank() }
+                taskLine = taskLine?.takeIf { it.isNotBlank() },
+                breakMinutes = breakMinutes
             )
         )
     }
