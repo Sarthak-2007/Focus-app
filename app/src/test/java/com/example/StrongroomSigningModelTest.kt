@@ -149,7 +149,11 @@ class StrongroomSigningModelTest {
     @Test
     fun result_carriesNoCombinationAndNoSeal() {
         val fields = SigningResult::class.java.declaredFields
-            .filter { !it.isSynthetic }
+            .filter {
+                !it.isSynthetic &&
+                    !java.lang.reflect.Modifier.isStatic(it.modifiers) &&
+                    !it.name.startsWith("$")
+            }
             .map { it.name }
             .sorted()
         assertEquals(
