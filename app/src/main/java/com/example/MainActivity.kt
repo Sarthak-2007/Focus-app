@@ -16,7 +16,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -523,6 +526,11 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     // opening, never held stale across openings.
     var drawerOpen by remember { mutableStateOf(false) }
     var drawerState by remember { mutableStateOf(DrawerState()) }
+    // SETUP-FLOW: the setup side's standing in the doorway place.
+    // It exists only in this unsealed branch — while a seal stands
+    // the face owns the place whole and there is no route into the
+    // normal app (D-7), setup included.
+    var setupOpen by remember { mutableStateOf(false) }
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
     }
@@ -678,6 +686,11 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                             onClose = { drawerOpen = false }
                         )
                     )
+                } else if (setupOpen) {
+                    SetupHost(
+                        viewModel = viewModel,
+                        onClose = { setupOpen = false }
+                    )
                 } else {
                 androidx.compose.foundation.layout.Box(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
@@ -742,6 +755,30 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                         )
                         drawerOpen = true
                     })
+                    // SETUP-FLOW: the plain entry into the setup
+                    // side — permissions, the app list, the guard —
+                    // standing at the foot of the doorway in
+                    // unsealed hours. Plain by order (function
+                    // first, design later).
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                            .border(
+                                1.dp,
+                                com.example.ui.foundation.StrongroomInks.Gold,
+                                RoundedCornerShape(6.dp)
+                            )
+                            .clickable { setupOpen = true }
+                            .padding(vertical = 12.dp),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        androidx.compose.material3.Text(
+                            "SETUP / GUARD",
+                            style = com.example.ui.foundation.StrongroomType.Scr2,
+                            color = com.example.ui.foundation.StrongroomInks.Gold
+                        )
+                    }
                 }
                 }
                 }
@@ -1918,5 +1955,392 @@ private fun reaskPostNotifications(
         )
     } else {
         notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
+/**
+ * SETUP-FLOW — the setup side's host (companion to
+ * [com.example.ui.setup.Setup]): reads the real facts, works the
+ * real verbs, opens the real panes. Plain by order — function
+ * first, design later.
+ *
+ * Facts, all read live on the host's tick (and re-read on a short
+ * poll while the surface stands, so a grant made in Settings is
+ * standing here when he comes back):
+ *  - permissions: the repository's own watch queries — the same
+ *    reads the Guard sweep trusts (watchGrantQuery), never a
+ *    second probe. POST_NOTIFICATIONS is read directly (it is a
+ *    runtime grant, not one of the six watch grants). AUTOSTART
+ *    reads the Watch Store's oath map: Android reports nothing
+ *    for that door, so SWORN is its only honest standing.
+ *  - apps: the ViewModel's catalogue flow (the repository keeps
+ *    it synced to what is installed); a tier tap writes the row
+ *    through the entity's own normalisation — the exact rows
+ *    LegacyCarry derives a born day from.
+ *  - guard: the Strongroom store's verbs, with their results
+ *    printed back in plain words.
+ */
+@Composable
+private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val appContext = context.applicationContext
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val apps by viewModel.apps.collectAsStateWithLifecycle()
+
+    var state by remember {
+        mutableStateOf(com.example.ui.setup.SetupState())
+    }
+    var guardNote by remember { mutableStateOf("") }
+    var refreshTick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2500L)
+            refreshTick++
+        }
+    }
+    LaunchedEffect(refreshTick) {
+        val facts = withContext(Dispatchers.IO) {
+            loadSetupFacts(appContext)
+        }
+        state = state.copy(
+            permissions = facts.first,
+            guard = facts.second,
+            stretchEndText = facts.third,
+            guardNote = guardNote
+        )
+    }
+
+    com.example.ui.setup.Setup(
+        state = state.copy(
+            apps = apps.map {
+                com.example.ui.setup.SetupAppRow(
+                    packageName = it.packageName,
+                    appName = it.appName,
+                    tier = it.resolvedTier
+                )
+            },
+            guardNote = guardNote
+        ),
+        actions = com.example.ui.setup.SetupActions(
+            onOpenSection = { section ->
+                state = state.copy(section = section)
+                refreshTick++
+            },
+            onBackToSetupHome = {
+                state = state.copy(section = com.example.ui.setup.SetupSection.HOME)
+                refreshTick++
+            },
+            onClose = onClose,
+            onPermissionTap = { key ->
+                openSetupPermission(appContext, key)
+                refreshTick++
+            },
+            onAttestAutostart = {
+                com.example.service.WatchStore.attest(
+                    com.example.service.WatchItemId.AUTOSTART
+                )
+                refreshTick++
+            },
+            onSetTier = { pkg, tier ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        val dao = AppContainer.dao(appContext)
+                        dao.getAppByPackage(pkg)?.let { row ->
+                            dao.updateApp(
+                                row.copy(
+                                    blockTier = tier.name,
+                                    isBlocked = tier !=
+                                        com.example.data.AppBlockTier.OPEN
+                                ).normalized()
+                            )
+                        }
+                    }
+                    refreshTick++
+                }
+            },
+            onSetAllowance = { target ->
+                scope.launch {
+                    val note = withContext(Dispatchers.IO) {
+                        val store = StrongroomStore(AppContainer.dao(appContext))
+                        val now = System.currentTimeMillis()
+                        val current = store.guardState(now)
+                        when {
+                            target < current.allowanceMinutes -> {
+                                store.tightenGuard(now, target)
+                                "Allowance lowered to $target min — in force now."
+                            }
+                            target > current.allowanceMinutes -> {
+                                val (_, result) = store.requestGuardRaise(now, target)
+                                when (result) {
+                                    is com.example.domain.StrongroomGuard.RaiseRequest.Scheduled ->
+                                        "Raise to $target min is set — it starts " +
+                                            "at the next day-start (03:30), never today."
+                                    com.example.domain.StrongroomGuard.RaiseRequest.BeyondHardStop ->
+                                        "Today's allowance is already spent — a raise " +
+                                            "can't be set from inside a spent day."
+                                }
+                            }
+                            else -> "Allowance already $target min."
+                        }
+                    }
+                    guardNote = note
+                    refreshTick++
+                }
+            },
+            onGuardOn = {
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .turnGuardOn(System.currentTimeMillis())
+                    }
+                    guardNote = "Guard on."
+                    refreshTick++
+                }
+            },
+            onGuardOff = {
+                scope.launch {
+                    val note = withContext(Dispatchers.IO) {
+                        val store = StrongroomStore(AppContainer.dao(appContext))
+                        val now = System.currentTimeMillis()
+                        val sealed = store.sealedDay() != null
+                        val (_, result) = store.requestGuardOff(now, sealed)
+                        when (result) {
+                            is com.example.domain.StrongroomGuard.OffRequest.Scheduled ->
+                                "Off is set — it takes effect at the next " +
+                                    "day-start (03:30). The guard stays on until then."
+                            is com.example.domain.StrongroomGuard.OffRequest.Refused ->
+                                when (result.reason) {
+                                    com.example.domain.StrongroomGuard.OffRefusal.SEALED_ACTIVE ->
+                                        "A sealed block is running — the guard " +
+                                            "can't be turned off now."
+                                    com.example.domain.StrongroomGuard.OffRefusal.STRETCH_ACTIVE ->
+                                        "A stretch is running — it has no off. " +
+                                            "It ends on the date you chose."
+                                }
+                        }
+                    }
+                    guardNote = note
+                    refreshTick++
+                }
+            },
+            onBeginStretch = { dateText ->
+                scope.launch {
+                    val note = withContext(Dispatchers.IO) {
+                        val parsed = runCatching {
+                            java.time.LocalDate.parse(dateText.trim())
+                        }.getOrNull()
+                        if (parsed == null) {
+                            "That date didn't read — use the form 2026-11-10."
+                        } else {
+                            val endMillis = parsed
+                                .atTime(23, 59, 59)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toInstant().toEpochMilli()
+                            if (endMillis <= System.currentTimeMillis()) {
+                                "That date is already past — pick the end you mean."
+                            } else {
+                                StrongroomStore(AppContainer.dao(appContext))
+                                    .beginGuardStretch(
+                                        System.currentTimeMillis(), endMillis
+                                    )
+                                "Stretch begun — the guard stays on until " +
+                                    "$dateText, with no off inside it."
+                            }
+                        }
+                    }
+                    guardNote = note
+                    refreshTick++
+                }
+            },
+            onDone = {
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        val repo = AppContainer.repository(appContext)
+                        var mask = 0
+                        com.example.service.WatchItemId.COUNTED.forEachIndexed { idx, item ->
+                            if (runCatching { repo.watchGrantQuery(item) }
+                                    .getOrDefault(false)
+                            ) mask = mask or (1 shl idx)
+                        }
+                        com.example.data.SetupStore(appContext).stampSetup(mask)
+                    }
+                    onClose()
+                }
+            }
+        )
+    )
+}
+
+/** The setup screen's facts, read once per tick: the permission
+ *  rows in board order (the brief's five doors first among the
+ *  engine's own six, plus the held-calls listener and the
+ *  overlay), the standing guard, and the stretch's end line. */
+private fun loadSetupFacts(
+    context: Context
+): Triple<List<com.example.ui.setup.SetupPermissionRow>, com.example.domain.StrongroomGuard.GuardState, String> {
+    val repo = AppContainer.repository(context)
+    fun row(
+        item: com.example.service.WatchItemId,
+        title: String
+    ): com.example.ui.setup.SetupPermissionRow {
+        val granted = runCatching { repo.watchGrantQuery(item) }
+            .getOrDefault(false)
+        return com.example.ui.setup.SetupPermissionRow(
+            key = item.name,
+            title = title,
+            stateText = if (granted) "GRANTED" else "MISSING",
+            granted = granted
+        )
+    }
+    val notificationsGranted =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(
+                context, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+    val autostartSworn = com.example.service.WatchStore.snapshots.value
+        .attestations.containsKey(com.example.service.WatchItemId.AUTOSTART)
+    val rows = listOf(
+        row(com.example.service.WatchItemId.ACCESSIBILITY, "Accessibility"),
+        row(com.example.service.WatchItemId.USAGE_ACCESS, "Usage access"),
+        com.example.ui.setup.SetupPermissionRow(
+            key = com.example.ui.setup.KEY_NOTIFICATIONS,
+            title = "Notifications",
+            stateText = if (notificationsGranted) "GRANTED" else "MISSING",
+            granted = notificationsGranted
+        ),
+        row(com.example.service.WatchItemId.NOTIFICATION_LISTENER, "Held calls (notification access)"),
+        row(com.example.service.WatchItemId.OVERLAY, "Display over other apps"),
+        row(com.example.service.WatchItemId.BATTERY, "Battery exemption"),
+        row(com.example.service.WatchItemId.DEVICE_ADMIN, "Device admin"),
+        com.example.ui.setup.SetupPermissionRow(
+            key = com.example.ui.setup.KEY_AUTOSTART,
+            title = "Autostart",
+            stateText = if (autostartSworn) {
+                "SWORN — you marked it done (Android can't report this one)"
+            } else {
+                "NOT SET — Android can't report this one; open it, set it, mark it done"
+            },
+            granted = autostartSworn
+        )
+    )
+    val store = StrongroomStore(AppContainer.dao(context))
+    val now = System.currentTimeMillis()
+    val guard = kotlinx.coroutines.runBlocking { store.guardState(now) }
+    val stretchEndText = if (guard.stretchActive(now)) {
+        java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.UK)
+            .format(java.util.Date(guard.stretchEndMillis))
+    } else ""
+    return Triple(rows, guard, stretchEndText)
+}
+
+/** A setup row's tap: record the trip (the persisted step the
+ *  return from Settings resumes from — PermissionStepStore's own
+ *  law), arm the return watch, and open the grant's real pane.
+ *  The panes are the legacy FIX flow's own (openFixPane above),
+ *  re-pointed here without its Deck-era bookkeeping. */
+private fun openSetupPermission(context: Context, key: String) {
+    val appContext = context.applicationContext
+    if (key == com.example.ui.setup.KEY_NOTIFICATIONS) {
+        launchSettings(
+            appContext,
+            pinnedSettingsIntent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, appContext.packageName)
+            },
+            "NOTIFICATIONS"
+        )
+        return
+    }
+    if (key == com.example.ui.setup.KEY_AUTOSTART) {
+        val gate = com.example.data.OemPolicy.currentGate()
+        val opened = gate != com.example.data.OemPolicy.AutostartGate.NONE &&
+            com.example.data.OemPolicy
+                .autostartIntents(gate, appContext.packageName)
+                .any { pane -> runCatching { appContext.startActivity(pane) }.isSuccess }
+        if (!opened) {
+            launchSettings(
+                appContext,
+                pinnedSettingsIntent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${appContext.packageName}")
+                ),
+                "AUTOSTART"
+            )
+        }
+        return
+    }
+    val item = runCatching {
+        com.example.service.WatchItemId.valueOf(key)
+    }.getOrNull() ?: return
+    com.example.data.PermissionStepStore(appContext).beginTrip(item)
+    PermissionReturnService.arm(appContext, item)
+    when (item) {
+        com.example.service.WatchItemId.ACCESSIBILITY ->
+            launchSettings(appContext, pinnedSettingsIntent(Settings.ACTION_ACCESSIBILITY_SETTINGS), "ACCESSIBILITY")
+        com.example.service.WatchItemId.USAGE_ACCESS ->
+            launchSettings(appContext, pinnedSettingsIntent(Settings.ACTION_USAGE_ACCESS_SETTINGS), "USAGE ACCESS")
+        com.example.service.WatchItemId.DEVICE_ADMIN -> {
+            val requestAdmin = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                putExtra(
+                    DevicePolicyManager.EXTRA_DEVICE_ADMIN,
+                    ComponentName(appContext, MonolithDeviceAdminReceiver::class.java)
+                )
+                putExtra(
+                    DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                    appContext.getString(R.string.device_admin_add_explanation)
+                )
+            }
+            runCatching { appContext.startActivity(requestAdmin) }
+                .getOrElse {
+                    launchSettings(appContext, pinnedSettingsIntent(Settings.ACTION_SECURITY_SETTINGS), "DEVICE ADMIN")
+                }
+        }
+        com.example.service.WatchItemId.NOTIFICATION_LISTENER ->
+            launchSettings(
+                appContext,
+                pinnedSettingsIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"),
+                "NOTIFICATION ACCESS"
+            )
+        com.example.service.WatchItemId.OVERLAY ->
+            launchSettings(
+                appContext,
+                pinnedSettingsIntent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${appContext.packageName}")
+                ),
+                "DISPLAY OVER OTHER APPS"
+            )
+        com.example.service.WatchItemId.BATTERY -> {
+            val gate = com.example.data.OemPolicy.currentGate()
+            val miuiBatteryOpened = gate ==
+                com.example.data.OemPolicy.AutostartGate.XIAOMI &&
+                com.example.data.OemPolicy
+                    .miuiBatterySaverIntents(appContext.packageName)
+                    .any { pane ->
+                        runCatching { appContext.startActivity(pane) }.isSuccess
+                    }
+            val autostartOpened = miuiBatteryOpened || (gate !=
+                com.example.data.OemPolicy.AutostartGate.NONE &&
+                com.example.data.OemPolicy
+                    .autostartIntents(gate, appContext.packageName)
+                    .any { pane ->
+                        runCatching { appContext.startActivity(pane) }.isSuccess
+                    })
+            if (!autostartOpened) {
+                val direct = pinnedSettingsIntent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:${appContext.packageName}")
+                )
+                runCatching { appContext.startActivity(direct) }
+                    .getOrElse {
+                        launchSettings(
+                            appContext,
+                            pinnedSettingsIntent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                            "BATTERY"
+                        )
+                    }
+            }
+        }
+        else -> launchSettings(appContext, pinnedSettingsIntent(Settings.ACTION_SETTINGS), item.name)
     }
 }
