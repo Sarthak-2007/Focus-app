@@ -15,6 +15,8 @@ import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomRouting
 import com.example.service.haptics.AndroidWaveformPlayer
 import com.example.service.haptics.HapticEvent
+import com.example.service.haptics.SensoryBus
+import com.example.service.haptics.StrongroomSoundAdapter
 
 /**
  * P2 — ENGINE WIRING (BUILD-SR-3): the Strongroom model, wired to
@@ -74,20 +76,45 @@ object StrongroomEngineBridge {
         StrongroomStore(AppContainer.dao(context.applicationContext))
 
     /**
-     * STAGE 14 (BUILD-SR-20): the felt layer's one door. Every
-     * ceremony this bridge drives fires its [HapticEvent] through
-     * [com.example.service.haptics.SensoryBus] — the single event
-     * table (R8-4) — with the real Android waveform player. The
-     * bus's sound/motion players are the recorded NoOps until
-     * BUILD-SR-19's sound adapter lands behind the bus (named in
-     * BUILD-SR-20's record, never faked here). A sensory failure
-     * never fails the ceremony: the span is the truth, the felt
+     * THE ONE SENSORY BUS (composition — BUILD-SR-23, step 6;
+     * the one-bus union both lanes lettered): FEEL-SR-5's
+     * [SensoryBus] is the single event table and the only public
+     * door (R8-4). This bridge holds ONE standing bus for the
+     * process, built once through BUILD-SR-20's factory form with
+     * BUILD-SR-19's [StrongroomSoundAdapter] installed as its
+     * sound player — the adapter resolves the bus's sound leg
+     * through SOUND-SR-5's voice table behind it (the twin law:
+     * the voice table's own haptic half is disabled there, so a
+     * row fires felt + heard exactly once). Every ceremony below
+     * fires the UNION of both lanes' call sites ONCE per event —
+     * never two buses, never two fires. A sensory failure never
+     * fails the ceremony: the span is the truth, the felt/heard
      * event is its testimony (L-5 — never replayed, never a
-     * substitute buzz). All felt figures UNPROVEN-ON-DEVICE.
+     * substitute buzz). All felt/heard figures UNPROVEN-ON-DEVICE.
      */
+    @Volatile
+    private var sensoryBus: SensoryBus? = null
+
+    private fun sensory(context: Context): SensoryBus? {
+        sensoryBus?.let { return it }
+        return synchronized(this) {
+            sensoryBus ?: try {
+                val appContext = context.applicationContext
+                AndroidWaveformPlayer.bus(
+                    appContext,
+                    soundPlayer = StrongroomSoundAdapter.production(appContext)
+                ).also { sensoryBus = it }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /** Fire one event through the one bus — felt + heard from
+     *  the one registry row, in the bus's order. Never throws. */
     private fun fireSensory(context: Context, event: HapticEvent) {
         try {
-            AndroidWaveformPlayer.bus(context.applicationContext).fire(event)
+            sensory(context)?.fire(event)
         } catch (_: Exception) {
             // Silence for this firing; the ceremony stands.
         }
@@ -255,12 +282,35 @@ object StrongroomEngineBridge {
         val appContext = context.applicationContext
         val kind = runCatching { StrongroomRouting.FiringKind.valueOf(kindName) }.getOrNull()
             ?: return false
-        if (kind != StrongroomRouting.FiringKind.LIFT) return false
         val store = store(appContext)
         val row = store.day(dateIso) ?: return false
         val span = row.toSealSpan() ?: return false
         val nowElapsed = nowElapsedMillis()
         val boot = bootCount(appContext)
+        if (kind != StrongroomRouting.FiringKind.LIFT) {
+            // The break's firings, consumed here for their senses
+            // (BUILD-SR-19, carried into the union by BUILD-SR-23):
+            // the span is re-derived through firingDue
+            // (boot-guarded, CH-2 — no firing sounds in an ajar
+            // day), and only the firing actually due speaks. The
+            // break's START is a NAMED_SILENCE in the voice table:
+            // the bus fires its felt easing and the adapter
+            // records the silence. Its END has its own voice. The
+            // surfaces still re-derive the break's state
+            // themselves, exactly as before.
+            val signing = row.toSigningRecord()
+            val due = StrongroomRouting.firingDue(signing, span, nowElapsed, boot)
+            if (due?.kind == kind) {
+                when (kind) {
+                    StrongroomRouting.FiringKind.BREAK_START ->
+                        fireSensory(appContext, HapticEvent.BREAK_ARRIVAL)
+                    StrongroomRouting.FiringKind.BREAK_END ->
+                        fireSensory(appContext, HapticEvent.BREAK_END_CUE)
+                    StrongroomRouting.FiringKind.LIFT -> Unit
+                }
+            }
+            return false
+        }
         if (!span.isLifted(nowElapsed, boot)) {
             // Woken early (the wall moved, the hint lied): the span
             // is the truth — re-arm and stand down.
@@ -268,10 +318,14 @@ object StrongroomEngineBridge {
             return false
         }
         store.strikePlate(dateIso, nowElapsed, boot, sealFailed = false)
-        // THE LIFTING, felt: bolts withdrawing + the door opening
-        // on its own weight (FEEL-SR-1's canonical 1,197 ms array
-        // verbatim in the registry; no terminal impact).
+        // THE LIFTING, felt + heard (the union, BUILD-SR-23):
+        // bolts withdrawing + the door opening on its own weight
+        // (FEEL-SR-1's canonical 1,197 ms array verbatim in the
+        // registry; no terminal impact), then the plate strike —
+        // SOUND-SR-1's mirror set behind the adapter. Each event
+        // fires ONCE through the one bus.
         fireSensory(appContext, HapticEvent.DOOR_LIFT)
+        fireSensory(appContext, HapticEvent.PLATE_STRIKE)
         MonolithShieldService.stopShield(appContext)
         // The lifting takes the session's one card down with it.
         SessionNotification.cancel(appContext)
