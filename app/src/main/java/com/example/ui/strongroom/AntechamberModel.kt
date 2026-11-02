@@ -1,46 +1,62 @@
 package com.example.ui.strongroom
 
 /**
- * P5 — THE ANTECHAMBER, as a pure model (Slice 1).
+ * P5 — THE ANTECHAMBER, as a pure model (Slice 1; RETHOUGHT
+ * under coordinator ruling C-3, 2026-11-02 — the first filing
+ * priced the signed set through the drum, and the ruling names
+ * that as the error it is: the purse never pays for the day's
+ * own shape).
  *
- * The room behind the grille door, governed whole by THE LIST
- * LAW (ledger B-9, from the re-fit's Beat 3, which governs over
- * summaries) — this order and no other:
+ * TWO SETS, MODELLED DISTINCTLY (ruling C-3):
  *
- *  1. **Calling out first and biggest** — people outrank apps
- *     (Stage 5 §3.4 carries the same order for type).
- *  2. **The allowed things as plain words, EXACTLY as signed** —
- *     nothing added, nothing suggested; the signed order stands
- *     and nothing here re-ranks it.
- *  3. **The held pile behind a second step of its own** — in the
- *     room's furniture, a second grille (the re-fit's wording);
- *     the pile is never part of the main list.
- *  4. **Spent things GONE** when the day's open minutes are
- *     spent — never shown dimmed, never greyed. This model has
- *     no dimmed form of anything: a thing is on the list, or it
- *     is not in the room.
- *  5. **If it is not on that list, it is not behind the door** —
- *     the drum refuses any name the signing did not sign.
+ *  SET 1 — THE SIGNED ALLOWED SET. Apps settled at the signing,
+ *  living here as plain words exactly as signed (the list law,
+ *  ledger B-9, governs their presentation), reachable WITHOUT
+ *  the purse — they were decided while he was strong. The purse
+ *  cannot spend them, dim them, or remove them: this model's
+ *  [visibleAllowed] is the signed list at every purse state.
  *
- * THE DRUM (ledger A-7): crank it and the drum turns ONE app to
- * him for its minute (one minute of the purse per turning — the
- * drum's minute is the purse's smallest unit, B-18); turn it
- * back, or it returns itself; when the purse is spent the crank
- * will not turn — [CrankOutcome.HARD_STOP_SPENT], a hard stop
- * the surface puts in his hand, not an error message.
+ *  SET 2 — THE DRUM (ledger A-7). Any reach BEYOND the signed
+ *  set: one app at a time, for its minute, purse-priced,
+ *  self-returning. The drum is a separate mechanism, never a
+ *  row in Set 1's list. Its stock is [drumCandidates] — the
+ *  room's other names, as plain words. When the purse is spent
+ *  the crank will not turn ([CrankOutcome.HARD_STOP_SPENT] —
+ *  a hard stop the surface puts in his hand) and the drum's
+ *  stock is gone from the room: [visibleDrumStock] is empty.
+ *  That — the drum's offerings, not the signed set — is where
+ *  B-9.4's "spent things gone, never dimmed" now reads, under
+ *  C-3's scoping of the list law to Set 1's presentation.
+ *
+ * THE LIST LAW (B-9) still governs the room's order whole:
+ * calling out first and biggest · Set 1 as plain words exactly
+ * as signed, nothing added, nothing suggested, signed order
+ * untouched · the held pile behind a second step of its own ·
+ * if it is not on a list, it is not behind the door — the drum
+ * refuses names that stand on neither list, and a signed name
+ * refused by the drum points back at Set 1, where it lives.
+ *
+ * THE PURSE'S FORM (ruling R2-4): one purse for the drum and
+ * the code-showings alike; its state is readable from the
+ * drum mechanism's own form — never as a number on any surface
+ * (this model carries the count because arithmetic needs it;
+ * no surface in this lane prints it). A code-taking states its
+ * price AT the taking, before he takes it (the surface's part).
  *
  * THE HELD PILE carries strangers, held silently (contacts ring
- * through natively and never wait here — the decided contacts
- * rule): a held call is a number, whole, with his choice per
- * call — take it or leave it (TI-35: two handles, neither the
- * lesser). A held CODE stands on its own held line under the
- * digits fork (ledger B-18): digits alone, with the hour, no
- * sender's name, no words around, no way onward — and every
- * SHOWING of it costs one minute of the purse, priced once per
- * taking (re-looks inside the same taking spend nothing; the
- * pile closed and re-opened for the same code is a new showing).
- * The record of a showing is a count of showings — the plate
- * strikes the showing, never a digit.
+ * through natively and never wait here): a held call is a
+ * number, whole, with his choice per call — take it or leave
+ * it (TI-35: two handles, neither the lesser). A held CODE
+ * stands on its own held line under the digits fork (B-18):
+ * digits alone, with the hour, no sender's name, no words
+ * around, no way onward — every SHOWING costs one minute of
+ * the purse, priced once per taking (re-looks inside the same
+ * taking spend nothing; the pile closed by his act and
+ * re-opened is a new showing; a taking survives a restart
+ * unpriced again — R2-5 — because the taking is written state,
+ * and this state is that writing's shape). The record of a
+ * showing is a count of showings — the plate strikes the
+ * showing, never a digit.
  */
 
 /** A stranger's call, held: the number as it arrived, and the
@@ -59,21 +75,28 @@ data class HeldCode(
     val hour: String
 )
 
-/** The crank's four answers. */
+/** The room's opening answers — one enum for both sets, so a
+ *  refusal always says which law refused. */
 enum class CrankOutcome {
     /** The drum turned the app to him; one minute is spent. */
     TURNED,
 
+    /** A signed app opened directly — no purse, no drum. */
+    OPENED_FROM_THE_SIGNED_SET,
+
     /** The purse is spent: the crank will not turn. A hard stop
-     *  felt in the hand — the surface's answer, not a refusal
-     *  dialog. */
+     *  felt in the hand — the surface's answer, not a dialog. */
     HARD_STOP_SPENT,
 
-    /** Not on the signed list: it is not behind the door (B-9.5). */
-    NOT_BEHIND_THE_DOOR,
+    /** One app already stands open, from either set. */
+    ONE_ALREADY_OPEN,
 
-    /** One app already stands open; the drum turns one at a time. */
-    ONE_ALREADY_OPEN
+    /** The name lives in the SIGNED set — it is not drum stock;
+     *  it opens from its own list, without the purse. */
+    IN_THE_SIGNED_SET,
+
+    /** On neither list: it is not behind the door (B-9.5). */
+    NOT_IN_THE_ROOM
 }
 
 /** The showing's four answers (B-18). */
@@ -95,14 +118,17 @@ enum class ShowingOutcome {
  * The antechamber's whole state. [allowedAsSigned] is the
  * signing's own list, in the signing's own order, carried
  * unchanged — this type never adds, suggests, sorts, or dims.
+ * [drumCandidates] is the room's beyond-set names, plain words.
  * [purseMinutes] is the day's remaining open minutes (P1's purse
  * arithmetic is its source; this is the surface's intake shape).
  */
 data class AntechamberState(
     val callingOut: List<String> = emptyList(),
     val allowedAsSigned: List<String>,
+    val drumCandidates: List<String> = emptyList(),
     val purseMinutes: Int,
     val openApp: String? = null,
+    val openViaDrum: Boolean = false,
     val heldCalls: List<HeldCall> = emptyList(),
     val heldCodes: List<HeldCode> = emptyList(),
     val openShowingId: String? = null,
@@ -112,32 +138,63 @@ data class AntechamberState(
     val purseSpent: Boolean get() = purseMinutes <= 0
 
     /**
-     * B-9.2 + B-9.4, as one getter so no surface can get it
-     * wrong: the allowed things, exactly as signed — or, when
-     * the day's open minutes are spent, GONE. There is no third
-     * form (no dimmed, no greyed) anywhere in this model.
+     * SET 1, at every purse state (ruling C-3): the signed list,
+     * exactly as signed. The purse never buys the day's own
+     * shape, so nothing here is spent, dimmed, or removed by it.
      */
-    val visibleAllowed: List<String>
-        get() = if (purseSpent) emptyList() else allowedAsSigned
+    val visibleAllowed: List<String> get() = allowedAsSigned
+
+    /** SET 2's stock: the drum's candidates — or, when the purse
+     *  is spent, GONE (B-9.4 as C-3 scopes it). Never dimmed:
+     *  there is no dimmed form anywhere in this model. */
+    val visibleDrumStock: List<String>
+        get() = if (purseSpent) emptyList() else drumCandidates
 
     /** The pile's whole weight, for its second grille's face. */
     val heldCount: Int get() = heldCalls.size + heldCodes.size
 
-    /** Crank the drum to [app]. One minute per turning. */
-    fun crankTo(app: String): Pair<AntechamberState, CrankOutcome> = when {
+    /**
+     * Open a SIGNED app (Set 1): directly, without the purse —
+     * it was decided while he was strong. One thing stands open
+     * at a time across both sets.
+     */
+    fun openSigned(app: String): Pair<AntechamberState, CrankOutcome> = when {
         app !in allowedAsSigned ->
-            this to CrankOutcome.NOT_BEHIND_THE_DOOR
+            this to CrankOutcome.NOT_IN_THE_ROOM
+        openApp != null ->
+            this to CrankOutcome.ONE_ALREADY_OPEN
+        else ->
+            copy(openApp = app, openViaDrum = false) to
+                CrankOutcome.OPENED_FROM_THE_SIGNED_SET
+    }
+
+    /**
+     * Crank the drum to [app] (Set 2): a reach beyond the signed
+     * set, one minute per turning. A signed name is refused by
+     * name — it lives in Set 1 and opens there, purse-free.
+     */
+    fun crankTo(app: String): Pair<AntechamberState, CrankOutcome> = when {
+        app in allowedAsSigned ->
+            this to CrankOutcome.IN_THE_SIGNED_SET
+        app !in drumCandidates ->
+            this to CrankOutcome.NOT_IN_THE_ROOM
         purseSpent ->
             this to CrankOutcome.HARD_STOP_SPENT
         openApp != null ->
             this to CrankOutcome.ONE_ALREADY_OPEN
         else ->
-            copy(openApp = app, purseMinutes = purseMinutes - 1) to CrankOutcome.TURNED
+            copy(
+                openApp = app,
+                openViaDrum = true,
+                purseMinutes = purseMinutes - 1
+            ) to CrankOutcome.TURNED
     }
 
-    /** Turn the open app back (it also returns itself when its
-     *  minute is spent — the caller fires this at the minute). */
-    fun returnOpen(): AntechamberState = copy(openApp = null)
+    /** Turn the open app back, whichever set it came from (the
+     *  drum's also returns itself when its minute is spent —
+     *  the caller fires this at the minute). */
+    fun returnOpen(): AntechamberState =
+        copy(openApp = null, openViaDrum = false)
 
     /** Take a held call: it leaves the pile, into his hand. */
     fun takeCall(id: String): AntechamberState =
@@ -149,10 +206,12 @@ data class AntechamberState(
         copy(heldCalls = heldCalls.filterNot { it.id == id })
 
     /**
-     * Show a held code's line (B-18): one minute per TAKING.
-     * Re-looks inside the open taking are free; a code shown
-     * while another taking stands open closes that taking and
-     * pays its own minute.
+     * Show a held code's line (B-18): one minute per TAKING,
+     * drawn from the same one purse as the drum (R2-4). Re-looks
+     * inside the open taking are free; a code shown while
+     * another taking stands open closes that taking and pays
+     * its own minute. A taking survives restart as written
+     * state (R2-5) — restart is not a closing by his act.
      */
     fun showCode(id: String): Pair<AntechamberState, ShowingOutcome> = when {
         heldCodes.none { it.id == id } ->
@@ -169,7 +228,8 @@ data class AntechamberState(
             ) to ShowingOutcome.SHOWN
     }
 
-    /** Close the pile: the open taking ends. Re-opening the pile
-     *  for the same code afterwards is a new showing (B-18). */
+    /** Close the pile BY HIS ACT: the open taking ends.
+     *  Re-opening the pile for the same code afterwards is a
+     *  new showing (B-18). */
     fun closePile(): AntechamberState = copy(openShowingId = null)
 }
