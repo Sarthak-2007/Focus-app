@@ -1020,6 +1020,19 @@ class ScreenshotHarnessTest {
         setRootApp()
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
         settle(900)
+        // BUILD-SR-28: the same #382 race this test already cures
+        // for the search row below, at the FIRST row: on the venue
+        // runner the drawer row is not always composed inside the
+        // fixed settle (three venue attempts failed at this click
+        // with "could not find node drawer_row_…", while the same
+        // head's targeted job passed — BUILD-SR-21's §L.34 flake).
+        // Wait for the row itself with the harness's own pumpUntil;
+        // the click and the capture are unchanged.
+        val firstRowShown = pumpUntil(15_000) {
+            composeRule.onAllNodesWithTag("drawer_row_$estimateRowId")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("the drawer must surface the Estimate Kept As History row", firstRowShown)
         composeRule.onNodeWithTag("drawer_row_$estimateRowId").performClick()
         settle(700)
         captureTo(File(shotsDir, "tc_drawer_detail_estimate.png"))
