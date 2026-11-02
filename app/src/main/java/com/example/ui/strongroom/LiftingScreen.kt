@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.domain.LiftingPlate
+import com.example.ui.theme.RelightState
 import com.example.ui.theme.PlateDarkRoom
 import com.example.ui.theme.PlateDoorGround
 import com.example.ui.theme.PlateInkGold
@@ -67,13 +68,24 @@ import kotlinx.coroutines.delay
  *     this screen only ever READS a struck plate), offered for
  *     reading, owed never (B-15): one touch marks it read.
  *
- * A FALLEN DAY has no ceremony: [failure] stands the ajar face
- * in its dark room from the first frame — no bolts, no opening,
- * no voice — with its bracket-struck plate beneath. This surface
- * is testimony only: the phone was already released at the
- * seal's death (R2-3), and the handing back runs as the same
- * precondition act — the failure is the seal's, never the
- * waiting people's, and neither is collected as a toll here.
+ * A FALLEN DAY has no ceremony: [failure] stands the testimony
+ * face in its dark room from the first frame — no bolts, no
+ * opening, no voice — with its bracket-struck plate beneath.
+ * The testimony face is P3's seal-gone form (B-11 / R7-1,
+ * consumed here per the ruling — P6 builds no face of its own):
+ * when the wiring supplies [failureFace], the fallen branch
+ * renders [SealedFaceScreen] in that form, in the DARK light of
+ * the dark room, with both of its callbacks standing as no-ops —
+ * testimony, never a gate (R2-3): a reach on it knocks nothing
+ * and its grille opens nothing. Only when no P3 form has been
+ * supplied does the branch fall back to this lane's earlier
+ * ajar placeholder ([AjarDoorFace]); the production composition
+ * (P9) supplies the form from the day's snapshot and its plate's
+ * bracket hours. This surface is testimony only: the phone was
+ * already released at the seal's death (R2-3), and the handing
+ * back runs as the same precondition act — the failure is the
+ * seal's, never the waiting people's, and neither is collected
+ * as a toll here.
  *
  * Wiring seams (named): the seal's firing, the strike itself, the
  * delivery of the handing back into the phone's own list, and the
@@ -86,6 +98,7 @@ fun LiftingScreen(
     plate: LiftingPlate.StruckPlate?,
     handingBack: LiftingPlate.HandingBack,
     failure: Boolean = false,
+    failureFace: SealedFaceState? = null,
     onHandedBack: (LiftingPlate.HandingBack) -> Unit = {},
     onBoltWithdrawn: (Int) -> Unit = {},
     onDoorSettled: () -> Unit = {},
@@ -160,7 +173,24 @@ fun LiftingScreen(
             .testTag("lifting_screen")
     ) {
         if (failure) {
-            AjarDoorFace()
+            if (failureFace != null) {
+                // P3's seal-gone form, consumed (R7-1): the same
+                // face, the seal absent, the bracket pair at the
+                // hour's rank — and nothing added. Its callbacks
+                // are no-ops by construction here: testimony is
+                // never a gate, a knock, or a route onward.
+                SealedFaceScreen(
+                    state = failureFace,
+                    lightState = RelightState.DARK,
+                    onKnockReach = {},
+                    onAntechamberRequest = {},
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(640.dp)
+                )
+            } else {
+                AjarDoorFace()
+            }
         } else {
             DoorAndBolts(boltsWithdrawn = ceremony.boltsWithdrawn, doorTravel = doorTravel)
         }
