@@ -46,6 +46,20 @@ enum class MotorClass {
      *  amplitude is encoded as duration (law 2). */
     FIXED_AMPLITUDE,
 
+    /** Profile C · ERM-LONG (FEEL-SR-1 §5.4): a slow-attack ERM
+     *  motor whose spin-up smears any segment under ~25 ms.
+     *  Voices render STRETCHED (×~1.4, tails merged, ratios
+     *  preserved, total ≤1.5 s) — the door rows carry FEEL-SR-1's
+     *  verbatim stretched arrays; other voices derive the stretch
+     *  from their canonical arrays by the same rule. Added as a
+     *  degrade class by BUILD-SR-20 (Stage 14 integration),
+     *  closing FEEL-SR-5's named gap 1. NOTE: no platform API
+     *  proves ERM-vs-LRA, so [classify] never guesses this class —
+     *  it is selected only by an explicit profile (the vendor
+     *  heuristic FEEL-SR-1 §5.2 assigns to the engine is a future
+     *  piece, named in BUILD-SR-20's record, not faked here). */
+    ERM_LONG,
+
     /** Pre-API-26: one-shots only, at the spec's own fallback. */
     LEGACY_ONESHOT,
 
@@ -116,6 +130,17 @@ fun degrade(waveform: HapticWaveform, profile: MotorProfile): EffectiveHaptic {
 
         MotorClass.FIXED_AMPLITUDE -> waveformForFixedMotor(waveform)
 
+        MotorClass.ERM_LONG -> when (waveform.kind) {
+            // Law 3 holds on ERM too: a resistance stop is a short
+            // seat, never a stretched buzz — the stretch exists to
+            // save articulation, not to lengthen a refusal.
+            WaveformKind.RESISTANCE ->
+                EffectiveHaptic.PlayOneShot(
+                    waveform.fallbackMs.coerceAtMost(MAX_LEGACY_RESISTANCE_MS)
+                )
+            else -> waveformForErmMotor(waveform)
+        }
+
         MotorClass.LEGACY_ONESHOT -> when (waveform.kind) {
             // Law 3: a stop on a one-shot motor is a short seat —
             // its own chosen fallback, capped short so it can
@@ -169,6 +194,36 @@ private fun waveformForFixedMotor(waveform: HapticWaveform): EffectiveHaptic.Pla
     val amplitudes = waveform.amplitudes.map { if (it == 0) 0 else DEFAULT_AMPLITUDE }
     return EffectiveHaptic.PlayWaveform(timings, amplitudes)
 }
+
+/**
+ * Profile C · ERM-LONG rendering (FEEL-SR-1 §5.4): the verbatim
+ * stretched arrays where the waveform carries them (the door
+ * rows), else the canonical arrays stretched by [ERM_STRETCH]
+ * with the total capped at [ERM_MAX_TOTAL_MS] — if the stretch
+ * would pass the cap, every segment scales back proportionally
+ * so ratios (the skeleton) survive and the cap holds. Gaps
+ * stretch with strikes: the silences are segments (L-2).
+ */
+private fun waveformForErmMotor(waveform: HapticWaveform): EffectiveHaptic.PlayWaveform {
+    if (waveform.ermLongTimingsMs != null && waveform.ermLongAmplitudes != null) {
+        return EffectiveHaptic.PlayWaveform(waveform.ermLongTimingsMs, waveform.ermLongAmplitudes)
+    }
+    val stretched = waveform.timingsMs.mapIndexed { i, t ->
+        if (i == 0) 0L else (t * ERM_STRETCH).roundToInt().toLong().coerceAtLeast(2L)
+    }
+    val total = stretched.sum()
+    val timings = if (total <= ERM_MAX_TOTAL_MS) stretched else {
+        val scale = ERM_MAX_TOTAL_MS.toFloat() / total
+        stretched.mapIndexed { i, t -> if (i == 0) 0L else (t * scale).roundToInt().toLong().coerceAtLeast(2L) }
+    }
+    return EffectiveHaptic.PlayWaveform(timings, waveform.amplitudes)
+}
+
+/** FEEL-SR-1 §5.4's stretch factor for ERM-LONG renderings. */
+const val ERM_STRETCH = 1.4f
+
+/** FEEL-SR-1 §5.4's ceiling: no ERM-LONG rendering exceeds 1.5 s. */
+const val ERM_MAX_TOTAL_MS = 1500L
 
 /** Mirrors `VibrationEffect.DEFAULT_AMPLITUDE`; carried as a
  *  literal so this file stays free of Android imports. */

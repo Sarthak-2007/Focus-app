@@ -25,11 +25,35 @@ data class HapticWaveform(
     val amplitudes: List<Int>,
     val fallbackMs: Long,
     val kind: WaveformKind = WaveformKind.NEUTRAL,
-    val composition: List<PrimitiveSegment> = emptyList()
+    val composition: List<PrimitiveSegment> = emptyList(),
+    /** Profile C · ERM-LONG rendering (FEEL-SR-1 §5.4), where the
+     *  feel seat filed one verbatim: the same voice stretched for a
+     *  slow-attack ERM motor (segments ×~1.4, tails merged, ratios
+     *  preserved, total ≤1.5 s). Null where no verbatim ERM form
+     *  was filed — [degrade] then derives the stretch from the
+     *  canonical arrays by the same §5.4 rule. */
+    val ermLongTimingsMs: List<Long>? = null,
+    val ermLongAmplitudes: List<Int>? = null
 ) {
     init {
         require(timingsMs.size == amplitudes.size) {
             "timings/amplitudes must pair 1:1 (${timingsMs.size} vs ${amplitudes.size})"
+        }
+        require((ermLongTimingsMs == null) == (ermLongAmplitudes == null)) {
+            "an ERM-LONG form is both arrays or neither"
+        }
+        if (ermLongTimingsMs != null && ermLongAmplitudes != null) {
+            require(ermLongTimingsMs.size == ermLongAmplitudes.size) {
+                "ERM-LONG timings/amplitudes must pair 1:1"
+            }
+            require(ermLongTimingsMs.isNotEmpty() && ermLongTimingsMs[0] == 0L && ermLongAmplitudes[0] == 0) {
+                "ERM-LONG segment 0 is the lead-in: timing 0, amplitude 0"
+            }
+            require(ermLongTimingsMs.all { it >= 0L }) { "ERM-LONG timings are never negative" }
+            require(ermLongAmplitudes.all { it in 0..255 }) { "ERM-LONG amplitudes live in 0..255" }
+            require(ermLongTimingsMs.sum() <= 1500L) {
+                "ERM-LONG total ≤1.5 s (FEEL-SR-1 §5.4): ${ermLongTimingsMs.sum()} ms"
+            }
         }
         require(timingsMs.isNotEmpty() && timingsMs[0] == 0L && amplitudes[0] == 0) {
             "segment 0 is the lead-in: timing 0, amplitude 0"

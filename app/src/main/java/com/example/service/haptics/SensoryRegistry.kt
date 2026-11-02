@@ -126,7 +126,28 @@ object SensoryRegistry {
                     0,
                     255, 150, 70, 35
                 ),
-                fallbackMs = 90L, kind = WaveformKind.CEREMONY
+                fallbackMs = 90L, kind = WaveformKind.CEREMONY,
+                // Profile C · ERM-LONG, FEEL-SR-1 §5.4 verbatim (1,426 ms).
+                ermLongTimingsMs = listOf(
+                    0L,
+                    80L, 80L, 80L, 80L, 80L, 80L, 80L, 80L, 80L,
+                    100L,
+                    24L, 44L,
+                    150L,
+                    28L, 56L,
+                    160L,
+                    36L, 72L, 36L
+                ),
+                ermLongAmplitudes = listOf(
+                    0,
+                    55, 85, 120, 155, 185, 200, 185, 145, 90,
+                    0,
+                    235, 80,
+                    0,
+                    250, 95,
+                    0,
+                    255, 120, 50
+                )
             ),
             SoundCue("three-descending-clunks"),
             MotionCue("door-swing-and-bolts"),
@@ -156,7 +177,28 @@ object SensoryRegistry {
                     0,
                     90, 145, 185, 200, 185, 155, 120, 85, 55, 30
                 ),
-                fallbackMs = 80L, kind = WaveformKind.CEREMONY
+                fallbackMs = 80L, kind = WaveformKind.CEREMONY,
+                // Profile C · ERM-LONG, FEEL-SR-1 §5.4 verbatim (1,486 ms).
+                ermLongTimingsMs = listOf(
+                    0L,
+                    30L, 30L, 18L, 24L,
+                    140L,
+                    26L, 26L, 14L, 20L,
+                    140L,
+                    20L, 20L, 12L, 16L,
+                    120L,
+                    80L, 80L, 80L, 80L, 80L, 80L, 80L, 80L, 80L, 110L
+                ),
+                ermLongAmplitudes = listOf(
+                    0,
+                    80, 140, 230, 60,
+                    0,
+                    75, 125, 215, 50,
+                    0,
+                    65, 110, 195, 40,
+                    0,
+                    90, 145, 185, 200, 185, 155, 120, 85, 55, 30
+                )
             ),
             SoundCue("lifting-bolts-and-door-weight"),
             MotionCue("bolts-withdraw-and-door-opens"),
