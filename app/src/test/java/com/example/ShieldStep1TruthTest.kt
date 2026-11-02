@@ -5,8 +5,7 @@ import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
 import com.example.data.SightState
 import com.example.data.groupedByRule
-import com.example.ui.components.shieldControlsLocked
-import com.example.ui.components.shieldReceiptLine
+import com.example.session.shieldReceiptLine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -36,21 +35,6 @@ class ShieldStep1TruthTest {
     private val freshBeat = verified + 2_000L // the loop beats ~2s
 
     // ---- the wedge -------------------------------------------------
-
-    @Test
-    fun wedge_openWhenNoSession() {
-        assertFalse(shieldControlsLocked(isSessionActive = false, isGracePeriod = false))
-    }
-
-    @Test
-    fun wedge_lockedInHold() {
-        assertTrue(shieldControlsLocked(isSessionActive = true, isGracePeriod = false))
-    }
-
-    @Test
-    fun wedge_graceWindowStaysOpen() {
-        assertFalse(shieldControlsLocked(isSessionActive = true, isGracePeriod = true))
-    }
 
     // ---- the receipt -----------------------------------------------
 

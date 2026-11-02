@@ -84,10 +84,10 @@ import com.example.data.MonolithRepository
 import com.example.data.groupedByRule
 import com.example.data.groupedForCatalogue
 import com.example.service.TactileSoundEngine
-import com.example.ui.TierChangeForUndo
-import com.example.ui.ShieldBlockingProof
-import com.example.ui.ShieldBlockingStatus
-import com.example.ui.routineRunningNowSuffix
+import com.example.session.TierChangeForUndo
+import com.example.service.ShieldBlockingProof
+import com.example.service.ShieldBlockingStatus
+import com.example.service.routineRunningNowSuffix
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.onInkControlFill
 import com.example.ui.components.inkControlFill
@@ -1200,7 +1200,7 @@ private fun LazyListScope.shieldSearchFilterStrip(
         // line never claims an app is absent from the phone.
         if (filteredApps.isEmpty()) {
             val existsOutsideFilter = searchQuery.isNotBlank() && allApps.any {
-                com.example.ui.appMatchesQuery(it, searchQuery)
+                com.example.session.appMatchesQuery(it, searchQuery)
             }
             Text(
                 text = when {
@@ -1381,7 +1381,7 @@ private fun LazyListScope.shieldGuards(
             // node, stale and slow-scan states, printed from
             // the DetectorHealth record the services write.
             Text(
-                text = com.example.ui.components.detectorLineFor(
+                text = com.example.service.detectorLineFor(
                     com.example.service.DetectorHealth.snapshot(),
                     SystemClock.elapsedRealtime()
                 ).text,

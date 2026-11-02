@@ -9,7 +9,7 @@ import com.example.data.InstalledPackage
 import com.example.service.InterceptPath
 import com.example.service.MEDIA_STYLE_TEMPLATE
 import com.example.service.isMediaPlaybackNotification
-import com.example.ui.peekOfferFor
+import com.example.session.peekOfferFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

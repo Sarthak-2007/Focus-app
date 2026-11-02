@@ -1,4 +1,6 @@
 package com.example.ui.components
+
+import com.example.session.DeskClockEntryCause
 import androidx.compose.ui.res.stringResource
 import com.example.R
 
@@ -71,10 +73,10 @@ import com.example.service.InterceptPath
 import com.example.service.TactileSoundEngine
 import com.example.data.MonolithRepository
 import com.example.data.MonolithWeek
-import com.example.ui.AirlockInterceptState
-import com.example.ui.taperWallSeconds
-import com.example.ui.DisarmChallengeState
-import com.example.ui.PeekWithheld
+import com.example.session.AirlockInterceptState
+import com.example.session.taperWallSeconds
+import com.example.session.DisarmChallengeState
+import com.example.session.PeekWithheld
 import com.example.ui.theme.AnonymousProFamily
 import com.example.ui.theme.MonolithCurves
 import com.example.ui.theme.NightBlockBarSurface
@@ -183,7 +185,6 @@ private const val DOOR_INVARIANT_RATIO = 1.10f
 /** A-4's entry causes: the arrival motion is keyed to WHY the
  *  face rose, and the witness discriminator is the settle
  *  machine's own lastInteraction stamp (carried by the VM). */
-enum class DeskClockEntryCause { UNWATCHED, WATCHED, HAND, SEEDED }
 
 /** The face's print alphas at one instant (A-2/A-3, pure). */
 internal data class DeskClockAlphas(
@@ -2120,14 +2121,14 @@ internal fun peekPillCountdownText(secondsRemaining: Int): String {
 
 /**
  * Issue #99 F2: THE PEEK COUNTDOWN PILL — the canonical rendering of
- * [com.example.ui.FloatingPeekPillState] (this cures #101-F3 by
+ * [com.example.session.FloatingPeekPillState] (this cures #101-F3 by
  * cross-reference: one pill, rendered here, collected in
  * MainActivity). App name, remaining time derived from the lease,
  * and a ✕ that ends the peek early via end2MinutePeekEarly.
  */
 @Composable
 fun PeekCountdownPill(
-    state: com.example.ui.FloatingPeekPillState,
+    state: com.example.session.FloatingPeekPillState,
     onEndEarly: () -> Unit
 ) {
     // Issue #102 (retained DAYLIGHT break 2): the pill arrives

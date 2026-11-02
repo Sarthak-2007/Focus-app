@@ -71,24 +71,24 @@ import com.example.service.TactileSoundEngine
 import com.example.service.UsageAccess
 import com.example.service.Warrant
 import com.example.service.WarrantState
-import com.example.ui.ArmPhase
+import com.example.session.ArmPhase
 import com.example.ui.components.BlockitActionChip
 import com.example.ui.components.ImprintSlot
-import com.example.ui.components.RefusalAction
+import com.example.session.RefusalAction
 import com.example.ui.components.RefusalSentenceSlot
 import com.example.ui.components.StripDensity
-import com.example.ui.components.RefusalSentence
+import com.example.session.RefusalSentence
 import com.example.ui.components.endsAtText
 import com.example.ui.components.isReducedMotion
-import com.example.ui.components.sessionEndsAtMillis
+import com.example.session.sessionEndsAtMillis
 import com.example.ui.components.imprintTenantText
 import com.example.ui.components.SealBar
 import com.example.ui.components.BoltInputs
 import com.example.ui.components.boltStateFor
 import com.example.ui.components.endsAtNumeralsFor
-import com.example.ui.components.jamSentenceFor
-import com.example.ui.components.provingSentenceFor
-import com.example.ui.components.refusalSentenceFor
+import com.example.session.jamSentenceFor
+import com.example.session.provingSentenceFor
+import com.example.session.refusalSentenceFor
 import com.example.ui.components.sealBarStateFor
 import com.example.ui.components.inkControlFill
 import com.example.ui.components.onInkControlFill
@@ -197,13 +197,13 @@ fun TactileDeckScreen(
     // Slice D (the proof strip, the sentence slot, the imprint): the
     // host owns the wire; the screen renders its word.
     appsCellCount: Int? = null,
-    appsSplit: com.example.ui.MonolithViewModel.AppsSplit? = null,
+    appsSplit: com.example.session.MonolithViewModel.AppsSplit? = null,
     deckWarrant: Warrant? = null,
     // Issue #70 F3: the first-run primer's gate (host-owned
     // one-bit flag, mirroring the PARK intro) — true only until
     // the first session has ever run.
     deckPrimerPending: Boolean = false,
-    sealFreeze: com.example.ui.MonolithViewModel.SealFreeze? = null,
+    sealFreeze: com.example.session.MonolithViewModel.SealFreeze? = null,
     // Issue #4 B-C1 (the Bolt fold's shield-beat input): the
     // shield loop's heartbeat from the host's WatchStore
     // snapshot — engineHeartbeatMono (elapsedRealtime, stamped
@@ -247,7 +247,7 @@ fun TactileDeckScreen(
     sealT0MonoMs: Long? = null,
     // Slice E: the finish machine's held frame and the standing
     // receipt, with the sled gate's host seams (Schlitten §3).
-    finishState: com.example.ui.MonolithViewModel.FinishState? = null,
+    finishState: com.example.session.MonolithViewModel.FinishState? = null,
     receiptState: com.example.data.ReceiptState? = null,
     // Issue #135 F2: the LAST RECEIPT door — the most recent session
     // that claimed a №, offered only while no receipt stands and no
@@ -1539,7 +1539,7 @@ private fun DeckPinnedStack(
     groundNight: Boolean,
     armResetKey: Int,
     warrantProvider: () -> Warrant,
-    appsSplit: com.example.ui.MonolithViewModel.AppsSplit?,
+    appsSplit: com.example.session.MonolithViewModel.AppsSplit?,
     appsCell: Pair<String, StripDensity>,
     idleTimeCell: Pair<String, StripDensity>,
     commitInFlight: Boolean,
@@ -2162,7 +2162,7 @@ private data class DeckReadout(
 )
 
 private fun deckReadoutFor(
-    finishState: com.example.ui.MonolithViewModel.FinishState?,
+    finishState: com.example.session.MonolithViewModel.FinishState?,
     isSessionRunning: Boolean,
     activeSession: FocusSessionEntity?,
     dialMinutes: Int,
@@ -2285,7 +2285,7 @@ private data class FrozenSeal(
 )
 
 private fun frozenSealFor(
-    sealFreeze: com.example.ui.MonolithViewModel.SealFreeze?,
+    sealFreeze: com.example.session.MonolithViewModel.SealFreeze?,
     activeSessionId: Int?,
     fbFrozenKey: Int?,
     fbFrozenCount: Int?,

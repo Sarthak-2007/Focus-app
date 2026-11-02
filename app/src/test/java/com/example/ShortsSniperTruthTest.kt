@@ -11,7 +11,7 @@ import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.MonolithAccessibilityService
 import com.example.service.TactileSoundEngine
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithViewModel
 import java.time.Duration
 import kotlinx.coroutines.runBlocking
 import org.junit.After

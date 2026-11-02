@@ -1,8 +1,8 @@
 package com.example
 
 import com.example.data.Detention
-import com.example.ui.SledReceiptMark
-import com.example.ui.SledReturnGate
+import com.example.session.SledReceiptMark
+import com.example.session.SledReturnGate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

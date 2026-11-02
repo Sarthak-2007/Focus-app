@@ -48,7 +48,7 @@ import androidx.compose.ui.unit.sp
 import com.example.data.SystemGuardStatus
 import com.example.service.UsageAccess
 import com.example.service.WatchStore
-import com.example.ui.ArmPhase
+import com.example.session.ArmPhase
 import com.example.service.Warrant
 import com.example.service.WarrantState
 import com.example.ui.theme.AnonymousProFamily
@@ -79,6 +79,9 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.example.service.GuardLinePrint
+import com.example.session.RefusalAction
+import com.example.session.RefusalSentence
 
 /**
  * Helper to build mixed-typography strings where words render in Google Sans / PlusJakartaSans

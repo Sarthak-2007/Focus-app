@@ -9,7 +9,7 @@ import com.example.data.SurfaceRule
 import com.example.data.surfaceViewIdsFor
 import com.example.data.withLearnedViewId
 import com.example.service.DetectorHealthSnapshot
-import com.example.ui.components.detectorLineFor
+import com.example.service.detectorLineFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

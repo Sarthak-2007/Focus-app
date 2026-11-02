@@ -19,7 +19,7 @@ import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithViewModel
 import com.example.ui.components.ParkDrawer
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.runBlocking

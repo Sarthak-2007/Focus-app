@@ -11,7 +11,7 @@ import com.example.data.InterceptLogEntity
 import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.service.TactileSoundEngine
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithViewModel
 import com.example.ui.components.escalatedAirlockWallSeconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -83,8 +83,8 @@ class AirlockEscalationWiringTest {
 
     private fun awaitState(
         viewModel: MonolithViewModel,
-        condition: (com.example.ui.AirlockInterceptState) -> Boolean
-    ): com.example.ui.AirlockInterceptState {
+        condition: (com.example.session.AirlockInterceptState) -> Boolean
+    ): com.example.session.AirlockInterceptState {
         var attempts = 0
         while (!condition(viewModel.airlockState.value) && attempts < 400) {
             shadowOf(Looper.getMainLooper()).idle()

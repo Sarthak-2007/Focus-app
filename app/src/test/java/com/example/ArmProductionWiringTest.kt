@@ -10,10 +10,10 @@ import com.example.service.MonolithShieldService
 import com.example.service.SessionSealTransitionImpl
 import com.example.service.SessionSealTransitions
 import com.example.service.TactileSoundEngine
-import com.example.ui.ArmPhase
-import com.example.ui.ArmProvingController
-import com.example.ui.LiveArmWitnesses
-import com.example.ui.RepositoryArmSessionPort
+import com.example.session.ArmPhase
+import com.example.session.ArmProvingController
+import com.example.session.LiveArmWitnesses
+import com.example.session.RepositoryArmSessionPort
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.advanceTimeBy

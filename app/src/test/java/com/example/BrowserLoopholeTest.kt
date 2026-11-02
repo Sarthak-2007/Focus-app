@@ -10,7 +10,7 @@ import com.example.service.SitePeekStore
 import com.example.service.isSupportedBrowserPackage
 import com.example.service.matchBlockedDomain
 import com.example.service.sitePeekExempts
-import com.example.ui.peekOfferFor
+import com.example.session.peekOfferFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

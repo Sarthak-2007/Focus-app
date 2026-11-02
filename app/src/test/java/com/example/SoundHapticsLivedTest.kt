@@ -25,11 +25,11 @@ import com.example.service.SoundAudibility
 import com.example.service.SoundEffectsSetting
 import com.example.service.TactileSoundEngine
 import com.example.service.WatchStore
-import com.example.ui.MonolithDestination
-import com.example.ui.MonolithViewModel
-import com.example.ui.completionPulseDelayMs
+import com.example.session.MonolithDestination
+import com.example.session.MonolithViewModel
+import com.example.session.completionPulseDelayMs
 import com.example.ui.components.ParkDrawer
-import com.example.ui.peekWarningTickDue
+import com.example.session.peekWarningTickDue
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.SledSwitchView
 import kotlinx.coroutines.Job

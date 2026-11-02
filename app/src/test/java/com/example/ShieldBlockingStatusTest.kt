@@ -8,11 +8,11 @@ import com.example.data.RoutineSchedule
 import com.example.data.SmartLoadout
 import com.example.data.groupedForCatalogue
 import com.example.service.UsageAccess
-import com.example.ui.ACCESS_PROOF_FRESH_MILLIS
-import com.example.ui.ShieldBlockingProof
-import com.example.ui.computeShieldBlockingStatus
-import com.example.ui.routineCapWord
-import com.example.ui.routineRunningNowSuffix
+import com.example.service.ACCESS_PROOF_FRESH_MILLIS
+import com.example.service.ShieldBlockingProof
+import com.example.service.computeShieldBlockingStatus
+import com.example.service.routineCapWord
+import com.example.service.routineRunningNowSuffix
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

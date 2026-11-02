@@ -9,7 +9,7 @@ import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.MonolithWeek
 import com.example.data.SessionOutcome
-import com.example.ui.stopwatchRemainingFloorSeconds
+import com.example.session.stopwatchRemainingFloorSeconds
 import java.time.Duration
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals

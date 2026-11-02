@@ -4,32 +4,20 @@ import com.example.data.FinishKind
 import com.example.data.FocusSessionEntity
 import com.example.data.finishKindOf
 import com.example.data.finishPulses
-import com.example.ui.DeskClockSettleMachine
-import com.example.ui.DeskClockVerdict
-import com.example.ui.NightReturnPhase
-import com.example.ui.NightReturnState
-import com.example.ui.chargerDisconnectStamp
-import com.example.ui.deskClockSurrenderDeadlineMono
-import com.example.ui.deskClockTremorVerdict
-import com.example.ui.nightReturnEntryIsSnap
-import com.example.ui.nightReturnExpireIfStale
-import com.example.ui.nightReturnOnBloom
-import com.example.ui.nightReturnOnHandDismissal
-import com.example.ui.nightReturnOnStandDown
-import com.example.ui.nightReturnOnUnveil
-import com.example.ui.nightReturnScrimAlpha
-import com.example.ui.components.deskClockBannerText
-import com.example.ui.components.deskClockBlockLine
-import com.example.ui.components.deskClockBreakLine
-import com.example.ui.components.deskClockEndsLine
-import com.example.ui.components.deskClockHeroLabel
-import com.example.ui.components.deskClockHeroText
-import com.example.ui.components.deskClockNowLine
-import com.example.ui.components.deskClockRemainingSeconds
-import com.example.ui.components.deskClockPrintAlphas
-import com.example.ui.components.deskClockSubLine
-import com.example.ui.components.tearFraction
-import com.example.ui.components.TEAR_HAIR_FRACTION
+import com.example.session.DeskClockSettleMachine
+import com.example.session.DeskClockVerdict
+import com.example.session.NightReturnPhase
+import com.example.session.NightReturnState
+import com.example.session.chargerDisconnectStamp
+import com.example.session.deskClockSurrenderDeadlineMono
+import com.example.session.deskClockTremorVerdict
+import com.example.session.nightReturnEntryIsSnap
+import com.example.session.nightReturnExpireIfStale
+import com.example.session.nightReturnOnBloom
+import com.example.session.nightReturnOnHandDismissal
+import com.example.session.nightReturnOnStandDown
+import com.example.session.nightReturnOnUnveil
+import com.example.session.nightReturnScrimAlpha
 import java.util.Calendar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -40,7 +28,8 @@ import org.junit.Test
 /**
  * FLOW §2 + issue #13 (Session Room merge) — the desk clock's
  * auto-raise and print law, proven against the pure machinery:
- * DeskClockSettleMachine (settle / cold-open / dismissal, V1 as
+ * the DeskClockSettle file's DeskClockSettleMachine (settle /
+ * cold-open / dismissal, V1 as
  * amended: three-state tremor verdict, HELD suppression, duty
  * cycle, wake re-arm) and the overlay's print derivations in
  * AirlockAndDisarmOverlays.kt (A-1 block line, A-2 descent
@@ -448,220 +437,6 @@ class DeskClockFlowTest {
     )
 
     @Test
-    fun idleFacePrintsTheCurrentTime_notTheDialSetting() {
-        val now = wallAt(3, 30)
-        assertEquals("03:30", deskClockHeroText(null, now))
-        assertEquals("03:30", deskClockHeroText(session(isActive = false), now))
-    }
-
-    @Test
-    fun runningHeroReadsTheSpan_andTheStopwatchItsElapsed() {
-        val now = wallAt(21, 0)
-        assertEquals("58:59", deskClockHeroText(session(elapsedSeconds = 61), now))
-        // Wave-2 (Salz C-8): L1 grammar — ≥ 60 min is H:MM,
-        // never total-minutes ("125:49" is dead).
-        assertEquals(
-            "2:05",
-            deskClockHeroText(session(isStopwatchMode = true, elapsedSeconds = 7549), now)
-        )
-    }
-
-    @Test
-    fun routineHeroCountsToTheWindowEnd_notTheFlooredSpan() {
-        // Wave-2 (Daemmer DAE-1): a routine row whose span
-        // arithmetic says 30 s remain (target built from floored
-        // minutes) while its frozen window ends 75 s from now —
-        // the hero must read the window's end (01:15), the same
-        // instant ENDS prints, never the span's early 00:30.
-        val now = wallAt(3, 28, 45)
-        val s = session(
-            targetDurationSeconds = 3600, elapsedSeconds = 3570,
-            routineId = 3, windowEndMillis = now + 75_000L
-        )
-        assertEquals("01:15", deskClockHeroText(s, now))
-        assertEquals("ENDS 03:30", deskClockEndsLine(s, now))
-    }
-
-    @Test
-    fun heroLabel_isInseparableInEveryState() {
-        // Politur P-1: LEFT (timed) / ELAPSED (stopwatch) /
-        // THE TIME NOW (idle, incl. an inactive row).
-        assertEquals("THE TIME NOW", deskClockHeroLabel(null))
-        assertEquals("THE TIME NOW", deskClockHeroLabel(session(isActive = false)))
-        assertEquals("LEFT", deskClockHeroLabel(session(elapsedSeconds = 0)))
-        assertEquals(
-            "ELAPSED",
-            deskClockHeroLabel(session(isStopwatchMode = true, elapsedSeconds = 5))
-        )
-    }
-
-    @Test
-    fun heroBoundary_oneFrameChangeAtTheHour() {
-        // §7 debt 1, hero share: 3601 / 3600 / 3599 s remaining
-        // cross H:MM -> MM:SS with no intermediate glyph and no
-        // total-minutes figure at any point.
-        val now = wallAt(21, 0)
-        assertEquals(
-            "1:00",
-            deskClockHeroText(session(targetDurationSeconds = 3601, elapsedSeconds = 0), now)
-        )
-        assertEquals(
-            "1:00",
-            deskClockHeroText(session(targetDurationSeconds = 3600, elapsedSeconds = 0), now)
-        )
-        assertEquals(
-            "59:59",
-            deskClockHeroText(session(targetDurationSeconds = 3600, elapsedSeconds = 1), now)
-        )
-    }
-
-    @Test
-    fun subLineLastMinute_keysToTheWindowForRoutineRows() {
-        // Politur P-2: the routine row of DAE-1's test — span
-        // arithmetic says 30 s remain, the window says 75 s.
-        // The hero reads 01:15, so NOW must NOT drop yet; and
-        // inside the window's true last minute it MUST drop,
-        // even though the span already reads 0.
-        val now = wallAt(3, 28, 45)
-        val s = session(
-            targetDurationSeconds = 3600, elapsedSeconds = 3570,
-            routineId = 3, windowEndMillis = now + 75_000L
-        )
-        assertEquals(75, deskClockRemainingSeconds(s, now))
-        assertEquals("NOW 03:28 · ENDS 03:30", deskClockSubLine(s, now))
-        // 30 s later the window has 45 s left — the promotion
-        // fires on the window's minute, not the span's.
-        val inLastMinute = now + 30_000L
-        assertEquals(45, deskClockRemainingSeconds(s, inLastMinute))
-        assertEquals("ENDS 03:30", deskClockSubLine(s, inLastMinute))
-    }
-
-    @Test
-    fun nowLineWearsItsLabel() {
-        assertEquals("NOW 21:47", deskClockNowLine(wallAt(21, 47)))
-    }
-
-    @Test
-    fun bannerChain_taskThenIntentionThenLoadoutFloor() {
-        // A-12 / C-2: L7's chain gains the row's own loadout
-        // (profileName) as its floor — anonymity only when even
-        // that is blank, which no arming path produces.
-        assertNull(deskClockBannerText(null, null))
-        assertNull(deskClockBannerText(null, "", "  "))
-        assertEquals("Integration — Ex 4.2", deskClockBannerText("Integration — Ex 4.2", "ignored"))
-        assertEquals("Revise optics", deskClockBannerText(null, "Revise optics"))
-        assertEquals("STUDY", deskClockBannerText(null, null, "STUDY"))
-        assertEquals("SLEEP", deskClockBannerText(null, null, "Routine: SLEEP"))
-    }
-
-    @Test
-    fun breakLinePrintsTheCuredSentence_andOnlyInABreak() {
-        // §C-3 as cured by Wave-2 (Salz C-18): PEEK APPS OPEN,
-        // UNTIL in wall time — the end derived at the reading
-        // instant (now + remaining), never a countdown.
-        val now = wallAt(21, 25)
-        assertEquals("BREAK — PEEK APPS OPEN · UNTIL 21:27", deskClockBreakLine(true, 61, now))
-        assertEquals("BREAK — PEEK APPS OPEN · UNTIL 21:35", deskClockBreakLine(true, 600, now))
-        assertEquals("BREAK — PEEK APPS OPEN · UNTIL 21:26", deskClockBreakLine(true, 1, now))
-        assertNull(deskClockBreakLine(false, 300, now))
-    }
-
-    @Test
-    fun subLine_seats() {
-        // A-6: timed reads NOW · ENDS; the last minute drops
-        // NOW; a stopwatch reads NOW alone.
-        val now = wallAt(21, 47)
-        assertEquals(
-            "NOW 21:47 · ENDS 22:47",
-            deskClockSubLine(session(elapsedSeconds = 0), now)
-        )
-        assertEquals(
-            "ENDS 21:48",
-            deskClockSubLine(session(elapsedSeconds = 3570), wallAt(21, 47, 30))
-        )
-        assertEquals(
-            "NOW 21:47",
-            deskClockSubLine(session(isStopwatchMode = true, elapsedSeconds = 7549), now)
-        )
-    }
-
-    @Test
-    fun endsForRoutineRows_derivesFromWindowEndMillis() {
-        // A-12 / C-1: the face promises the end the stand-down
-        // will keep — the routine row's frozen window end, not
-        // the span arithmetic (which can differ from the window).
-        val now = wallAt(3, 30)
-        val row = session(
-            targetDurationSeconds = 3600, elapsedSeconds = 0,
-            routineId = 5, windowEndMillis = wallAt(4, 0)
-        )
-        assertEquals("ENDS 04:00", deskClockEndsLine(row, now))
-    }
-
-    @Test
-    fun blockLine_stateOnly_withUntil_finalBlockFigureless() {
-        // A-1: k < n prints the block's end in wall time; the
-        // final block prints no figure; a break suppresses the
-        // line whole; a single-block span has no block line.
-        val now = wallAt(21, 0)
-        val multi = session(
-            targetDurationSeconds = 1500, elapsedSeconds = 600,
-            totalStudyBlocks = 3, currentBlockIndex = 1
-        )
-        assertEquals("BLOCK 1 OF 3 · UNTIL 21:15", deskClockBlockLine(multi, now))
-        assertEquals(
-            "BLOCK 3 OF 3",
-            deskClockBlockLine(multi.copy(currentBlockIndex = 3, elapsedSeconds = 600), now)
-        )
-        assertNull(
-            deskClockBlockLine(
-                multi.copy(isInSafeBreak = true, safeBreakSecondsRemaining = 300), now
-            )
-        )
-        assertNull(deskClockBlockLine(session(elapsedSeconds = 0), now))
-        assertNull(
-            deskClockBlockLine(
-                session(isStopwatchMode = true, totalStudyBlocks = 3), now
-            )
-        )
-    }
-
-    @Test
-    fun alphas_descentFloors_doorInvariant_dawnRamp() {
-        // A-2: at span start, standing alphas.
-        val start = deskClockPrintAlphas(0f, descentSuspended = false, 3600, false)
-        assertEquals(0.55f, start.hero, 0.001f)
-        // At span end: hero at its 0.36 floor, number lines at
-        // their 0.50 floor, exit never below 0.40 and always
-        // ≥ 1.10 × hero (the door invariant, ratio form).
-        val end = deskClockPrintAlphas(1f, descentSuspended = false, 3600, false)
-        assertEquals(0.36f, end.hero, 0.001f)
-        assertEquals(0.50f, end.numberLine, 0.001f)
-        assertTrue(end.exit >= 0.40f)
-        assertTrue(end.exit >= end.hero * 1.10f - 0.001f)
-        // A-2(iii): a fresh raise suspends the descent.
-        val raised = deskClockPrintAlphas(1f, descentSuspended = true, 3600, false)
-        assertEquals(0.55f, raised.hero, 0.001f)
-        // A-3: the dawn ramp — halfway through the final minute
-        // the descended hero is halfway back to standing.
-        val dawn = deskClockPrintAlphas(1f, descentSuspended = false, 30, false)
-        assertEquals(0.455f, dawn.hero, 0.001f)
-        // At T-0 the ramp completes.
-        val t0 = deskClockPrintAlphas(1f, descentSuspended = false, 1, false)
-        assertTrue(t0.hero > 0.54f)
-    }
-
-    @Test
-    fun tearFraction_isBoundedByHairAndSpan() {
-        // A-7(i): coerceIn(hair, 1f) — a delayed finish can run
-        // elapsed past target; the rule never overprints.
-        assertEquals(TEAR_HAIR_FRACTION, tearFraction(-1f), 0.0001f)
-        assertEquals(TEAR_HAIR_FRACTION, tearFraction(0f), 0.0001f)
-        assertEquals(0.5f, tearFraction(0.5f), 0.0001f)
-        assertEquals(1f, tearFraction(1.5f), 0.0001f)
-    }
-
-    @Test
     fun standDownIsSilent_andClassified() {
         // A-10(i): finishPulses is false for the stand-down kind;
         // the VM gates the whole ceremony's calls on the kind.
@@ -672,113 +447,6 @@ class DeskClockFlowTest {
         assertFalse(finishPulses(kind!!, row))
     }
 
-    // ---------------------------------------------------------------
-    // §7 debt 10: state × figure × expected-string table
-    // ---------------------------------------------------------------
-
-    private data class FaceCase(
-        val state: String,
-        val session: FocusSessionEntity?,
-        val now: Long,
-        val hero: String,
-        // Wave-3 (Politur P-4): the label column — P-1's defect
-        // lived in the table's blind spot (no label field), so
-        // the table asserts the label in every state now.
-        val label: String,
-        val subLine: String?,
-        val blockLine: String?,
-        val banner: String?
-    )
-
-    @Test
-    fun faceTable_stateByFigureByExpectedString() {
-        val t2147 = wallAt(21, 47)
-        val routineLastMinuteNow = wallAt(3, 29, 15)
-        val cases = listOf(
-            FaceCase(
-                state = "IDLE",
-                session = null, now = wallAt(3, 30),
-                hero = "03:30", label = "THE TIME NOW",
-                subLine = null, blockLine = null, banner = null
-            ),
-            FaceCase(
-                state = "RUNNING TIMED",
-                session = session(elapsedSeconds = 0), now = t2147,
-                hero = "1:00", label = "LEFT", subLine = "NOW 21:47 · ENDS 22:47",
-                blockLine = null, banner = "STUDY"
-            ),
-            FaceCase(
-                state = "RUNNING MULTI-BLOCK",
-                session = session(
-                    targetDurationSeconds = 1500, elapsedSeconds = 600,
-                    totalStudyBlocks = 3, currentBlockIndex = 1
-                ),
-                now = wallAt(21, 0),
-                hero = "1:25", label = "LEFT", subLine = "NOW 21:00 · ENDS 22:25",
-                blockLine = "BLOCK 1 OF 3 · UNTIL 21:15", banner = "STUDY"
-            ),
-            FaceCase(
-                state = "BREAK (block line suppressed, break line owns the slot)",
-                session = session(
-                    targetDurationSeconds = 1500, elapsedSeconds = 1500,
-                    totalStudyBlocks = 3, currentBlockIndex = 1,
-                    isInSafeBreak = true, safeBreakSecondsRemaining = 300
-                ),
-                now = wallAt(21, 25),
-                hero = "1:05", label = "LEFT", subLine = "NOW 21:25 · ENDS 22:30",
-                blockLine = null, banner = "BREAK — PEEK APPS OPEN · UNTIL 21:30"
-            ),
-            FaceCase(
-                state = "LAST MINUTE",
-                session = session(elapsedSeconds = 3570), now = wallAt(21, 47, 30),
-                hero = "00:30", label = "LEFT", subLine = "ENDS 21:48",
-                blockLine = null, banner = "STUDY"
-            ),
-            FaceCase(
-                // Wave-3 (Politur P-4): the routine LAST MINUTE
-                // row the table could not see — span arithmetic
-                // says 30 s remain, the window says 45 s; hero,
-                // promotion and dawn all key to the window.
-                state = "ROUTINE LAST MINUTE (window-keyed)",
-                session = session(
-                    targetDurationSeconds = 3600, elapsedSeconds = 3570,
-                    routineId = 3, windowEndMillis = routineLastMinuteNow + 45_000L,
-                    profileName = "Routine: SLEEP"
-                ),
-                now = routineLastMinuteNow,
-                hero = "00:45", label = "LEFT", subLine = "ENDS 03:30",
-                blockLine = null, banner = "SLEEP"
-            ),
-            FaceCase(
-                state = "STOPWATCH",
-                session = session(isStopwatchMode = true, elapsedSeconds = 7549),
-                now = t2147,
-                hero = "2:05", label = "ELAPSED", subLine = "NOW 21:47",
-                blockLine = null, banner = "STUDY"
-            )
-        )
-        for (case in cases) {
-            assertEquals("${case.state} hero", case.hero, deskClockHeroText(case.session, case.now))
-            assertEquals(
-                "${case.state} label", case.label, deskClockHeroLabel(case.session)
-            )
-            assertEquals(
-                "${case.state} sub-line", case.subLine,
-                case.session?.takeIf { it.isActive }?.let { deskClockSubLine(it, case.now) }
-            )
-            assertEquals(
-                "${case.state} block line", case.blockLine,
-                case.session?.let { deskClockBlockLine(it, case.now) }
-            )
-            assertEquals(
-                "${case.state} banner", case.banner,
-                case.session?.takeIf { it.isActive }?.let { s ->
-                    deskClockBreakLine(s.isInSafeBreak, s.safeBreakSecondsRemaining, case.now)
-                        ?: deskClockBannerText(null, s.intention, s.profileName)
-                }
-            )
-        }
-    }
 
     // ---------------------------------------------------------------
     // V1 residual (wave-3, Samt F-2 / Funke P-3 reduced latch)

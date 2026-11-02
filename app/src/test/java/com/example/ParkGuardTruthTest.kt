@@ -5,7 +5,7 @@ import com.example.service.WatchItemId
 import com.example.service.WatchMeasurement
 import com.example.service.WatchSnapshot
 import com.example.service.WatchStore
-import com.example.ui.components.guardLineFor
+import com.example.service.guardLineFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

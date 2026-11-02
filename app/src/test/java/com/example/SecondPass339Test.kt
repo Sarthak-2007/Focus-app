@@ -11,9 +11,9 @@ import com.example.service.PermState
 import com.example.service.WatchItemId
 import com.example.service.WatchMeasurement
 import com.example.service.WatchSnapshot
-import com.example.ui.components.BlockingAvailability
-import com.example.ui.components.availabilityLineFor
-import com.example.ui.components.blockingAvailabilityFor
+import com.example.service.BlockingAvailability
+import com.example.service.availabilityLineFor
+import com.example.service.blockingAvailabilityFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

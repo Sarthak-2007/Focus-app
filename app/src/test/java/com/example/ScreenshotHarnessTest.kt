@@ -31,8 +31,8 @@ import com.example.service.TactileSoundEngine
 import com.example.service.WatchItemId
 import com.example.service.WatchMeasurement
 import com.example.service.WatchSnapshot
-import com.example.ui.MonolithDestination
-import com.example.ui.MonolithViewModel
+import com.example.session.MonolithDestination
+import com.example.session.MonolithViewModel
 import com.example.ui.components.ParkDrawer
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.views.RotaryWheelView
@@ -825,7 +825,7 @@ class ScreenshotHarnessTest {
         val annulBefore = viewModel.armAnnulCount.value
         composeRule.runOnUiThread { viewModel.armMonolithSession() }
         val jammed = pumpUntil {
-            viewModel.armPhase.value is com.example.ui.ArmPhase.Jammed
+            viewModel.armPhase.value is com.example.session.ArmPhase.Jammed
         }
         assertTrue(
             "HB-4: the arm must jam — no witness can answer under the rig",

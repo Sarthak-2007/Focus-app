@@ -4,7 +4,7 @@ import com.example.service.NightSignal
 import com.example.ui.components.DESK_CLOCK_BAR_ALPHA
 import com.example.ui.components.DESK_CLOCK_SCREEN_BRIGHTNESS
 import com.example.ui.components.DESK_CLOCK_TIME_ALPHA
-import com.example.ui.evaluateTheme
+import com.example.session.evaluateTheme
 import java.util.Calendar
 import java.util.TimeZone
 import org.junit.Assert.assertEquals

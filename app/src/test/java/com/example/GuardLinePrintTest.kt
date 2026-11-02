@@ -4,7 +4,7 @@ import com.example.service.PermState
 import com.example.service.WatchItemId
 import com.example.service.WatchMeasurement
 import com.example.service.WatchSnapshot
-import com.example.ui.components.guardLineFor
+import com.example.service.guardLineFor
 import org.junit.Assert.assertEquals
 import org.junit.Test
 

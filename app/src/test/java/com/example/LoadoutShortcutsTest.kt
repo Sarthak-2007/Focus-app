@@ -1,7 +1,7 @@
 package com.example
 
 import com.example.data.FocusProfileEntity
-import com.example.ui.LoadoutShortcuts
+import com.example.service.LoadoutShortcuts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

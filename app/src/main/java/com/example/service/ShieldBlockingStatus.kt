@@ -1,9 +1,8 @@
-package com.example.ui
+package com.example.service
 
 import com.example.data.FocusSessionEntity
 import com.example.data.MonolithRepository
 import com.example.data.RoutineEntity
-import com.example.service.UsageAccess
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale

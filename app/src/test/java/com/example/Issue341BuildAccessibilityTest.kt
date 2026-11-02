@@ -9,7 +9,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
-import com.example.ui.DisarmChallengeState
+import com.example.session.DisarmChallengeState
 import com.example.ui.components.DisarmChallengeOverlay
 import com.example.ui.theme.MyApplicationTheme
 import org.junit.Rule

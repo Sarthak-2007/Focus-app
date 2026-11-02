@@ -8,9 +8,9 @@ import com.example.data.BlockedAppEntity
 import com.example.data.InstalledPackage
 import com.example.service.InterceptPath
 import com.example.service.NotificationCapturePolicy
-import com.example.ui.PeekWithheld
-import com.example.ui.peekOfferFor
-import com.example.ui.peekWithheldFor
+import com.example.session.PeekWithheld
+import com.example.session.peekOfferFor
+import com.example.session.peekWithheldFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

@@ -8,8 +8,8 @@ import com.example.service.WatchItemId
 import com.example.service.WatchMeasurement
 import com.example.service.WatchSnapshot
 import com.example.service.WatchStore
-import com.example.ui.components.guardLineFor
-import com.example.ui.evaluateTheme
+import com.example.service.guardLineFor
+import com.example.session.evaluateTheme
 import com.example.ui.views.RailGeometry
 import java.util.Calendar
 import org.junit.Assert.assertEquals

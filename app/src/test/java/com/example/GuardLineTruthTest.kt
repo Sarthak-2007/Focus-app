@@ -1,8 +1,8 @@
 package com.example
 
-import com.example.ui.components.GUARD_NOT_CHECKED_TEXT
-import com.example.ui.components.GuardLinePrint
-import com.example.ui.components.resolveGuardLinePrint
+import com.example.service.GUARD_NOT_CHECKED_TEXT
+import com.example.service.GuardLinePrint
+import com.example.service.resolveGuardLinePrint
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
