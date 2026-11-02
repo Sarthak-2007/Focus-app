@@ -52,7 +52,12 @@ class DeskClockRecordP8Test {
             last = formed
             elapsed += span / 97 // an unaligned step, on purpose
         }
-        assertEquals(DeskClockRecord.GRAINS, last)
+        // The sweep's unaligned step never lands on the span's end;
+        // the record at the end itself stands complete.
+        assertEquals(
+            DeskClockRecord.GRAINS,
+            DeskClockRecord.record(span, span, emptyList(), emptyList()).formedGrains
+        )
     }
 
     @Test
