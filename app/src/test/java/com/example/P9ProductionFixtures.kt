@@ -35,6 +35,16 @@ import java.time.ZoneId
  *    carries the real table + column names of the v25 entities;
  *    non-asserted columns carry DEFAULTs so seed INSERTs name only
  *    the columns the proof reads back.
+ *
+ * FINAL-PHASE CURE (BUILD-SR-15, H-22): ten text columns stood
+ * declared bare `TEXT NOT NULL` with no DEFAULT while the seeds
+ * never wrote them — the seed died on the first
+ * (focus_profiles.appLimitsCsv, judging run 41425228610) and the
+ * rest were latent behind it. All ten now carry the file's own
+ * $T form (TEXT NOT NULL DEFAULT ''). For appLimitsCsv that is
+ * also the production v25 truth verbatim: MIGRATION_21_22 adds
+ * the column as `TEXT NOT NULL DEFAULT ''` (MonolithDatabase.kt),
+ * so every real v25 file carries exactly that shape.
  */
 object P9ProductionFixtures {
 
@@ -189,7 +199,7 @@ object P9ProductionFixtures {
             "`codeName` TEXT NOT NULL, `description` TEXT NOT NULL, `defaultMinutes` $I, " +
             "`blockedCategoriesCsv` TEXT NOT NULL, `scheduleLabel` TEXT NOT NULL, " +
             "`isScheduleEnabled` $I, `startHour` $I, `startMinute` $I, `endHour` $I, " +
-            "`endMinute` $I, `appTiersCsv` TEXT NOT NULL, `appLimitsCsv` TEXT NOT NULL, " +
+            "`endMinute` $I, `appTiersCsv` TEXT NOT NULL, `appLimitsCsv` $T, " +
             "`sitesCsv` TEXT NOT NULL, `soundEnabled` INTEGER, `sniperEnabled` INTEGER, " +
             "`browserBlockEnabled` INTEGER)",
         "CREATE TABLE IF NOT EXISTS `guard_settings` (" +
@@ -202,7 +212,7 @@ object P9ProductionFixtures {
             "`notificationBodyConsent` TEXT NOT NULL)",
         "CREATE TABLE IF NOT EXISTS `focus_tasks` (" +
             "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, " +
-            "`noteText` TEXT NOT NULL, `notesOrSubsteps` TEXT NOT NULL, " +
+            "`noteText` $T, `notesOrSubsteps` $T, " +
             "`estimatedMinutes` $I, `actualSecondsSpent` $I, `categoryTag` TEXT NOT NULL, " +
             "`queueOrder` $I, `status` TEXT NOT NULL, `completedAtMillis` $I, " +
             "`completedInSessionId` $I, `startedAtSessionElapsedSec` INTEGER)",
@@ -211,23 +221,23 @@ object P9ProductionFixtures {
             "`profileName` TEXT NOT NULL, `targetDurationSeconds` $I, `elapsedSeconds` $I, " +
             "`startWallTimeMillis` $I, `startElapsedRealtimeMillis` $I, `bootCount` $I, " +
             "`accumulatedBeforeRebootSeconds` $I, `lastTickElapsedRealtimeMillis` $I, " +
-            "`hmacSignature` TEXT NOT NULL, `isStopwatchMode` $I, `totalStudyBlocks` $I, " +
+            "`hmacSignature` $T, `isStopwatchMode` $I, `totalStudyBlocks` $I, " +
             "`currentBlockIndex` $I, `isInSafeBreak` $I, `safeBreakSecondsRemaining` $I, " +
             "`breakTakenSeconds` $I, `callExcludedSeconds` $I, `penaltySecondsAdded` $I, " +
             "`isActive` $I, `completedSuccessfully` $I, `phantomReachesBlocked` $I, " +
-            "`tamperDetected` $I, `forgedArtifactId` TEXT, `completedTasksSummary` TEXT NOT NULL, " +
+            "`tamperDetected` $I, `forgedArtifactId` TEXT, `completedTasksSummary` $T, " +
             "`tasksCompletedCount` $I, `routineId` INTEGER, `windowStartMillis` $I, " +
             "`windowEndMillis` $I, `routineOutcome` TEXT, `evidenceMask` $I, " +
             "`firstEvidenceMillis` $I, `lastEvidenceMillis` $I, `taskId` INTEGER, " +
             "`heldAppsAtSeal` $I, `heldSitesAtSeal` $I, `heldShutAtSeal` $I, " +
             "`heldPeekAtSeal` $I, `releaseFaultShield` $I, `releaseRetriesDone` $I, " +
-            "`releaseFaultedAtWallMillis` $I, `outcome` TEXT NOT NULL, " +
+            "`releaseFaultedAtWallMillis` $I, `outcome` $T, " +
             "`shieldLastBeatWallMillis` $I, `shieldGapSeen` $I, `rebootGapSeconds` $I, " +
-            "`endWallMillis` $I, `receiptNumber` $I, `failureCausePackage` TEXT NOT NULL, " +
-            "`failureCauseKind` TEXT NOT NULL, `reflectionNote` TEXT NOT NULL, " +
-            "`finishSignature` TEXT NOT NULL, `prevFinishSignature` TEXT NOT NULL, " +
+            "`endWallMillis` $I, `receiptNumber` $I, `failureCausePackage` $T, " +
+            "`failureCauseKind` $T, `reflectionNote` $T, " +
+            "`finishSignature` $T, `prevFinishSignature` $T, " +
             "`midBlockSafeBreak` $I, `extraSafeBreakSeconds` $I, `breakSeconds` $I, " +
-            "`extensionSecondsAdded` $I, `extensionLog` TEXT NOT NULL, `withinLabel` TEXT, " +
+            "`extensionSecondsAdded` $I, `extensionLog` $T, `withinLabel` TEXT, " +
             "`plannedEndWallMillis` $I)",
         "CREATE TABLE IF NOT EXISTS `emergency_break_spends` (" +
             "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sessionId` $I, " +

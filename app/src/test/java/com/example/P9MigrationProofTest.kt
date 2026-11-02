@@ -216,6 +216,10 @@ class P9MigrationProofTest {
             assertEquals(300L, profile["defaultMinutes"])
             assertEquals("VIDEO,SOCIAL", profile["blockedCategoriesCsv"])
             assertEquals("${fx.LOCKED_PACKAGE}:LOCKED", profile["appTiersCsv"])
+            // H-22 cure (BUILD-SR-15): the v25 column added by
+            // MIGRATION_21_22 carries its production default '' —
+            // the row reads it back, not a constraint failure.
+            assertEquals("", profile["appLimitsCsv"])
             assertEquals(fx.SITE_DOMAIN, profile["sitesCsv"])
             assertEquals(14L, profile["endHour"])
 
