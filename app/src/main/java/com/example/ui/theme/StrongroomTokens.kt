@@ -134,3 +134,76 @@ val FaceHeldMarkStyle = TextStyle(
     lineHeight = 25.sp,
     letterSpacing = 1.08.sp // 18 × 0.06em
 )
+
+// ---------------------------------------------------------------------
+// THE SIGNING TABLE'S TYPE — Stage 5 §1.1 screen steps (P4/P5
+// surfaces). No surface invents a size: these are the filed steps
+// under Strongroom names. Atkinson carries 400/700 ONLY (Stage 5
+// weight truth); Sora 600/700; Anonymous Pro 400/700.
+// ---------------------------------------------------------------------
+
+/** SCR-5 — signing heads: Sora 600, 24sp/32, −0.01em. */
+val SigningHeadStyle = TextStyle(
+    fontFamily = SoraFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 24.sp,
+    lineHeight = 32.sp,
+    letterSpacing = (-0.24).sp
+)
+
+/** SCR-4 — subheads at the signing: Sora 600, 20sp/28, −0.01em. */
+val SigningSubheadStyle = TextStyle(
+    fontFamily = SoraFamily,
+    fontWeight = FontWeight.SemiBold,
+    fontSize = 20.sp,
+    lineHeight = 28.sp,
+    letterSpacing = (-0.2).sp
+)
+
+/** SCR-2 — primary body: Atkinson 400, 16sp/24, +0.01em. The
+ *  signing's clauses, the composition's telling, plain words. */
+val SigningBodyStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 16.sp,
+    lineHeight = 24.sp,
+    letterSpacing = 0.16.sp
+)
+
+/** SCR-1 — secondary body: Atkinson 400, 14sp/20, +0.02em. The
+ *  telling line stands in this step — quiet, never announced. */
+val SigningQuietStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 14.sp,
+    lineHeight = 20.sp,
+    letterSpacing = 0.28.sp
+)
+
+/** SCR-3 — emphasis / per-call handles: Atkinson 700, 18sp/24. */
+val SigningHandleStyle = TextStyle(
+    fontFamily = AtkinsonHyperlegibleFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 18.sp,
+    lineHeight = 24.sp
+)
+
+/** ANON-3 — composition hours: Anonymous Pro 400, 20sp/28 —
+ *  figures that align. */
+val SigningFiguresStyle = TextStyle(
+    fontFamily = AnonymousProFamily,
+    fontWeight = FontWeight.Normal,
+    fontSize = 20.sp,
+    lineHeight = 28.sp
+)
+
+/** ANON-4 — the digits line: Anonymous Pro 700, 28sp/32,
+ *  +0.02em — read once, under pressure. The combination dials
+ *  and the held line's digits speak in this step. */
+val SigningDigitsStyle = TextStyle(
+    fontFamily = AnonymousProFamily,
+    fontWeight = FontWeight.Bold,
+    fontSize = 28.sp,
+    lineHeight = 32.sp,
+    letterSpacing = 0.56.sp
+)
