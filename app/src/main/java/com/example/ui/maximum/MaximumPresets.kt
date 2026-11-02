@@ -121,6 +121,42 @@ object MaximumPresets {
     /** Release snap window (C2.2): within ±4 minutes of a quarter, the setter pulls in. */
     const val HOUR_SNAP_WINDOW_MINUTES: Float = 4f
 
+    /**
+     * The hour drag (C2) — ADDED BY BUILD-SR-18 at Stage 11/12
+     * assembly: this preset's census row names "HourTrain +
+     * HourDrag" but no factory stood in the toolkit as landed.
+     * The rail is the quarter train; capture radius is the ±4 min
+     * snap window itself, so the drag's own capture decision IS
+     * the C2.2 rule (a release outside the window rests where the
+     * coast ends — the caller places it, no snap).
+     */
+    fun hourDrag(): InertiaDrag = InertiaDrag(
+        InertiaDragSpec(
+            body = MonolithBodies.Wheel,
+            inertia = InertiaBody(mass = MonolithBodies.Wheel.mass, resistance = 0.9f),
+            rail = DetentRail((0..24 * 60 step 15).map { it.toFloat() }),
+            captureRadius = HOUR_SNAP_WINDOW_MINUTES,
+            captureVelocity = 30f
+        )
+    )
+
+    /**
+     * The break drag (C5) — likewise added by BUILD-SR-18: the
+     * census row names "BreakTrain + BreakDrag"; the train stood,
+     * the drag did not. The rail is whole minutes (the break is
+     * priced to the minute); its settle is the honest kind — it
+     * rests exactly on the minute it is captured by.
+     */
+    fun breakDrag(): InertiaDrag = InertiaDrag(
+        InertiaDragSpec(
+            body = MonolithBodies.Wheel,
+            inertia = InertiaBody(mass = MonolithBodies.Wheel.mass, resistance = 1.2f),
+            rail = DetentRail((0..720).map { it.toFloat() }),
+            captureRadius = 0.5f,
+            captureVelocity = 20f
+        )
+    )
+
     // ---------- THE ALLOWANCE (FEEL-SR-3 C3/C4) ----------
 
     /**

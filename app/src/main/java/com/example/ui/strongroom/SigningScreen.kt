@@ -1,6 +1,8 @@
 package com.example.ui.strongroom
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,7 +22,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -28,11 +33,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
+import com.example.ui.maximum.MaximumPresets
+import com.example.ui.maximum.orbitAngleDeg
+import com.example.ui.maximum.orbitDeltaDeg
+import com.example.ui.motion.SpringState
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
 import com.example.ui.theme.InkGold
 import com.example.ui.theme.InkLine
 import com.example.ui.theme.SigningBodyStyle
@@ -127,6 +144,7 @@ fun SigningScreen(
                 flow = flow,
                 ink = ink,
                 quietInk = quietInk,
+                onHourDetent = onDetent,
                 onHour = { flow = flow.setHour(it) },
                 onBreak = { flow = flow.setBreakMinutes(it) },
                 onContinue = { flow = flow.advance() }
@@ -144,13 +162,11 @@ fun SigningScreen(
                 dials = dials,
                 ink = ink,
                 quietInk = quietInk,
-                onDial = { index, delta ->
+                onDialDigit = { index, digit ->
                     if (!flow.signatureBegun) flow = flow.beginSignature()
-                    dials = dials.mapIndexed { i, d ->
-                        if (i == index) (d + delta).mod(10) else d
-                    }
-                    onDetent()
+                    dials = dials.mapIndexed { i, d -> if (i == index) digit else d }
                 },
+                onDialDetent = { onDetent() },
                 onSign = {
                     onLatch()
                     flow = flow.completeSignature()
@@ -295,6 +311,7 @@ private fun HourStep(
     flow: SigningState,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
+    onHourDetent: () -> Unit,
     onHour: (String) -> Unit,
     onBreak: (Int) -> Unit,
     onContinue: () -> Unit
@@ -318,12 +335,38 @@ private fun HourStep(
         modifier = Modifier.testTag("signing_hour_value")
     )
     Spacer(Modifier.height(12.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        SigningStepper("HOUR −", quietInk, "signing_hour_down") { emit(hour - 1, minute) }
-        SigningStepper("HOUR +", quietInk, "signing_hour_up") { emit(hour + 1, minute) }
-        SigningStepper("MIN −", quietInk, "signing_minute_down") { emit(hour, minute - 5) }
-        SigningStepper("MIN +", quietInk, "signing_minute_up") { emit(hour, minute + 5) }
-    }
+    // E-15 AT MAXIMUM (Stage 11 assembly, BUILD-SR-18): the hour
+    // setter is a drag, not steppers — sparse firm stones (quarter
+    // W[0,8/0,55], whole-hour W[0,14/0,85], silence between) on
+    // MaximumPresets.hourTrain, carried by hourDrag's inertia;
+    // release within ±4 min of a quarter pulls in and the detent
+    // fires at the snap; release elsewhere places the hour with
+    // no waveform at all. Travel is unbounded — wrapping past
+    // midnight is the same smooth travel. Figures UNPROVEN-ON-DEVICE.
+    SetterDragStrip(
+        value = (hour * 60 + minute).toFloat(),
+        minValue = 0f,
+        maxValue = 24f * 60f,
+        minutesPerDp = 2f,
+        wrap = true,
+        ink = ink,
+        quietInk = quietInk,
+        tag = "signing_hour_drag",
+        train = MaximumPresets.hourTrain(),
+        onCrossing = { onHourDetent() },
+        onRelease = { released ->
+            val snapped = MaximumPresets.hourDrag().release(
+                SpringState(released, 0f)
+            )
+            val quarter = snapped.target
+            val placed = if (kotlin.math.abs(released - quarter) <= MaximumPresets.HOUR_SNAP_WINDOW_MINUTES) {
+                onHourDetent()
+                quarter
+            } else released
+            val total = placed.roundToInt().mod(24 * 60)
+            emit(total / 60, total % 60)
+        }
+    )
     Spacer(Modifier.height(22.dp))
     // The break's span, chosen HERE (ruling C-4: the choosing
     // moment is the signing; the firing itself is invocable by
@@ -342,20 +385,29 @@ private fun HourStep(
         modifier = Modifier.testTag("signing_break_value")
     )
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        SigningStepper("−10", quietInk, "signing_break_down10") {
-            onBreak((flow.breakMinutes - 10).coerceAtLeast(1))
+    // ADD-2 AT MAXIMUM (Stage 11 assembly, BUILD-SR-18): the break
+    // setter's grain is the deliberate opposite of the hour's —
+    // a continuous brush (micro-tick per minute, strengthening per
+    // five) on MaximumPresets.breakTrain with FREE resistance:
+    // preset notches are topography, not walls (they cost no
+    // travel). Release is silent; the drag rests on a whole minute
+    // via breakDrag's honest settle. Figures UNPROVEN-ON-DEVICE.
+    SetterDragStrip(
+        value = flow.breakMinutes.toFloat(),
+        minValue = 1f,
+        maxValue = 720f,
+        minutesPerDp = 1f,
+        wrap = false,
+        ink = ink,
+        quietInk = quietInk,
+        tag = "signing_break_drag",
+        train = MaximumPresets.breakTrain(rangeMinutes = 720, presetMinutes = listOf(10, 20, 30)),
+        onCrossing = { onHourDetent() },
+        onRelease = { released ->
+            val rested = MaximumPresets.breakDrag().release(SpringState(released, 0f))
+            onBreak(rested.finalValue.roundToInt().coerceIn(1, 720))
         }
-        SigningStepper("−1", quietInk, "signing_break_down1") {
-            onBreak((flow.breakMinutes - 1).coerceAtLeast(1))
-        }
-        SigningStepper("+1", quietInk, "signing_break_up1") {
-            onBreak((flow.breakMinutes + 1).coerceAtMost(720))
-        }
-        SigningStepper("+10", quietInk, "signing_break_up10") {
-            onBreak((flow.breakMinutes + 10).coerceAtMost(720))
-        }
-    }
+    )
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         listOf(10, 20, 30).forEach { preset ->
@@ -429,7 +481,8 @@ private fun CombinationStep(
     dials: List<Int>,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
-    onDial: (Int, Int) -> Unit,
+    onDialDigit: (Int, Int) -> Unit,
+    onDialDetent: () -> Unit,
     onSign: () -> Unit
 ) {
     // B-5: the clause, spoken whole at the signing — here, and
@@ -447,6 +500,17 @@ private fun CombinationStep(
         color = quietInk
     )
     Spacer(Modifier.height(20.dp))
+    // E-01 AT MAXIMUM (Stage 11 assembly, BUILD-SR-18): each digit
+    // is spun on the toolkit's governed rotary — the +/− steppers
+    // that stood here are retired. The thumb orbits the rim;
+    // station detents are keyed to travel position (identical
+    // sequence at any gesture velocity); velocity is governed at
+    // 240°/s and a release coasts at most 30° before the settle
+    // rests the dial EXACTLY on a station — a release can never
+    // rest between numbers. The digit is read from the station
+    // the dial rests under; the combination is still written
+    // nowhere (A-2): only the surface's dials hold it, wiped at
+    // the signature's completion as before. UNPROVEN-ON-DEVICE.
     Row(
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxWidth()
@@ -456,7 +520,14 @@ private fun CombinationStep(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.testTag("signing_dial_$index")
             ) {
-                SigningStepper("+", ink, "signing_dial_${index}_up") { onDial(index, 1) }
+                DigitSpinDial(
+                    digit = digit,
+                    ink = ink,
+                    quietInk = quietInk,
+                    tag = "signing_dial_${index}_spin",
+                    onDigit = { onDialDigit(index, it) },
+                    onDetent = onDialDetent
+                )
                 Text(
                     text = digit.toString(),
                     style = SigningDigitsStyle,
@@ -466,7 +537,6 @@ private fun CombinationStep(
                         .width(64.dp)
                         .padding(vertical = 10.dp)
                 )
-                SigningStepper("−", ink, "signing_dial_${index}_down") { onDial(index, -1) }
             }
         }
     }
@@ -533,6 +603,172 @@ private fun ReadyStep(
     }
     Spacer(Modifier.height(20.dp))
     SigningContinue(label = "DONE", ink = ink, onClick = onDone, tag = "signing_done")
+}
+
+
+/**
+ * E-01's per-digit hand (Stage 11 assembly, BUILD-SR-18): one
+ * governed rotary per combination digit, built on the toolkit's
+ * [MaximumPresets.spinRotary] — governed velocity, governed coast,
+ * rest exactly on a station. Station crossings fire [onDetent]
+ * (position-keyed: the same travel produces the same sequence at
+ * any gesture speed). The digit is the station the dial rests
+ * under; nothing here stores a combination (A-2).
+ */
+@Composable
+private fun DigitSpinDial(
+    digit: Int,
+    ink: Color,
+    quietInk: Color,
+    tag: String,
+    onDigit: (Int) -> Unit,
+    onDetent: () -> Unit
+) {
+    val rotary = remember { MaximumPresets.spinRotary() }
+    var angleDeg by remember { mutableFloatStateOf(rotary.angleDeg) }
+    var lastMillis = remember { longArrayOf(0L) }
+    LaunchedEffect(digit) {
+        val resting = (rotary.stationUnder() / MaximumPresets.SPIN_STATION_SPACING_DEG)
+            .roundToInt().mod(10)
+        if (resting != digit && rotary.velocityDegPerSec == 0f) {
+            rotary.snapTo(digit * MaximumPresets.SPIN_STATION_SPACING_DEG)
+            angleDeg = rotary.angleDeg
+        }
+    }
+    Box(
+        modifier = Modifier
+            .size(96.dp)
+            .testTag(tag)
+            .pointerInput(rotary) {
+                detectDragGestures(
+                    onDragStart = { lastMillis[0] = 0L },
+                    onDrag = { change, _ ->
+                        val centre = size.width / 2f
+                        val now = change.uptimeMillis
+                        val dtMs = if (lastMillis[0] == 0L) 16L
+                        else (now - lastMillis[0]).coerceIn(8L, 50L)
+                        lastMillis[0] = now
+                        val previous = orbitAngleDeg(
+                            centre, centre, change.previousPosition.x, change.previousPosition.y
+                        )
+                        val current = orbitAngleDeg(
+                            centre, centre, change.position.x, change.position.y
+                        )
+                        val before = rotary.angleDeg
+                        rotary.dragBy(orbitDeltaDeg(previous, current), dtMs / 1000f)
+                        val crossed = kotlin.math.abs(
+                            (rotary.angleDeg / MaximumPresets.SPIN_STATION_SPACING_DEG).toInt() -
+                                (before / MaximumPresets.SPIN_STATION_SPACING_DEG).toInt()
+                        )
+                        repeat(crossed) { onDetent() }
+                        angleDeg = rotary.angleDeg
+                        val live = (rotary.stationUnder() / MaximumPresets.SPIN_STATION_SPACING_DEG)
+                            .roundToInt().mod(10)
+                        if (live != digit) onDigit(live)
+                        change.consume()
+                    },
+                    onDragEnd = {
+                        val release = rotary.release()
+                        angleDeg = rotary.angleDeg
+                        onDigit((release.station / MaximumPresets.SPIN_STATION_SPACING_DEG).roundToInt().mod(10))
+                    },
+                    onDragCancel = {
+                        val release = rotary.release()
+                        angleDeg = rotary.angleDeg
+                        onDigit((release.station / MaximumPresets.SPIN_STATION_SPACING_DEG).roundToInt().mod(10))
+                    }
+                )
+            }
+    ) {
+        Canvas(Modifier.size(96.dp)) {
+            val centre = Offset(size.width / 2f, size.height / 2f)
+            val radius = size.minDimension / 2f - 6f
+            drawCircle(color = StrongroomGround, radius = radius, center = centre)
+            drawCircle(color = ink, radius = radius - 3f, center = centre, style = Stroke(width = 2.5f))
+            for (i in 0 until 10) {
+                val a = Math.toRadians((i * MaximumPresets.SPIN_STATION_SPACING_DEG - 90f).toDouble())
+                val outer = Offset(
+                    centre.x + (radius - 7f) * cos(a).toFloat(),
+                    centre.y + (radius - 7f) * sin(a).toFloat()
+                )
+                val inner = Offset(
+                    centre.x + (radius - 15f) * cos(a).toFloat(),
+                    centre.y + (radius - 15f) * sin(a).toFloat()
+                )
+                drawLine(color = quietInk, start = inner, end = outer, strokeWidth = 2.5f)
+            }
+            val markerAngle = Math.toRadians((angleDeg % 360f - 90f).toDouble())
+            val marker = Offset(
+                centre.x + (radius - 11f) * cos(markerAngle).toFloat(),
+                centre.y + (radius - 11f) * sin(markerAngle).toFloat()
+            )
+            drawCircle(color = ink, radius = 5f, center = marker)
+            drawLine(color = ink, start = centre, end = marker, strokeWidth = 2.5f)
+        }
+    }
+}
+
+/**
+ * A maximum drag strip for the signing's setters (Stage 11
+ * assembly, BUILD-SR-18): horizontal drag accumulated in the
+ * setter's own units; every detent of [train] crossed fires
+ * [onCrossing] (position-keyed, never time-keyed); the release is
+ * handed to the caller, whose preset drag (hourDrag / breakDrag)
+ * decides the rest. The strip itself invents no physics.
+ */
+@Composable
+private fun SetterDragStrip(
+    value: Float,
+    minValue: Float,
+    maxValue: Float,
+    minutesPerDp: Float,
+    wrap: Boolean,
+    ink: Color,
+    quietInk: Color,
+    tag: String,
+    train: com.example.ui.maximum.DetentTrain,
+    onCrossing: () -> Unit,
+    onRelease: (Float) -> Unit
+) {
+    var current by remember { mutableFloatStateOf(value) }
+    LaunchedEffect(value) { current = value }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .border(1.dp, quietInk.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .testTag(tag)
+            .pointerInput(train, minValue, maxValue, wrap) {
+                detectDragGestures(
+                    onDragEnd = { onRelease(current) },
+                    onDragCancel = { onRelease(current) }
+                ) { change, _ ->
+                    val delta = change.positionChange().x / density * minutesPerDp
+                    val before = current
+                    var next = before + delta
+                    if (!wrap) next = next.coerceIn(minValue, maxValue)
+                    current = next
+                    train.crossings(before, next).forEach { _ -> onCrossing() }
+                    change.consume()
+                }
+            }
+    ) {
+        val fraction = ((current - minValue) / (maxValue - minValue)).coerceIn(0f, 1f)
+        Box(
+            Modifier
+                .fillMaxWidth(fraction.coerceAtLeast(0.02f))
+                .height(54.dp)
+                .background(ink.copy(alpha = 0.25f))
+        )
+        Text(
+            text = "DRAG",
+            style = SigningQuietStyle,
+            color = quietInk,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 10.dp)
+        )
+    }
 }
 
 @Composable

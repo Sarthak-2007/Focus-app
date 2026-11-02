@@ -1,7 +1,5 @@
 package com.example.ui.strongroom
 
-import androidx.compose.animation.core.SpringSpec
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -29,7 +27,10 @@ import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.withFrameNanos
 import com.example.domain.LiftingPlate
+import com.example.ui.motion.DoorMotionPlayer
+import com.example.ui.motion.WithdrawalBodies
 import com.example.ui.theme.PlateDarkRoom
 import com.example.ui.theme.PlateDoorGround
 import com.example.ui.theme.PlateInkGold
@@ -44,16 +45,26 @@ import kotlinx.coroutines.delay
  * machine and renders iron and weight:
  *
  *  1. BOLTS WITHDRAW, ONE BY ONE — three bolt bars slide out of
- *     the door on the bolt spring, each at its score figure
- *     (P0's LiftClunks by citation), each reported outward via
- *     [onBoltWithdrawn] so the wiring can spend the lift voice
+ *     the door, each reported outward via [onBoltWithdrawn] so the
+ *     wiring can spend the lift voice
  *     ([com.example.service.StrongroomLift]) at the true beat.
+ *     The bars' MOTION is MOTION-SR-1's withdrawal (BUILD-SR-18,
+ *     Stage 12): strain (90 ms, the bolt loads) → snap → slide,
+ *     heaviest body first, driven by [WithdrawalBodies] — one
+ *     drive, three masses; never a reversed bolt spring. (P0's
+ *     BoltSpring consumption that stood here is superseded by
+ *     name, MOTION-SR-1 §6.)
  *  2. THE DOOR OPENS ON ITS OWN WEIGHT — once the last bolt has
  *     fully withdrawn (a bolt counts when its stroke completes,
- *     never before), the door swings on its hinge under P0's
- *     DoorWeightSpring (damping 0.86, stiffness 55): slow
- *     commitment, long settle. Nothing fades; nothing slides;
- *     the door's angle is the whole transition.
+ *     never before), the door swings on its hinge under its own
+ *     weight: [DoorMotionPlayer]'s driven body (declining
+ *     imbalance torque, braked late by its arrival band, settling
+ *     against its stop; the strike fires when the travel MEETS
+ *     the stop at θ = 81.2°, never on a timer). Slow commitment,
+ *     long settle. Nothing fades; nothing slides; the door's
+ *     angle is the whole transition. (P0's DoorWeightSpring
+ *     consumption that stood here is superseded by name,
+ *     MOTION-SR-1 §6.) All figures UNPROVEN-ON-DEVICE (G-7).
  *  3. THE HANDING BACK, FIRST — as an execution PRECONDITION,
  *     never a presented phase (R2-7, MOTION-SR-4's M-2 ratified):
  *     [onHandedBack] fires as the lift fires, before the first
@@ -88,6 +99,7 @@ fun LiftingScreen(
     failure: Boolean = false,
     onHandedBack: (LiftingPlate.HandingBack) -> Unit = {},
     onBoltWithdrawn: (Int) -> Unit = {},
+    onPlateStrike: () -> Unit = {},
     onDoorSettled: () -> Unit = {},
     onPlateRead: (LiftingPlate.StruckPlate) -> Unit = {},
     modifier: Modifier = Modifier
@@ -99,6 +111,50 @@ fun LiftingScreen(
         )
     }
     var doorSettledFired by remember { mutableStateOf(false) }
+    var plateStrikeFired by remember { mutableStateOf(false) }
+
+    // THE MOTION CLOCK (Stage 12, BUILD-SR-18): one frame clock for
+    // this surface; every pose below is a pure function of it under
+    // MOTION-SR-1's bodies (DoorMotionPlayer). Poses are functions,
+    // states are facts — a rebuild recomputes the pose the clock
+    // dictates; it never restarts, freezes, or completes a travel.
+    val doorPlayer = remember { DoorMotionPlayer() }
+    var ceremonyElapsedMs by remember { mutableStateOf(0L) }
+    LaunchedEffect(failure) {
+        if (failure) return@LaunchedEffect
+        var startNanos = -1L
+        while (true) {
+            val frameNanos = withFrameNanos { it }
+            if (startNanos < 0L) startNanos = frameNanos
+            ceremonyElapsedMs = (frameNanos - startNanos) / 1_000_000L
+        }
+    }
+    // The door's own clock starts when its phase opens; its angle,
+    // its strike and its settle are all read off the driven body.
+    var doorStartMs by remember { mutableStateOf<Long?>(null) }
+    val doorAngleDeg: Float = if (
+        ceremony.phase == LiftingPlate.LiftPhase.DOOR_OPENING ||
+        ceremony.phase == LiftingPlate.LiftPhase.PLATE ||
+        ceremony.phase == LiftingPlate.LiftPhase.OPEN
+    ) {
+        if (doorStartMs == null) doorStartMs = ceremonyElapsedMs
+        doorPlayer.openSwing().thetaAt(ceremonyElapsedMs - (doorStartMs ?: ceremonyElapsedMs))
+    } else 0f
+    LaunchedEffect(ceremonyElapsedMs) {
+        val start = doorStartMs ?: return@LaunchedEffect
+        if (ceremony.phase != LiftingPlate.LiftPhase.DOOR_OPENING) return@LaunchedEffect
+        val local = ceremonyElapsedMs - start
+        val swing = doorPlayer.openSwing()
+        if (!plateStrikeFired && swing.strikeMs != null && local >= swing.strikeMs) {
+            plateStrikeFired = true
+            onPlateStrike()
+        }
+        if (!doorSettledFired && swing.settleMs != null && local >= swing.settleMs) {
+            doorSettledFired = true
+            onDoorSettled()
+            fire(LiftingPlate.LiftEvent.DOOR_SETTLED)
+        }
+    }
 
     fun fire(event: LiftingPlate.LiftEvent) {
         ceremony = LiftingPlate.advance(ceremony, event)
@@ -130,27 +186,6 @@ fun LiftingScreen(
         }
     }
 
-    // The door's weight: a spring, not a tween — mass with a long
-    // settle, exactly P0's DoorWeightSpring figures.
-    val doorTravel by animateFloatAsState(
-        targetValue = if (ceremony.phase == LiftingPlate.LiftPhase.DOOR_OPENING ||
-            ceremony.phase == LiftingPlate.LiftPhase.PLATE ||
-            ceremony.phase == LiftingPlate.LiftPhase.OPEN
-        ) 1f else 0f,
-        animationSpec = SpringSpec(
-            dampingRatio = LiftingPlate.LiftingScore.DOOR_SPRING_DAMPING,
-            stiffness = LiftingPlate.LiftingScore.DOOR_SPRING_STIFFNESS
-        ),
-        label = "doorWeight"
-    )
-    LaunchedEffect(doorTravel) {
-        if (!doorSettledFired && ceremony.phase == LiftingPlate.LiftPhase.DOOR_OPENING && doorTravel > 0.985f) {
-            doorSettledFired = true
-            onDoorSettled()
-            fire(LiftingPlate.LiftEvent.DOOR_SETTLED)
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -162,7 +197,11 @@ fun LiftingScreen(
         if (failure) {
             AjarDoorFace()
         } else {
-            DoorAndBolts(boltsWithdrawn = ceremony.boltsWithdrawn, doorTravel = doorTravel)
+            DoorAndBolts(
+                boltsWithdrawn = ceremony.boltsWithdrawn,
+                doorAngleDeg = doorAngleDeg,
+                ceremonyElapsedMs = ceremonyElapsedMs
+            )
         }
 
         // No handing-back list is presented here — R2-7: the
@@ -208,9 +247,12 @@ fun LiftingScreen(
 
 /** The door, ajar on no hinge but its own: violet ground, gold
  *  pinstripe, and its three bolts — each sliding out of the door's
- *  edge as its stroke completes, on the bolt spring. */
+ *  edge on MOTION-SR-1's withdrawal drive (strain → snap → slide,
+ *  heaviest first; the withdrawal's local clock starts 240 ms in,
+ *  spaced by the spec's 500 ms snap-to-snap evenness). The door's
+ *  rotation is the driven body's angle itself, in degrees. */
 @Composable
-private fun DoorAndBolts(boltsWithdrawn: Int, doorTravel: Float) {
+private fun DoorAndBolts(boltsWithdrawn: Int, doorAngleDeg: Float, ceremonyElapsedMs: Long) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -221,7 +263,7 @@ private fun DoorAndBolts(boltsWithdrawn: Int, doorTravel: Float) {
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    rotationY = -64f * doorTravel
+                    rotationY = -doorAngleDeg
                     transformOrigin = TransformOrigin(0f, 0.5f)
                     cameraDistance = 14f * density
                 }
@@ -238,13 +280,12 @@ private fun DoorAndBolts(boltsWithdrawn: Int, doorTravel: Float) {
             // The bolts: top, middle, foot — withdrawn in score order.
             val boltTops = listOf(54.dp, 200.dp, 346.dp)
             for (i in 0 until LiftingPlate.LiftingScore.BOLT_COUNT) {
-                val travel by animateFloatAsState(
-                    targetValue = if (i < boltsWithdrawn) 1f else 0f,
-                    animationSpec = SpringSpec(
-                        dampingRatio = LiftingPlate.LiftingScore.BOLT_SPRING_DAMPING,
-                        stiffness = LiftingPlate.LiftingScore.BOLT_SPRING_STIFFNESS
-                    ),
-                    label = "bolt$i"
+                // Withdrawal i's driven fraction: strain holds the
+                // bolt at 0 while it loads (90 ms), then the slide
+                // runs its mass's travel. A bolt counted withdrawn
+                // by the phase machine stands at exactly 1.
+                val travel = if (i < boltsWithdrawn) 1f else WithdrawalBodies.fractionAt(
+                    i, ceremonyElapsedMs - (240L + i * 500L)
                 )
                 Box(
                     Modifier
