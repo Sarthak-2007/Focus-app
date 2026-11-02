@@ -38,6 +38,15 @@ package com.example.service
  *
  * Pure Kotlin — no Android types — so the registry and the gate
  * law below are pinned by plain unit tests off-device.
+ *
+ * R8-4 DEMOTION (Stage 13 integration, BUILD-SR-19): this
+ * registry is the sound performer's VOICE TABLE, not the app's
+ * event table. The single public door is FEEL-SR-5's
+ * `SensoryBus` / `SensoryRegistry` (service/haptics/); production
+ * call sites fire `HapticEvent`s there, and the bus's sound
+ * adapter (`StrongroomSoundAdapter`) resolves each row's cue
+ * into rows of THIS table behind the bus. No production call
+ * site dispatches a [SoundEvent] directly.
  */
 
 /** The volume-curve family a voice belongs to. The family is what
@@ -250,12 +259,6 @@ object SoundRegistry {
         amplitudes = listOf(0, 210, 90),
         fallbackMs = 26
     )
-    private val BOLT_WITHDRAW = HapticSpec(
-        timingsMs = listOf(0, 30, 22, 14),
-        amplitudes = listOf(0, 170, 110, 64),
-        fallbackMs = 30
-    )
-
     private fun row(
         event: SoundEvent,
         family: SoundFamily,
@@ -296,42 +299,56 @@ object SoundRegistry {
         row(
             SoundEvent.DOOR_SWING_CLOSE, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = true,
-            voice = VoiceSpec(150f, 136, 0.38f, 0.9f),
+            voice = VoiceSpec(58f, 136, 0.40f, 2.76f),
             haptic = HapticSpec(listOf(0, 90, 60), listOf(0, 120, 56), 90),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "PROVISIONAL — the swing in the sealing act " +
-                "(Audit A §2.1); the door family's low body, under the clunks"
+            source = "SOUND-SR-1 (Stage 13 integration, BUILD-SR-19): the " +
+                "swing-shut CONTACT — f0 58 Hz, peak 0.40 (below clunk 1's " +
+                "0.62 by law), dominant partial 2.76; duration is the " +
+                "synth's 136 ms ceiling against the filed 1,150 ms render " +
+                "(approach rumble + hinge mass are long-form layers the " +
+                "transient voice model cannot carry — named, not faked)"
         ),
-        // The three descending clunks (Audit A §2.1, ledger A-3):
-        // descending pitch AND gain on P0's filed rhythm — see the
-        // clunk-weight flag in work/sound-sr-5/opening-line.md §1.
+        // The three clunks (Audit A §2.1, ledger A-3), figures now
+        // SOUND-SR-1's filed set (BUILD-SR-19): pitch DESCENDS
+        // 191 → 143 → 97 Hz while weight ASCENDS — stem peaks
+        // 0.62 → 0.70 → 0.80 (R7-4: the last clunk is the heaviest
+        // fact). Durations are SOUND-SR-1's measured −20 dB body
+        // lengths (97/116/171 ms), the third clamped at the synth's
+        // 136 ms ceiling. Chord 2.76 = the dominant inharmonic
+        // partial of SOUND-SR-1's steel-bar set [1, 2.76, 5.40,
+        // 8.93]; the transient synth renders fundamental + one
+        // chord partial, so the full set lives in SOUND-SR-1's
+        // MechanismSounds — named limitation, not a silent cut.
         row(
             SoundEvent.SEAL_CLUNK_1, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = true,
-            voice = VoiceSpec(300f, 120, 0.62f, 1.5f),
-            haptic = HapticSpec(listOf(0, 24, 38, 16), listOf(0, 255, 0, 175), 8),
+            voice = VoiceSpec(191f, 97, 0.62f, 2.76f),
+            haptic = HapticSpec(listOf(0, 22, 30, 10), listOf(0, 205, 0, 120), 22),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "PROVISIONAL — rhythm 0 ms of MonolithMotion.SealClunks " +
-                "(P0, foundation branch); seal-family chord 1.5"
+            source = "SOUND-SR-1 CLUNK_1: f0 191 Hz · body τ 46 ms · " +
+                "peak 0.62 · burst lowpass 1,500 Hz; haptic twin is " +
+                "SOUND-SR-1's filed proposal to FEEL-SR-1"
         ),
         row(
             SoundEvent.SEAL_CLUNK_2, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = true,
-            voice = VoiceSpec(255f, 136, 0.55f, 1.5f),
-            haptic = HapticSpec(listOf(0, 22, 34, 14), listOf(0, 225, 0, 150), 8),
+            voice = VoiceSpec(143f, 116, 0.70f, 2.76f),
+            haptic = HapticSpec(listOf(0, 26, 36, 13), listOf(0, 230, 0, 150), 26),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "PROVISIONAL — rhythm 190 ms of MonolithMotion.SealClunks (P0)"
+            source = "SOUND-SR-1 CLUNK_2: f0 143 Hz · body τ 62 ms · " +
+                "peak 0.70 · burst lowpass 1,150 Hz"
         ),
         row(
             SoundEvent.SEAL_CLUNK_3, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = true,
-            voice = VoiceSpec(215f, 136, 0.48f, 1.5f),
-            haptic = HapticSpec(listOf(0, 20, 30, 12), listOf(0, 195, 0, 128), 8),
+            voice = VoiceSpec(97f, 136, 0.80f, 2.76f),
+            haptic = HapticSpec(listOf(0, 32, 44, 18), listOf(0, 255, 0, 185), 32),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "PROVISIONAL — rhythm 420 ms of MonolithMotion.SealClunks " +
-                "(P0); audio body 136 ms = the synth's 6,000-sample ceiling — " +
-                "P0's 190 ms figure is the full felt ring, carried by the " +
-                "haptic tail, not by a longer render"
+            source = "SOUND-SR-1 CLUNK_3: f0 97 Hz · body τ 92 ms · " +
+                "peak 0.80 (the set's loudest sample) · burst lowpass " +
+                "820 Hz; −20 dB body 171 ms clamped at the synth's " +
+                "136 ms ceiling, the tail carried by the haptic twin"
         ),
 
         // -- Sealed hours ------------------------------------------
@@ -481,31 +498,42 @@ object SoundRegistry {
         ),
 
         // -- The lifting & the plate --------------------------------
+        // The lifting's mirror set (SOUND-SR-1, applied by
+        // BUILD-SR-19): pitch ASCENDS 121 → 158 → 207 Hz, body
+        // SHORTENS, brightness rises, loudness FALLS 0.50 → 0.42 —
+        // performed, never a reversed clunk. These figures
+        // supersede BUILD-SR-4's StrongroomLift bolt figures
+        // (196/220/247 Hz, gains ascending) IN THIS REGISTRY;
+        // StrongroomLift.kt itself is P6's file and still carries
+        // its own figures — the divergence is named in
+        // work/build-sr-19/record.md, not smoothed.
         row(
             SoundEvent.LIFT_BOLT_1, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = false,
-            voice = VoiceSpec(196f, 130, 0.44f, 0.9f),
-            haptic = BOLT_WITHDRAW,
+            voice = VoiceSpec(121f, 56, 0.50f, 2.76f),
+            haptic = HapticSpec(listOf(0, 14), listOf(0, 150), 14),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "BUILD-SR-4's StrongroomLift spec (plate branch): " +
-                "ascending bolts 196/220/247 Hz, gains 0.44/0.52/0.62, " +
-                "rhythm 0/190/420 ms — canonical here at composition"
+            source = "SOUND-SR-1 WITHDRAWAL_1: f0 121 Hz · body τ 30 ms · " +
+                "peak 0.50 · burst lowpass 1,900 Hz; duration = measured " +
+                "−20 dB body 56 ms; haptic = SOUND-SR-1's filed single pulse"
         ),
         row(
             SoundEvent.LIFT_BOLT_2, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = false,
-            voice = VoiceSpec(220f, 130, 0.52f, 0.9f),
-            haptic = BOLT_WITHDRAW,
+            voice = VoiceSpec(158f, 49, 0.46f, 2.76f),
+            haptic = HapticSpec(listOf(0, 12), listOf(0, 135), 12),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "BUILD-SR-4's StrongroomLift spec (plate branch)"
+            source = "SOUND-SR-1 WITHDRAWAL_2: f0 158 Hz · body τ 25 ms · " +
+                "peak 0.46 · burst lowpass 2,300 Hz"
         ),
         row(
             SoundEvent.LIFT_BOLT_3, SoundFamily.ROOM_CEREMONY,
             SoundDecision.SOUNDS, attended = false,
-            voice = VoiceSpec(247f, 130, 0.62f, 0.9f),
-            haptic = BOLT_WITHDRAW,
+            voice = VoiceSpec(207f, 37, 0.42f, 2.76f),
+            haptic = HapticSpec(listOf(0, 10), listOf(0, 120), 10),
             latencyClass = LatencyClass.CEREMONY_STEP,
-            source = "BUILD-SR-4's StrongroomLift spec (plate branch)"
+            source = "SOUND-SR-1 WITHDRAWAL_3: f0 207 Hz · body τ 20 ms · " +
+                "peak 0.42 · burst lowpass 2,800 Hz"
         ),
         row(
             SoundEvent.DOOR_OPEN_WEIGHT, SoundFamily.ROOM_CEREMONY,
@@ -515,7 +543,10 @@ object SoundRegistry {
             latencyClass = LatencyClass.CEREMONY_STEP,
             source = "BUILD-SR-4's StrongroomLift spec: the door's own " +
                 "weight, 132 Hz / 0.40, long low settle; its 150 ms body " +
-                "is capped at the synth's 136 ms ceiling (see SEAL_CLUNK_3)"
+                "is capped at the synth's 136 ms ceiling (see SEAL_CLUNK_3). " +
+                "SOUND-SR-1's swing_open (3.4 s decaying rumble, hinge " +
+                "41 Hz) is a long-form render the transient voice model " +
+                "cannot carry — named, not faked (BUILD-SR-19)"
         ),
         row(
             SoundEvent.PLATE_STRIKE, SoundFamily.ROOM_CEREMONY,
@@ -687,15 +718,22 @@ object SoundRegistry {
      *  shared rhythm — the caller's motion schedules the beats;
      *  each step dispatches individually so an interrupted
      *  ceremony half-states nothing (CRITIC M-2). */
+    // SOUND-SR-1's timelines (BUILD-SR-19): the seal's gaps
+    // WIDEN (500 → 680 ms — relative onsets 0/500/1180 from
+    // clunk 1); the lifting's gaps are EVEN (500 → 500 ms).
+    // These are the acoustic score's onsets; P0's motion rhythm
+    // (MonolithCurves.SealClunks 0/190/420) is the motion lane's
+    // table and is not rewritten here — the divergence is named
+    // in work/build-sr-19/record.md.
     val SEAL_SEQUENCE: List<Pair<SoundEvent, Int>> = listOf(
         SoundEvent.SEAL_CLUNK_1 to 0,
-        SoundEvent.SEAL_CLUNK_2 to 190,
-        SoundEvent.SEAL_CLUNK_3 to 420
+        SoundEvent.SEAL_CLUNK_2 to 500,
+        SoundEvent.SEAL_CLUNK_3 to 1180
     )
     val LIFT_SEQUENCE: List<Pair<SoundEvent, Int>> = listOf(
         SoundEvent.LIFT_BOLT_1 to 0,
-        SoundEvent.LIFT_BOLT_2 to 190,
-        SoundEvent.LIFT_BOLT_3 to 420
+        SoundEvent.LIFT_BOLT_2 to 500,
+        SoundEvent.LIFT_BOLT_3 to 1000
     )
 }
 

@@ -13,6 +13,10 @@ import com.example.data.toSealSpan
 import com.example.data.toSigningRecord
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomRouting
+import com.example.service.haptics.AndroidWaveformPlayer
+import com.example.service.haptics.HapticEvent
+import com.example.service.haptics.SensoryBus
+import com.example.service.haptics.StrongroomSoundAdapter
 
 /**
  * P2 — ENGINE WIRING (BUILD-SR-3): the Strongroom model, wired to
@@ -56,6 +60,45 @@ object StrongroomEngineBridge {
     private fun store(context: Context): StrongroomStore =
         StrongroomStore(AppContainer.dao(context.applicationContext))
 
+    // ------------------------------------------------------------------
+    // The sensory door (Stage 13, BUILD-SR-19)
+    // ------------------------------------------------------------------
+
+    /** The one standing bus for this process: FEEL-SR-5's
+     *  [SensoryBus] (the only public door, R8-4) with the sound
+     *  adapter installed — its sound leg resolves through the
+     *  voice table behind [StrongroomSoundAdapter]. Built once,
+     *  lazily; a construction failure leaves [sensoryBus] null
+     *  and every firing below a silent no-op (a sound failure
+     *  must never take an engine act down). */
+    @Volatile
+    private var sensoryBus: SensoryBus? = null
+
+    private fun sensory(context: Context): SensoryBus? {
+        sensoryBus?.let { return it }
+        return synchronized(this) {
+            sensoryBus ?: try {
+                val appContext = context.applicationContext
+                AndroidWaveformPlayer.bus(
+                    appContext,
+                    soundPlayer = StrongroomSoundAdapter.production(appContext)
+                ).also { sensoryBus = it }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
+    /** Fire one event through the bus — felt + heard from the
+     *  one registry row, in the bus's order. Never throws. */
+    private fun fireSensory(context: Context, event: HapticEvent) {
+        try {
+            sensory(context)?.fire(event)
+        } catch (_: Exception) {
+            // The event's act stands; its senses degrade.
+        }
+    }
+
     /** The monotonic clock the seal's span is struck on. */
     fun nowElapsedMillis(): Long = SystemClock.elapsedRealtime()
 
@@ -91,6 +134,16 @@ object StrongroomEngineBridge {
         ) ?: return null
         MonolithShieldService.startShield(appContext)
         armFirings(appContext, dateIso)
+        // The swing's act, heard + felt through the bus: the
+        // door swings, the bolts drive home (pitch descending,
+        // weight ascending — R7-4 / SOUND-SR-1). The seal's
+        // clunks belong to this first-sitting swing, never to
+        // the evening signing (B-7).
+        try {
+            AndroidWaveformPlayer.prime(appContext)
+        } catch (_: Exception) {
+        }
+        fireSensory(appContext, HapticEvent.DOOR_SEAL)
         return span
     }
 
@@ -167,6 +220,13 @@ object StrongroomEngineBridge {
                 row.filingDateIso,
                 StrongroomDay.Punch(StrongroomDay.PunchKind.REACH, offset, packageName)
             )
+            // The knock itself — the sealed face's only event:
+            // one dull heavy thud at 118 Hz, felt more than
+            // heard, fired through the bus (its row carries both
+            // halves; the adapter speaks the voice table's KNOCK
+            // row behind it). It opens nothing, in keeping with
+            // this function's law.
+            fireSensory(appContext, HapticEvent.KNOCK)
         }
         return decision
     }
@@ -200,12 +260,34 @@ object StrongroomEngineBridge {
         val appContext = context.applicationContext
         val kind = runCatching { StrongroomRouting.FiringKind.valueOf(kindName) }.getOrNull()
             ?: return false
-        if (kind != StrongroomRouting.FiringKind.LIFT) return false
         val store = store(appContext)
         val row = store.day(dateIso) ?: return false
         val span = row.toSealSpan() ?: return false
         val nowElapsed = nowElapsedMillis()
         val boot = bootCount(appContext)
+        if (kind != StrongroomRouting.FiringKind.LIFT) {
+            // The break's firings, consumed here for their senses
+            // (BUILD-SR-19): the span is re-derived through
+            // firingDue (boot-guarded, CH-2 — no firing sounds in
+            // an ajar day), and only the firing actually due
+            // speaks. The break's START is a NAMED_SILENCE in the
+            // voice table: the bus fires its felt easing and the
+            // adapter records the silence. Its END has its own
+            // voice. The surfaces still re-derive the break's
+            // state themselves, exactly as before.
+            val signing = row.toSigningRecord()
+            val due = StrongroomRouting.firingDue(signing, span, nowElapsed, boot)
+            if (due?.kind == kind) {
+                when (kind) {
+                    StrongroomRouting.FiringKind.BREAK_START ->
+                        fireSensory(appContext, HapticEvent.BREAK_ARRIVAL)
+                    StrongroomRouting.FiringKind.BREAK_END ->
+                        fireSensory(appContext, HapticEvent.BREAK_END_CUE)
+                    StrongroomRouting.FiringKind.LIFT -> Unit
+                }
+            }
+            return false
+        }
         if (!span.isLifted(nowElapsed, boot)) {
             // Woken early (the wall moved, the hint lied): the span
             // is the truth — re-arm and stand down.
@@ -214,6 +296,12 @@ object StrongroomEngineBridge {
         }
         store.strikePlate(dateIso, nowElapsed, boot, sealFailed = false)
         MonolithShieldService.stopShield(appContext)
+        // The lifting, heard + felt through the bus: bolts
+        // withdraw (the mirror set — pitch ascending, weight
+        // falling), the door opens on its weight, and the plate
+        // is struck — the day's telling, once.
+        fireSensory(appContext, HapticEvent.DOOR_LIFT)
+        fireSensory(appContext, HapticEvent.PLATE_STRIKE)
         return true
     }
 
@@ -243,10 +331,16 @@ object StrongroomEngineBridge {
             StrongroomRouting.SealIntegrity.AJAR_BOOT_DEATH -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = false)
                 MonolithShieldService.stopShield(appContext)
+                // The fallen day's strike: felt through the bus.
+                // The voice table carries NO failure-strike voice
+                // — the adapter plays nothing for this event and
+                // the ajar day keeps its named silence (AJAR_DAY).
+                fireSensory(appContext, HapticEvent.PLATE_STRIKE_FAILURE)
             }
             StrongroomRouting.SealIntegrity.BROKEN_TAMPER -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = true)
                 MonolithShieldService.stopShield(appContext)
+                fireSensory(appContext, HapticEvent.PLATE_STRIKE_FAILURE)
             }
             StrongroomRouting.SealIntegrity.INTACT -> {
                 MonolithShieldService.startShield(appContext)
