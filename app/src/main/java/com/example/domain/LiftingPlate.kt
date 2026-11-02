@@ -25,9 +25,14 @@ import java.time.ZoneId
  *    fade cannot be wired into one.
  *  - B-13: THE HANDING BACK IS FIRST. At the lift itself, the
  *    people who waited are handed back into his phone's own list,
- *    BEFORE the plate is read, before everything else. The phase
- *    machine below makes the plate unreachable until the handing
- *    back is delivered — not by convention, by construction.
+ *    BEFORE the plate is read, before everything else. As ruled
+ *    (coordinator R2-7, ratifying MOTION-SR-4's M-2): the handing
+ *    back is an execution PRECONDITION of the lifting's first
+ *    presented phase, NEVER a presented phase itself — the wiring
+ *    executes it as the lift fires, the people reappear in HIS
+ *    list (Monolith presents no list of its own), and the phase
+ *    machine below carries the delivered flag as the proof the
+ *    precondition stood: the plate is unreachable until it does.
  *  - A-10 / B-14 / E-1: THE PLATE IS STRUCK ONCE, NEVER RE-STRUCK.
  *    Hours held · each reach AND each held call a punched hole at
  *    graded sizes · the seal whole or broken · the crank's snapped
@@ -330,12 +335,10 @@ object LiftingPlate {
          *  spring — slow commitment, long settle. */
         DOOR_OPENING,
 
-        /** The handing back: the waiting people are returned to
-         *  his phone's own list. The plate does not exist for him
-         *  yet — this phase completes before any plate is read. */
-        HANDING_BACK,
-
-        /** The plate, struck once at the lifting, is read. */
+        /** The plate, struck once at the lifting, is read. (The
+         *  handing back is NOT a phase: it is the precondition
+         *  executed before the first of these phases is presented
+         *  — R2-7. No phase in this machine presents it.) */
         PLATE,
 
         /** The day is open; the room stands empty behind him. */
@@ -367,7 +370,12 @@ object LiftingPlate {
         val phase: LiftPhase,
         val boltsWithdrawn: Int = 0,
         val handingBackDelivered: Boolean = false,
-        val handingBack: HandingBack = HandingBack(emptyList())
+        val handingBack: HandingBack = HandingBack(emptyList()),
+        /** The door's weight has settled. Held apart from the
+         *  phase so a settled door can stand open — presented,
+         *  lawful — while the machine waits on the one thing it
+         *  must never skip: the handing-back precondition. */
+        val doorSettled: Boolean = false
     ) {
         init {
             require(boltsWithdrawn in 0..LiftingScore.BOLT_COUNT) { "the door has exactly its bolts" }
@@ -401,56 +409,67 @@ object LiftingPlate {
      * lifting hour; an event that arrives out of order simply is
      * not the ceremony, and the door does not move for it.
      */
-    fun advance(state: CeremonyState, event: LiftEvent): CeremonyState = when (state.phase) {
-        LiftPhase.SEALED -> when (event) {
-            LiftEvent.LIFT_FIRED -> state.copy(phase = LiftPhase.BOLTS_WITHDRAWING)
-            LiftEvent.FAILURE_FOUND -> CeremonyState.beginAjar(state.handingBack)
-            else -> state
+    fun advance(state: CeremonyState, event: LiftEvent): CeremonyState {
+        // THE PRECONDITION (R2-7): the handing back is executed by
+        // the wiring as the lift fires — it may be confirmed at any
+        // point before the plate, it is presented at none. When it
+        // lands on a door already settled, the ceremony completes
+        // its wait and stands at the plate.
+        if (event == LiftEvent.HANDED_BACK) {
+            val delivered = state.copy(handingBackDelivered = true)
+            return if (delivered.phase == LiftPhase.DOOR_OPENING && delivered.doorSettled) {
+                delivered.copy(phase = LiftPhase.PLATE)
+            } else delivered
         }
-        LiftPhase.BOLTS_WITHDRAWING -> when (event) {
-            LiftEvent.BOLT_WITHDRAWN -> {
-                val n = state.boltsWithdrawn + 1
-                if (n >= LiftingScore.BOLT_COUNT) state.copy(boltsWithdrawn = n, phase = LiftPhase.DOOR_OPENING)
-                else state.copy(boltsWithdrawn = n)
+        return when (state.phase) {
+            LiftPhase.SEALED -> when (event) {
+                LiftEvent.LIFT_FIRED -> state.copy(phase = LiftPhase.BOLTS_WITHDRAWING)
+                LiftEvent.FAILURE_FOUND -> CeremonyState.beginAjar(state.handingBack)
+                else -> state
             }
-            else -> state
-        }
-        LiftPhase.DOOR_OPENING -> when (event) {
-            LiftEvent.DOOR_SETTLED ->
-                // The door stands open. Before anything else —
-                // before the plate — the handing back. A day nobody
-                // waited through delivers it empty, in the same act.
-                if (state.handingBack.isEmpty) {
-                    state.copy(phase = LiftPhase.PLATE, handingBackDelivered = true)
-                } else {
-                    state.copy(phase = LiftPhase.HANDING_BACK)
+            LiftPhase.BOLTS_WITHDRAWING -> when (event) {
+                LiftEvent.BOLT_WITHDRAWN -> {
+                    val n = state.boltsWithdrawn + 1
+                    if (n >= LiftingScore.BOLT_COUNT) state.copy(boltsWithdrawn = n, phase = LiftPhase.DOOR_OPENING)
+                    else state.copy(boltsWithdrawn = n)
                 }
-            else -> state
-        }
-        LiftPhase.HANDING_BACK -> when (event) {
-            LiftEvent.HANDED_BACK -> state.copy(phase = LiftPhase.PLATE, handingBackDelivered = true)
-            else -> state
-        }
-        LiftPhase.PLATE -> when (event) {
-            LiftEvent.PLATE_READ -> state.copy(phase = LiftPhase.OPEN)
-            // B-15's other arm: he may simply not read it tonight.
-            // The plate passes to the pile unread; the day closes
-            // exactly as a read day closes.
-            LiftEvent.PLATE_LEFT_UNREAD -> state.copy(phase = LiftPhase.OPEN)
-            else -> state
-        }
-        LiftPhase.AJAR -> when (event) {
-            // Even at the ajar door, the people who waited are
-            // handed back — the failure is the seal's, not theirs —
-            // and only then is the room his again, read or unread.
-            LiftEvent.HANDED_BACK -> state.copy(handingBackDelivered = true)
-            LiftEvent.PLATE_READ, LiftEvent.PLATE_LEFT_UNREAD ->
-                if (state.handingBackDelivered || state.handingBack.isEmpty) {
+                else -> state
+            }
+            LiftPhase.DOOR_OPENING -> when (event) {
+                LiftEvent.DOOR_SETTLED ->
+                    // The door stands open. The plate follows only
+                    // on the precondition's proof: a day nobody
+                    // waited through delivers it empty in the same
+                    // act; a waited day holds the settled door —
+                    // presented, lawful, patient — until the
+                    // HANDED_BACK confirmation lands above.
+                    if (state.handingBack.isEmpty || state.handingBackDelivered) {
+                        state.copy(phase = LiftPhase.PLATE, handingBackDelivered = true, doorSettled = true)
+                    } else {
+                        state.copy(doorSettled = true)
+                    }
+                else -> state
+            }
+            LiftPhase.PLATE -> when (event) {
+                LiftEvent.PLATE_READ -> state.copy(phase = LiftPhase.OPEN)
+                // B-15's other arm: he may simply not read it tonight.
+                // The plate passes to the pile unread; the day closes
+                // exactly as a read day closes.
+                LiftEvent.PLATE_LEFT_UNREAD -> state.copy(phase = LiftPhase.OPEN)
+                else -> state
+            }
+            LiftPhase.AJAR -> when (event) {
+                // This machine models the failure's TESTIMONY
+                // surface only. The phone itself is already his
+                // again — seal death releases it at the moment of
+                // death (R2-3), by P2's wiring, gated by nothing
+                // here. Closing the testimony asks nothing of him.
+                LiftEvent.PLATE_READ, LiftEvent.PLATE_LEFT_UNREAD ->
                     state.copy(phase = LiftPhase.OPEN, handingBackDelivered = true)
-                } else state
-            else -> state
+                else -> state
+            }
+            LiftPhase.OPEN -> state
         }
-        LiftPhase.OPEN -> state
     }
 
     // ------------------------------------------------------------------
@@ -531,6 +550,17 @@ object LiftingPlate {
 
         fun plateFor(filingDateIso: String): StruckPlate? =
             platesNewestFirst.firstOrNull { it.truth.filingDateIso == filingDateIso }
+
+        /** The days in this pile whose crank seal stands snapped,
+         *  in stack order (newest first). The snapped seals' kept
+         *  home is the TRAY (A-8; coordinator R3 CC-5 — the plan's
+         *  "kept on the plate" wording stands corrected as
+         *  errata): the tray surface renders them from this list.
+         *  Interim source: the week state does not yet carry snap
+         *  order itself, so the pile's order stands in — named
+         *  here, replaced when the crank week carries it. */
+        fun snappedSealDays(): List<String> =
+            platesNewestFirst.filter { it.truth.crankSealBroken }.map { it.truth.filingDateIso }
 
         /** The pile with one more plate struck onto it. A plate
          *  for a day already in the pile is refused whole — the

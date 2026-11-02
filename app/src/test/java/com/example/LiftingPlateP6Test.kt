@@ -52,19 +52,23 @@ class LiftingPlateP6Test {
     // -- A-13 / B-13: the ceremony --------------------------------
 
     @Test
-    fun ceremony_runsBoltsThenWeightThenHandingBackThenPlate() {
+    fun ceremony_handBackIsAPrecondition_neverAPresentedPhase() {
+        // R2-7 (MOTION-SR-4 M-2, ratified): the handing back is an
+        // execution PRECONDITION of the lifting's first presented
+        // phase — there is no handing-back phase to present.
+        assertFalse(
+            LiftingPlate.LiftPhase.values().any { it.name.contains("HANDING") }
+        )
         val waiting = LiftingPlate.HandingBack.prepare(
             listOf(LiftingPlate.WaitingPerson("Mother", "contact://1"))
         )
         var s = LiftingPlate.CeremonyState.begin(waiting)
-        // The plate cannot be read at the sealed door.
         assertFalse(s.plateReadable)
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.PLATE_READ)
         assertEquals(LiftingPlate.LiftPhase.SEALED, s.phase)
 
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.LIFT_FIRED)
         assertEquals(LiftingPlate.LiftPhase.BOLTS_WITHDRAWING, s.phase)
-        // The door does not open on a half-withdrawn bolt set.
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.DOOR_SETTLED)
         assertEquals(LiftingPlate.LiftPhase.BOLTS_WITHDRAWING, s.phase)
 
@@ -72,21 +76,38 @@ class LiftingPlateP6Test {
             s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.BOLT_WITHDRAWN)
         }
         assertEquals(LiftingPlate.LiftPhase.DOOR_OPENING, s.phase)
-        assertFalse(s.plateReadable)
 
+        // The door settles — but with the precondition unproven,
+        // the ceremony holds at the settled door, NOT at the plate.
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.DOOR_SETTLED)
-        // With people waiting, the door opens onto the HANDING
-        // BACK — not onto the plate.
-        assertEquals(LiftingPlate.LiftPhase.HANDING_BACK, s.phase)
+        assertEquals(LiftingPlate.LiftPhase.DOOR_OPENING, s.phase)
+        assertTrue(s.doorSettled)
         assertFalse(s.plateReadable)
-        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.PLATE_READ)
-        assertEquals(LiftingPlate.LiftPhase.HANDING_BACK, s.phase)
 
+        // The precondition's confirmation completes the wait.
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.HANDED_BACK)
         assertEquals(LiftingPlate.LiftPhase.PLATE, s.phase)
         assertTrue(s.plateReadable)
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.PLATE_READ)
         assertEquals(LiftingPlate.LiftPhase.OPEN, s.phase)
+    }
+
+    @Test
+    fun ceremony_preconditionConfirmedEarly_flowsStraightThrough() {
+        val waiting = LiftingPlate.HandingBack.prepare(
+            listOf(LiftingPlate.WaitingPerson("Mother", "contact://1"))
+        )
+        var s = LiftingPlate.CeremonyState.begin(waiting)
+        // The wiring executes the handing back as the lift fires —
+        // before the first presented phase completes.
+        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.HANDED_BACK)
+        assertTrue(s.handingBackDelivered)
+        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.LIFT_FIRED)
+        repeat(LiftingPlate.LiftingScore.BOLT_COUNT) {
+            s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.BOLT_WITHDRAWN)
+        }
+        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.DOOR_SETTLED)
+        assertEquals(LiftingPlate.LiftPhase.PLATE, s.phase)
     }
 
     @Test
@@ -104,7 +125,7 @@ class LiftingPlateP6Test {
     }
 
     @Test
-    fun ceremony_ajarDayHasNoBoltsAndHandsBackBeforeOpening() {
+    fun ceremony_ajarDayHasNoBolts_andItsTestimonyGatesNothing() {
         val waiting = LiftingPlate.HandingBack.prepare(
             listOf(LiftingPlate.WaitingPerson("Unknown — 98xxxx", "call://9"))
         )
@@ -113,10 +134,10 @@ class LiftingPlateP6Test {
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.BOLT_WITHDRAWN)
         assertEquals(LiftingPlate.LiftPhase.AJAR, s.phase)
         assertEquals(0, s.boltsWithdrawn)
-        // The room is not his again until the waiting are handed back.
-        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.PLATE_READ)
-        assertEquals(LiftingPlate.LiftPhase.AJAR, s.phase)
-        s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.HANDED_BACK)
+        // R2-3: seal death already released the phone; this
+        // testimony surface closes on his word alone — the
+        // handing back is the wiring's precondition act, never
+        // a toll this face collects.
         s = LiftingPlate.advance(s, LiftingPlate.LiftEvent.PLATE_READ)
         assertEquals(LiftingPlate.LiftPhase.OPEN, s.phase)
     }
@@ -146,6 +167,25 @@ class LiftingPlateP6Test {
         var a = LiftingPlate.CeremonyState.beginAjar(LiftingPlate.HandingBack(emptyList()))
         a = LiftingPlate.advance(a, LiftingPlate.LiftEvent.PLATE_LEFT_UNREAD)
         assertEquals(LiftingPlate.LiftPhase.OPEN, a.phase)
+    }
+
+    @Test
+    fun pile_snappedSealsLiveInTheTray_inPileOrder() {
+        // R3 CC-5: the crank seal's home is the TRAY, not the
+        // plate. The pile names the snapped days in stack order —
+        // the tray's interim source until the week state carries
+        // snap order itself (DESIGNER-SR-4's interim instruction).
+        val snapped = LiftingPlate.plateTruthFor(
+            filingDateIso = "2026-10-30", sealedSpanMillis = 1_000L, hoursHeldMillis = 1_000L,
+            punches = emptyList(), sealTruth = LiftingPlate.SealTruth.WHOLE, crankSealBroken = true
+        )!!
+        val whole = wholeTruth("2026-11-02")
+        val pSnapped = (LiftingPlate.PlateStrikeGuard.strike(null, snapped, 1L)
+            as LiftingPlate.StrikeOutcome.Struck).plate
+        val pWhole = (LiftingPlate.PlateStrikeGuard.strike(null, whole, 2L)
+            as LiftingPlate.StrikeOutcome.Struck).plate
+        val pile = LiftingPlate.PlatePile(listOf(pWhole, pSnapped))
+        assertEquals(listOf("2026-10-30"), pile.snappedSealDays())
     }
 
     @Test

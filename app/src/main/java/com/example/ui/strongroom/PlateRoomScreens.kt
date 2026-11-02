@@ -1,19 +1,24 @@
 package com.example.ui.strongroom
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.domain.LiftingPlate
@@ -22,6 +27,7 @@ import com.example.ui.theme.PlateBrass
 import com.example.ui.theme.PlateBrassDark
 import com.example.ui.theme.PlateDarkRoom
 import com.example.ui.theme.PlateInkGold
+import com.example.ui.theme.PlateLineWork
 import com.example.ui.theme.RoomHeadingStyle
 import com.example.ui.theme.RoomListStyle
 
@@ -90,12 +96,57 @@ fun PlatePileScreen(
         }
         Spacer(Modifier.height(14.dp))
 
+        // THE TRAY'S KEPT PLACE (A-8; R3 CC-5): the snapped crank
+        // seals lie here, in snap order (the pile's order stands
+        // in until the week state carries snap order itself —
+        // the interim source named in LiftingPlate.PlatePile),
+        // visible whenever the tray is open — never on a plate.
+        val snappedDays = pile.snappedSealDays()
+        if (snappedDays.isNotEmpty()) {
+            Row(
+                Modifier.testTag("tray_snapped_seals"),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                for (day in snappedDays) {
+                    SnappedSealChip(day)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
         LazyColumn(Modifier.testTag("plate_pile_list")) {
             items(pile.platesNewestFirst, key = { it.truth.filingDateIso }) { plate ->
                 DayPlateView(plate = plate)
                 Spacer(Modifier.height(16.dp))
             }
         }
+    }
+}
+
+/** A snapped crank seal lying in the tray: a small disc split
+ *  in two, its halves parted — the spend's permanent testimony,
+ *  drawn from the plate's own inks. [day] is carried for the
+ *  tray's own record of which day's spend this was. */
+@Composable
+private fun SnappedSealChip(day: String) {
+    Canvas(
+        Modifier
+            .size(22.dp)
+            .testTag("tray_snapped_seal_$day")
+    ) {
+        drawArc(
+            color = PlateInkGold,
+            startAngle = 100f, sweepAngle = 160f,
+            useCenter = false,
+            style = Stroke(width = 3f)
+        )
+        drawArc(
+            color = PlateInkGold,
+            startAngle = 285f, sweepAngle = 140f,
+            useCenter = false,
+            style = Stroke(width = 3f)
+        )
+        drawCircle(color = PlateLineWork, radius = 1.6f, center = center)
     }
 }
 

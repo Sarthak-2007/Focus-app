@@ -55,9 +55,9 @@ import com.example.ui.theme.punchDiameter
  *     is drawn as struck metal: a deep centre with a raised lip
  *     on the light side, never a flat dot.
  *  3. The seal: WHOLE (an unbroken ring) or BROKEN (the ring
- *     cracked through), and — kept beside it, visible at a
- *     glance — the governor crank's snapped seal when the week's
- *     minute was spent.
+ *     cracked through). The governor crank's snapped seal is
+ *     carried in the truth but NOT rendered here — its kept
+ *     home is the tray (A-8, R3 CC-5), rendered pile-side.
  *  4. On a fallen day: the bracket strike — the gap hours as two
  *     engraved figures under A-12's settled words, on brass
  *     descended into the dark.
@@ -119,19 +119,11 @@ fun DayPlateView(
             Spacer(Modifier.height(8.dp))
         }
 
-        // 3 · The crank's snapped seal, kept on the plate.
-        if (truth.crankSealBroken) {
-            Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SnappedSealChip()
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = "Crank seal snapped — kept",
-                    style = PlateBodyStyle,
-                    color = PlateLineWork
-                )
-            }
-        }
+        // The crank's snapped seal is NOT struck here: its kept
+        // home is the tray (A-8; coordinator R3 CC-5 — the plan's
+        // "kept on the plate" wording stands corrected as errata).
+        // The fact rides in the plate's truth (P1 carries it) and
+        // the tray renders it — see PlatePileScreen's tray row.
 
         // 4 · The bracket strike, on a fallen day.
         if (truth.bracketGapMillis > 0L) {
@@ -251,29 +243,6 @@ private fun SealMark(truth: LiftingPlate.PlateTruth) {
             }
             drawPath(crack, color = PlateLineWork, style = Stroke(width = 2f))
         }
-    }
-}
-
-/** The crank's snapped lead seal, kept in its tray on the plate:
- *  a small disc split in two, its halves parted — the spend's
- *  permanent testimony, drawn from the plate's own inks. */
-@Composable
-private fun SnappedSealChip() {
-    Canvas(Modifier.size(22.dp).testTag("day_plate_crank_seal")) {
-        val r = size.minDimension / 2f - 1.5f
-        drawArc(
-            color = PlateInkGold,
-            startAngle = 100f, sweepAngle = 160f,
-            useCenter = false,
-            style = Stroke(width = 3f)
-        )
-        drawArc(
-            color = PlateInkGold,
-            startAngle = 285f, sweepAngle = 140f,
-            useCenter = false,
-            style = Stroke(width = 3f)
-        )
-        drawCircle(color = PlateLineWork, radius = 1.6f, center = center)
     }
 }
 

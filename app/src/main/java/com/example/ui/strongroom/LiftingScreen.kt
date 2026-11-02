@@ -34,7 +34,6 @@ import com.example.ui.theme.PlateDarkRoom
 import com.example.ui.theme.PlateDoorGround
 import com.example.ui.theme.PlateInkGold
 import com.example.ui.theme.PlateLineWork
-import com.example.ui.theme.RoomHeadingStyle
 import com.example.ui.theme.RoomListStyle
 import kotlinx.coroutines.delay
 
@@ -55,21 +54,26 @@ import kotlinx.coroutines.delay
  *     DoorWeightSpring (damping 0.86, stiffness 55): slow
  *     commitment, long settle. Nothing fades; nothing slides;
  *     the door's angle is the whole transition.
- *  3. THE HANDING BACK, FIRST — with the door open, the people
- *     who waited are presented and delivered back to his phone's
- *     own list ([onHandedBack]) BEFORE the plate can be read.
- *     The phase machine makes the plate unreachable before this;
- *     the screen's callback order proves it: onHandedBack fires
- *     strictly before any plate is composed.
+ *  3. THE HANDING BACK, FIRST — as an execution PRECONDITION,
+ *     never a presented phase (R2-7, MOTION-SR-4's M-2 ratified):
+ *     [onHandedBack] fires as the lift fires, before the first
+ *     bolt completes, and the wiring returns the waiting people
+ *     to his phone's OWN list — they reappear there, not on any
+ *     Monolith surface; this screen presents no list of people.
+ *     The plate remains unreachable until the delivery is
+ *     confirmed into the machine (the settled door simply waits,
+ *     presented and patient, if it ever came to that).
  *  4. THE PLATE — struck once at the lifting (by the model/wiring;
  *     this screen only ever READS a struck plate), offered for
  *     reading, owed never (B-15): one touch marks it read.
  *
  * A FALLEN DAY has no ceremony: [failure] stands the ajar face
  * in its dark room from the first frame — no bolts, no opening,
- * no voice — with its bracket-struck plate beneath. Even there,
- * the handing back is delivered before the room is his again:
- * the failure is the seal's, not the waiting people's.
+ * no voice — with its bracket-struck plate beneath. This surface
+ * is testimony only: the phone was already released at the
+ * seal's death (R2-3), and the handing back runs as the same
+ * precondition act — the failure is the seal's, never the
+ * waiting people's, and neither is collected as a toll here.
  *
  * Wiring seams (named): the seal's firing, the strike itself, the
  * delivery of the handing back into the phone's own list, and the
@@ -95,10 +99,19 @@ fun LiftingScreen(
         )
     }
     var doorSettledFired by remember { mutableStateOf(false) }
-    var handedBackFired by remember { mutableStateOf(false) }
 
     fun fire(event: LiftingPlate.LiftEvent) {
         ceremony = LiftingPlate.advance(ceremony, event)
+    }
+
+    // THE PRECONDITION, executed first: as the lift fires, the
+    // waiting people are handed back (the wiring performs the
+    // return to his phone's own list on this callback). This is
+    // deliberately the screen's first effect — it precedes the
+    // bolt score below, and nothing in the layout presents it.
+    LaunchedEffect(handingBack) {
+        onHandedBack(handingBack)
+        fire(LiftingPlate.LiftEvent.HANDED_BACK)
     }
 
     // The bolt score: fire the lifting, then withdraw each bolt at
@@ -121,7 +134,6 @@ fun LiftingScreen(
     // settle, exactly P0's DoorWeightSpring figures.
     val doorTravel by animateFloatAsState(
         targetValue = if (ceremony.phase == LiftingPlate.LiftPhase.DOOR_OPENING ||
-            ceremony.phase == LiftingPlate.LiftPhase.HANDING_BACK ||
             ceremony.phase == LiftingPlate.LiftPhase.PLATE ||
             ceremony.phase == LiftingPlate.LiftPhase.OPEN
         ) 1f else 0f,
@@ -139,17 +151,6 @@ fun LiftingScreen(
         }
     }
 
-    // The handing back, delivered at its phase — before the plate.
-    LaunchedEffect(ceremony.phase) {
-        if (handedBackFired) return@LaunchedEffect
-        if (ceremony.phase == LiftingPlate.LiftPhase.HANDING_BACK || ceremony.phase == LiftingPlate.LiftPhase.AJAR) {
-            delay(600)
-            handedBackFired = true
-            onHandedBack(handingBack)
-            fire(LiftingPlate.LiftEvent.HANDED_BACK)
-        }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -164,32 +165,9 @@ fun LiftingScreen(
             DoorAndBolts(boltsWithdrawn = ceremony.boltsWithdrawn, doorTravel = doorTravel)
         }
 
-        // The handing back stands before the plate — in the
-        // layout's order as in the machine's.
-        if (!handingBack.isEmpty &&
-            (ceremony.phase == LiftingPlate.LiftPhase.HANDING_BACK ||
-                ceremony.phase == LiftingPlate.LiftPhase.AJAR ||
-                ceremony.phase == LiftingPlate.LiftPhase.PLATE ||
-                ceremony.phase == LiftingPlate.LiftPhase.OPEN)
-        ) {
-            Spacer(Modifier.height(26.dp))
-            Column(Modifier.testTag("handing_back")) {
-                Text(
-                    text = "Handed back",
-                    style = RoomHeadingStyle,
-                    color = PlateInkGold
-                )
-                Spacer(Modifier.height(8.dp))
-                for (person in handingBack.waiting) {
-                    Text(
-                        text = person.displayName,
-                        style = RoomListStyle,
-                        color = PlateInkGold,
-                        modifier = Modifier.padding(vertical = 3.dp)
-                    )
-                }
-            }
-        }
+        // No handing-back list is presented here — R2-7: the
+        // people are back in HIS phone's own list, which is where
+        // he finds them. This surface's next thing is the plate.
 
         // The plate: readable only where the machine allows it.
         if (plate != null && ceremony.plateReadable) {
