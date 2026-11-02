@@ -695,6 +695,11 @@ class MonolithShieldService : Service() {
                     MonolithWidgetProvider.requestUpdate(applicationContext)
                 }
 
+                // KB02 SPIKE (Stage 4P, Row 2): observation only —
+                // hand the persisted row to the probe logger. No
+                // chain behaviour altered.
+                Kb02ProbeLog.onTickRow(applicationContext, updated)
+
                 // Break boundaries announce themselves from here —
                 // the loop that is alive in every app, screen on or
                 // off — never from a UI observer that may not exist

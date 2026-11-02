@@ -57,6 +57,11 @@ class MonolithBootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action ?: return
+        // KB02 SPIKE (Stage 4P, Row 2): observation only — stamp
+        // the receiver's firing so the boot-to-restored-face
+        // interval is measurable from the raw log. No behaviour
+        // altered.
+        Kb02ProbeLog.log(context.applicationContext, "RECEIVER_FIRED", "action=$action")
         val appContext = context.applicationContext
         when (action) {
             // Issue #122: the battery turned — the shield's
