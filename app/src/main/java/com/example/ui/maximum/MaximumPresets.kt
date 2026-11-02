@@ -237,6 +237,9 @@ object MaximumPresets {
      * The revolving drum: one app per position, caught by its
      * detent (MOTION-SR-5's Drum body). A spent purse is the
      * [HardStop] at the travel's end — the crank will not turn.
+     * E-08 (census, by ruling): the drum minute's END is this
+     * drag's self-return — no separate end event exists, here or
+     * anywhere in the toolkit.
      */
     fun drumDrag(positions: List<Float>): InertiaDrag = InertiaDrag(
         InertiaDragSpec(
@@ -250,6 +253,85 @@ object MaximumPresets {
 
     /** The governor's crank against a spent purse: resistance, then refusal, once per attempt. */
     fun spentPurseStop(travelLimit: Float): HardStop = HardStop(
-        HardStopSpec(limit = travelLimit, approachZone = travelLimit * 0.15f, maxResistance = 10f)
+        HardStopSpec(limit = travelLimit, approachZone = SPENT_STOP_TRAVEL_DEG, maxResistance = 10f)
+    )
+
+    // ---------- CENSUS ADDITIONS (LEAD-STAGE-11, filed mid-leg, by number) ----------
+
+    /**
+     * Elements the census rules OUT of the toolkit, by name — their
+     * absence is ruled, not missed (letter of 2026-11-02):
+     * E-13 ring + hour (stillness at Stage 10's grade: no motion,
+     * no haptic, no hook — kept out entirely).
+     * E-08 the drum minute's end (no separate end event exists:
+     * the end IS [drumDrag]'s self-return, per Rulings Round 3 on
+     * FEEL-SR-4 GAP-1 — named here so the tracker can cite it).
+     */
+    val ExcludedByLaw: List<CensusPreset> = listOf(
+        CensusPreset("ring-hour", "E-13 EXCLUDED BY LAW: stillness — no preset, no hook"),
+        CensusPreset("drum-minute-end", "E-08 NO SEPARATE EVENT: the drum's self-return is the end")
+    )
+
+    /**
+     * E-04 · THE THREE CLUNKS AS ONE CEREMONY — the pairing hook
+     * only: each bolt event ↔ its clunk ID (MOTION-SR-5's sync
+     * point names, verbatim). The samples are SOUND-SR-1's
+     * synthesised set (Stage 13 preparation); this toolkit pairs,
+     * it does not sound.
+     */
+    val BoltClunkPairing: List<Pair<String, String>> = listOf(
+        "bolt-1" to "bolt-clunk-1",
+        "bolt-2" to "bolt-clunk-2",
+        "bolt-3" to "bolt-clunk-3"
+    )
+
+    /**
+     * E-06 · THE GRILLE DOOR'S SECOND TOUCH — two phases, one
+     * preset: the LATCH seats first (peak ≤150, ≤40 ms —
+     * FEEL-SR-2's constraint, MOTION-SR-2 §2's numbers), then the
+     * WEIGHTED SWING on the door's own body. The two phases'
+     * curves are distinct BY VALUE (the M-4 guard): the latch's
+     * progressive seat-approach is not the swing's viscous weight,
+     * and neither is any other preset's curve.
+     */
+    val GrilleLatchSpec: DetentEventSpec = DetentEventSpec(amplitude = 150, durationMs = 40)
+    val GrilleLatchCurve: ResistanceCurve =
+        ResistanceCurves.progressive(centre = 0f, scale = 1f, base = 1f, gain = 1.5f)
+    val GrilleSwingCurve: ResistanceCurve = ResistanceCurves.viscous(gain = 0.35f)
+
+    /** The grille swing's body: the door's weight, at grille scale in the caller's units. */
+    val GrilleSwingBody get() = MonolithBodies.DoorWeight
+
+    /**
+     * E-10 · THE HARD STOPS (drum spent / crank spent) — distinct
+     * from the cranks themselves: strain → STOP → silence → one
+     * unload, no dialog reachable. The strain travel is RULED
+     * 4.0° (Rulings Round 3, MOTION-SR-2 S-2) — it is the
+     * [HardStopSpec.approachZone] of every spent stop this
+     * toolkit builds; the refusal event is the one unload, and
+     * the silence after it is [HardStop]'s once-per-attempt law.
+     */
+    const val SPENT_STOP_TRAVEL_DEG: Float = 4.0f
+
+    /**
+     * E-14 · THE DESK CLOCK'S FORMING — curves-as-data is lawful
+     * (MOTION-SR-3): the extent is LINEAR in held time. An eased
+     * extent is a named send-back in that filing, so this curve
+     * is the identity, asserted linear by test. No felt or sound
+     * hook exists for the clock, and none is offered here.
+     */
+    fun deskClockExtent(heldFraction: Float): Float = heldFraction.coerceIn(0f, 1f)
+
+    /**
+     * THE DYNAMIC RANGE, AS DATA (H-6 / FEEL-SR-3 §2): the day's
+     * peak amplitudes, heaviest → lightest, exactly as filed —
+     * carve cut 240 · seat thud 235 · click-lock 210 · end-stop
+     * 195 · … · break grain 30. A preset system that compresses
+     * this range toward one middle buzz fails even with every
+     * waveform present; the range therefore ships in the data,
+     * not as a tuning afterthought.
+     */
+    val DynamicRangePeaks: List<Int> = listOf(
+        240, 235, 210, 195, 175, 165, 150, 130, 120, 110, 85, 75, 60, 55, 50, 30
     )
 }
