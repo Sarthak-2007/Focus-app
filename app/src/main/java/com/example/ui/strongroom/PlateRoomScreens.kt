@@ -77,7 +77,7 @@ fun PlatePileScreen(
             .padding(horizontal = 24.dp, vertical = 28.dp)
             .testTag("plate_pile")
     ) {
-        Text(text = "The plates", style = RoomHeadingStyle, color = PlateInkGold)
+        // Deck §7.8: the pile carries no heading, total, or count line.
         Spacer(Modifier.height(18.dp))
 
         // The stack itself: the newest plates' edges, offset as a
@@ -167,7 +167,7 @@ fun StrongroomDrawerScreen(
             .padding(horizontal = 24.dp, vertical = 28.dp)
             .testTag("strongroom_drawer")
     ) {
-        Text(text = "The drawer", style = RoomHeadingStyle, color = PlateInkGold)
+        // Deck §11.3: the drawer surface carries ∅ room words.
         Spacer(Modifier.height(18.dp))
         LazyColumn(Modifier.testTag("strongroom_drawer_list")) {
             for ((day, tasks) in byDay) {

@@ -36,6 +36,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
+import com.example.ui.strongroom.StrongroomCopy
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -131,7 +133,7 @@ fun GuardSurfaceScreen(
                 Text(GuardCopy.RAISE_TITLE, style = GuardSectionStyle, color = GuardLeaf)
                 Spacer(Modifier.height(6.dp))
                 // The control itself says so, plainly (D-1).
-                Text(GuardCopy.RAISE_LAW, style = GuardBodyStyle, color = GuardLeaf)
+                Text(stringResource(StrongroomCopy.StandsFromNextDayStart), style = GuardBodyStyle, color = GuardLeaf)
                 Spacer(Modifier.height(12.dp))
                 var raiseMinutes by remember(snapshot.allowanceMinutes) {
                     mutableStateOf(snapshot.allowanceMinutes + GuardWheel.STEP_MINUTES)
@@ -148,7 +150,7 @@ fun GuardSurfaceScreen(
                 if (model.has(GuardControl.ALLOWANCE_RAISE_CONFIRM)) {
                     Spacer(Modifier.height(14.dp))
                     GuardPlate(
-                        label = "Stand from the next day-start",
+                        label = stringResource(StrongroomCopy.StandsFromNextDayStart),
                         onClick = { onIntent(GuardIntent.RequestRaise(raiseMinutes)) },
                         modifier = Modifier.testTag("guard_raise_confirm")
                     )
@@ -180,7 +182,7 @@ fun GuardSurfaceScreen(
                 )
             }
             if (model.has(GuardControl.GUARD_REQUEST_OFF)) {
-                Text(GuardCopy.OFF_LAW, style = GuardBodyStyle, color = GuardLeaf)
+                Text(stringResource(StrongroomCopy.StandsFromNextDayStart), style = GuardBodyStyle, color = GuardLeaf)
                 Spacer(Modifier.height(10.dp))
                 GuardPlate(
                     label = "Ask the Guard off — from the next day-start",
@@ -201,7 +203,7 @@ fun GuardSurfaceScreen(
                 // never a control room: end date, and nothing else.
                 Text(model.stretchLine, style = GuardBodyStyle, color = GuardLeaf)
             } else {
-                Text(GuardCopy.STRETCH_SETUP_LAW, style = GuardBodyStyle, color = GuardLeaf)
+                Text(stringResource(StrongroomCopy.EndDateIsTheExit), style = GuardBodyStyle, color = GuardLeaf)
                 if (model.has(GuardControl.STRETCH_END_STEPPER)) {
                     Spacer(Modifier.height(14.dp))
                     StretchStepper(
@@ -220,13 +222,14 @@ fun GuardSurfaceScreen(
             Spacer(Modifier.height(34.dp))
             Text(GuardCopy.EXITS_TITLE, style = GuardSectionStyle, color = GuardLeaf)
             Spacer(Modifier.height(8.dp))
-            Text(GuardCopy.EXITS_LAW, style = GuardBodyStyle, color = GuardLeaf)
             model.exitNames.forEach { name ->
                 Spacer(Modifier.height(8.dp))
                 Text(name, style = GuardFigureStyle, color = GuardLeaf)
             }
             Spacer(Modifier.height(10.dp))
-            Text(model.valveLine, style = GuardSecondaryStyle, color = GuardInkEmber)
+            if (model.valveLine.isNotEmpty()) {
+                Text(model.valveLine, style = GuardSecondaryStyle, color = GuardInkEmber)
+            }
 
             // --------------------------------------------------
             // ROUTINES — settled here, under the Guard (D-9).

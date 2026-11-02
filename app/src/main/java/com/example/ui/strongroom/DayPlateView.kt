@@ -100,7 +100,8 @@ fun DayPlateView(
             )
             Spacer(Modifier.width(16.dp))
             Text(
-                text = "${heldFigures(truth.hoursHeldMillis)} held",
+                // Deck §7.3: hours held are figures only — no "held" caption is struck.
+                text = heldFigures(truth.hoursHeldMillis),
                 style = PlateHeadingStyle,
                 color = PlateLineWork,
                 modifier = Modifier.testTag("day_plate_hours")
@@ -129,21 +130,13 @@ fun DayPlateView(
         if (truth.bracketGapMillis > 0L) {
             Spacer(Modifier.height(12.dp))
             Column(Modifier.testTag("day_plate_bracket")) {
-                Row {
-                    Text(
-                        text = truth.bracketStandingHour.orEmpty(),
-                        style = PlateHeadingStyle,
-                        color = PlateLineWork
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(text = "—", style = PlateHeadingStyle, color = PlateLineWork)
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        text = truth.bracketFallenHour.orEmpty(),
-                        style = PlateHeadingStyle,
-                        color = PlateLineWork
-                    )
-                }
+                // Deck §7.6 (A-12): the pair struck in its settled form —
+                // [HH:MM — HH:MM], 15 cells, em-dash U+2014, one form.
+                Text(
+                    text = "[${truth.bracketStandingHour.orEmpty()} \u2014 ${truth.bracketFallenHour.orEmpty()}]",
+                    style = PlateHeadingStyle,
+                    color = PlateLineWork
+                )
                 // A-12's settled words — "standing at the last
                 // check, fallen by the first check that found it" —
                 // are the bracket's READING, not its lettering
@@ -172,16 +165,7 @@ fun DayPlateView(
 @Composable
 private fun PunchRow(kind: LiftingPlate.PunchKind, count: Int) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = when (kind) {
-                LiftingPlate.PunchKind.REACH -> "Reach"
-                LiftingPlate.PunchKind.HELD -> "Held"
-                LiftingPlate.PunchKind.FLOOR -> "Floor"
-            },
-            style = PlateBodyStyle,
-            color = PlateLineWork,
-            modifier = Modifier.width(52.dp)
-        )
+        // Deck §7.4: no legend is lettered — the holes' grades speak.
         Row(
             horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically,

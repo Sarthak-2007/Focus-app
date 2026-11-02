@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
@@ -103,15 +104,21 @@ fun SigningScreen(
             .padding(horizontal = 24.dp, vertical = 28.dp)
             .testTag("signing_surface")
     ) {
+        // Deck §1.1/§1.2 (Stage 9): no headline of the app's own
+        // stands over the Composition — the head is the day itself,
+        // its shape in the deck's four strings, drawn from the
+        // single source. An unmapped shape name is carried as-is
+        // (carried content, never authored here).
         Text(
-            text = "THE SIGNING",
+            text = when (draft.dayShapeName.lowercase()) {
+                "ordinary" -> stringResource(StrongroomCopy.DayShapeOrdinary)
+                "test" -> stringResource(StrongroomCopy.DayShapeTest)
+                "small" -> stringResource(StrongroomCopy.DayShapeSmall)
+                "rest" -> stringResource(StrongroomCopy.DayShapeRest)
+                else -> draft.dayShapeName
+            },
             style = SigningHeadStyle,
             color = ink
-        )
-        Text(
-            text = "Tomorrow, as composed — ${draft.dayShapeName}",
-            style = SigningQuietStyle,
-            color = quietInk
         )
         Spacer(Modifier.height(18.dp))
 
@@ -185,7 +192,7 @@ fun SigningScreen(
         // B-19: the telling, standing at every signing — told
         // once, quiet, never announced.
         Text(
-            text = SigningWords.TELLING_LINE,
+            text = stringResource(StrongroomCopy.Telling),
             style = SigningQuietStyle,
             color = quietInk.copy(alpha = 0.8f),
             modifier = Modifier.testTag("signing_telling")
@@ -230,7 +237,7 @@ private fun CompositionStep(
 ) {
     // B-1 / TI-01: the purpose sentence, at the signing.
     Text(
-        text = SigningWords.PURPOSE_LINE,
+        text = stringResource(StrongroomCopy.Purpose),
         style = SigningBodyStyle,
         color = ink,
         modifier = Modifier.testTag("signing_purpose")
@@ -251,7 +258,7 @@ private fun CompositionStep(
         // B-4: the spent-day telling, in plain words, verbatim —
         // this surface says it itself, before the seal.
         Text(
-            text = SigningWords.CODES_WAIT_LINE,
+            text = stringResource(StrongroomCopy.CodesWaitTonight),
             style = SigningBodyStyle,
             color = ink,
             modifier = Modifier.testTag("signing_codes_wait")
@@ -383,37 +390,18 @@ private fun SentenceStep(
     onTaskLine: (String?) -> Unit,
     onContinue: () -> Unit
 ) {
-    Text(
-        text = "His sentence for the face",
-        style = SigningBodyStyle,
-        color = ink
-    )
-    Spacer(Modifier.height(10.dp))
     SigningTextField(
         value = flow.sentence.orEmpty(),
-        placeholder = "Write it — or leave the kept place standing",
+        placeholder = "",
         ink = ink,
         quietInk = quietInk,
         tag = "signing_sentence_field",
         onValue = { onSentence(it) }
     )
-    Spacer(Modifier.height(8.dp))
-    Text(
-        text = if (flow.sentenceKeptPlace) "THE KEPT PLACE STANDS" else "THE SENTENCE STANDS",
-        style = SigningQuietStyle,
-        color = quietInk,
-        modifier = Modifier.testTag("signing_sentence_state")
-    )
     Spacer(Modifier.height(18.dp))
-    Text(
-        text = "The block's reason, in his words",
-        style = SigningBodyStyle,
-        color = ink
-    )
-    Spacer(Modifier.height(10.dp))
     SigningTextField(
         value = flow.taskLine.orEmpty(),
-        placeholder = "The reason for the block — his words, unjudged",
+        placeholder = "",
         ink = ink,
         quietInk = quietInk,
         tag = "signing_task_field",
@@ -435,16 +423,10 @@ private fun CombinationStep(
     // B-5: the clause, spoken whole at the signing — here, and
     // nowhere else in the app.
     Text(
-        text = SigningWords.SIGNING_CLAUSE,
+        text = stringResource(StrongroomCopy.Clause),
         style = SigningBodyStyle,
         color = ink,
         modifier = Modifier.testTag("signing_clause")
-    )
-    Spacer(Modifier.height(8.dp))
-    Text(
-        text = "Spin the dials to your combination — it is written nowhere.",
-        style = SigningQuietStyle,
-        color = quietInk
     )
     Spacer(Modifier.height(20.dp))
     Row(
@@ -495,42 +477,10 @@ private fun ReadyStep(
     quietInk: androidx.compose.ui.graphics.Color,
     onDone: () -> Unit
 ) {
-    val result = flow.result
-    Text(
-        text = "SET.",
-        style = SigningHeadStyle,
-        color = ink,
-        modifier = Modifier.testTag("signing_ready")
-    )
-    Spacer(Modifier.height(12.dp))
-    if (result != null) {
-        Text(
-            text = "Lifting hour ${result.liftingHour}",
-            style = SigningFiguresStyle,
-            color = ink
-        )
-        Text(
-            text = "${result.lockedPackages.size} locked for tomorrow",
-            style = SigningBodyStyle,
-            color = ink
-        )
-        Text(
-            text = "Break ${result.breakMinutes} minutes — fires by the lock, summoned by no one",
-            style = SigningBodyStyle,
-            color = ink
-        )
-        Text(
-            text = result.sentence ?: "The kept place stands on the face",
-            style = SigningBodyStyle,
-            color = quietInk
-        )
-        Spacer(Modifier.height(14.dp))
-        Text(
-            text = "The door stands ready. It swings at the first sitting.",
-            style = SigningBodyStyle,
-            color = ink
-        )
-    }
+    // Deck §1 (signing absences): no confirmation wording after the
+    // spin — the sealing itself is the confirmation. This step
+    // carries no summary, no count, no ready line; only the
+    // functional handle that hands the result onward.
     Spacer(Modifier.height(20.dp))
     SigningContinue(label = "DONE", ink = ink, onClick = onDone, tag = "signing_done")
 }
