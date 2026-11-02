@@ -31,8 +31,12 @@ import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
@@ -109,10 +113,10 @@ import kotlin.math.roundToInt
  * carried in the model and rendered nowhere: no format for it
  * was ever decided, and this surface mints none.
  *
- * R-6 · FLAG_SECURE: while this drawer stands open, the host
- * holds the window FLAG_SECURE ([drawerSurfaceSecure] — the
- * re-earned archive law, named in DrawerMechanisms). His kept
- * days are not screenshotted and do not thumbnail in Recents.
+ * SCREENSHOTS ALLOWED (Sarthak's order, Nov 3, 2026): this
+ * drawer carries no screenshot restriction — the old R-6
+ * FLAG_SECURE law is deleted whole; his kept days screenshot
+ * and thumbnail in Recents like every other surface.
  *
  * TEXTURE (intake §1): wood-dark drawer furniture, brass
  * plates, steel fittings — grain derived from each surface
@@ -145,6 +149,66 @@ data class DrawerActions(
      *  the doorway stands as it stood. */
     val onClose: () -> Unit = {}
 )
+
+// ------------------------------------------------------------------
+// Relief vocabulary — the drawer's machined depth
+// ------------------------------------------------------------------
+// The print's law, carried into the furniture: a raised or cut
+// piece carries a light-facing lip and a shadow lip, both the
+// mark's OWN RELIGHT partners in whole eighths — no new ink.
+// The lamp stands upper-left (the foundation's direction).
+
+/** The lit and shadow lips of a raised round piece, as arcs. */
+private fun DrawScope.reliefRing(
+    ink: Color,
+    field: Color,
+    center: Offset,
+    radius: Float,
+    width: Float,
+    state: StrongroomLightState,
+    litGradient: Float = 0.9f,
+    shadowGradient: Float = -0.6f
+) {
+    val corner = Offset(center.x - radius, center.y - radius)
+    val disc = Size(radius * 2, radius * 2)
+    drawArc(
+        color = StrongroomLight.relief(ink, field, litGradient, state),
+        startAngle = 150f, sweepAngle = 150f, useCenter = false,
+        topLeft = corner, size = disc, style = Stroke(width = width)
+    )
+    drawArc(
+        color = StrongroomLight.relief(ink, field, shadowGradient, state),
+        startAngle = 330f, sweepAngle = 150f, useCenter = false,
+        topLeft = corner, size = disc, style = Stroke(width = width)
+    )
+}
+
+/** A bolt head: a steel disc, its lit crescent toward the lamp,
+ *  its slot cut across — the print's fasteners, at room scale. */
+private fun DrawScope.boltHead(
+    center: Offset,
+    radius: Float,
+    state: StrongroomLightState
+) {
+    drawCircle(color = StrongroomInks.Graphite, radius = radius, center = center)
+    drawArc(
+        color = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 3
+        ),
+        startAngle = 150f, sweepAngle = 150f, useCenter = false,
+        topLeft = Offset(center.x - radius, center.y - radius),
+        size = Size(radius * 2, radius * 2),
+        style = Stroke(width = radius * 0.5f)
+    )
+    drawLine(
+        color = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 2
+        ),
+        start = center + Offset(-radius * 0.55f, 0f),
+        end = center + Offset(radius * 0.55f, 0f),
+        strokeWidth = radius * 0.3f
+    )
+}
 
 // ------------------------------------------------------------------
 // The shut drawer — furniture in the doorway room (C-22 at rest)
@@ -188,8 +252,39 @@ fun DrawerFront(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                 }
                 yy += cell; cy++
             }
-            // The frame's inset: a finer inner panel line, relieved
-            // toward violet — joinery, not decoration.
+            // The inset panel's own field: worked timber set INTO
+            // the frame — its grain runs at its own seed over a
+            // deeper tone, so the panel reads as a raised field
+            // of different figure, not front wood with lines on it.
+            val panelTone = StrongroomLight.blendEighth(
+                StrongroomInks.Graphite, StrongroomInks.Violet, 1
+            )
+            run {
+                var py = 0
+                var pyy = 11.dp.toPx()
+                while (pyy < size.height - 11.dp.toPx()) {
+                    var px = 0
+                    var pxx = 11.dp.toPx()
+                    while (pxx < size.width - 11.dp.toPx()) {
+                        drawRect(
+                            color = DrawerTexture.cellTone(
+                                panelTone, StrongroomInks.Violet,
+                                DrawerTexture.Species.WOOD, px, py,
+                                seed = 42, state = lightState
+                            ),
+                            topLeft = Offset(pxx, pyy),
+                            size = Size(cell + 1f, cell + 1f)
+                        )
+                        pxx += cell; px++
+                    }
+                    pyy += cell; py++
+                }
+            }
+            // The frame's inset: the panel's bevel, complete on
+            // all four sides — joinery, not decoration. The lit
+            // lines are the frame's existing relief; inside them
+            // a groove line runs the panel's perimeter, the cut
+            // between frame and field.
             val inset = 9.dp.toPx()
             val joinery = StrongroomLight.relief(
                 StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
@@ -204,22 +299,87 @@ fun DrawerFront(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                 topLeft = Offset(inset, size.height - inset - 1.5.dp.toPx()),
                 size = Size(size.width - 2 * inset, 1.5.dp.toPx())
             )
-            // The brass top edge: where the drawer meets the room.
             drawRect(
-                color = StrongroomLight.sealedPinstripe(),
-                topLeft = Offset(0f, 0f),
-                size = Size(size.width, 2.dp.toPx())
+                color = joinery,
+                topLeft = Offset(inset, inset),
+                size = Size(1.5.dp.toPx(), size.height - 2 * inset)
+            )
+            drawRect(
+                color = joinery,
+                topLeft = Offset(size.width - inset - 1.5.dp.toPx(), inset),
+                size = Size(1.5.dp.toPx(), size.height - 2 * inset)
+            )
+            drawRect(
+                color = StrongroomLight.blendEighth(
+                    StrongroomInks.Graphite, StrongroomInks.Violet, 1
+                ),
+                topLeft = Offset(inset + 3.5.dp.toPx(), inset + 3.5.dp.toPx()),
+                size = Size(
+                    size.width - 2 * inset - 7.dp.toPx(),
+                    size.height - 2 * inset - 7.dp.toPx()
+                ),
+                style = Stroke(width = 1.2.dp.toPx())
+            )
+            // The brass top edge: where the drawer meets the room —
+            // a ruled strip of grained brass, its crown lit, its
+            // foot in shadow: a metal edge, not a stripe of paint.
+            run {
+                var bx = 0
+                var bxx = 0f
+                val bCell = DrawerTexture.Species.BRASS.cellPx.dp.toPx()
+                while (bxx < size.width) {
+                    drawRect(
+                        color = DrawerTexture.cellTone(
+                            StrongroomInks.Gold, StrongroomInks.Graphite,
+                            DrawerTexture.Species.BRASS, bx, 0,
+                            seed = 7, state = lightState
+                        ),
+                        topLeft = Offset(bxx, 0f),
+                        size = Size(bCell + 1f, 4.dp.toPx())
+                    )
+                    bxx += bCell; bx++
+                }
+            }
+            drawLine(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomRoles.Field, 0.7f, lightState
+                ),
+                start = Offset(0f, 0.6.dp.toPx()),
+                end = Offset(size.width, 0.6.dp.toPx()),
+                strokeWidth = 1.dp.toPx()
+            )
+            drawLine(
+                color = StrongroomLight.descend(StrongroomInks.Gold, 3),
+                start = Offset(0f, 3.6.dp.toPx()),
+                end = Offset(size.width, 3.6.dp.toPx()),
+                strokeWidth = 1.dp.toPx()
             )
             // The pull: a brass bail handle — a bar on two posts,
-            // centred, at the hand's height.
+            // centred, at the hand's height. The bar carries its
+            // own relief: the light along its crown, its shadow
+            // thrown on the wood beneath, and a bolt head where
+            // each post meets the front — a fastened handle.
             val pullW = size.width * 0.30f
             val pullCx = size.width / 2f
             val pullY = size.height * 0.46f
             val brass = StrongroomInks.Gold
             drawRect(
+                color = StrongroomLight.descend(StrongroomInks.Gold, 4),
+                topLeft = Offset(pullCx - pullW / 2f + 1.dp.toPx(), pullY + 4.5.dp.toPx()),
+                size = Size(pullW, 2.dp.toPx())
+            )
+            drawRect(
                 color = brass,
                 topLeft = Offset(pullCx - pullW / 2f, pullY),
                 size = Size(pullW, 4.dp.toPx())
+            )
+            drawLine(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomRoles.Field, 0.65f, lightState
+                ),
+                start = Offset(pullCx - pullW / 2f, pullY + 0.5.dp.toPx()),
+                end = Offset(pullCx + pullW / 2f, pullY + 0.5.dp.toPx()),
+                strokeWidth = 1.dp.toPx()
             )
             drawRect(
                 color = brass,
@@ -231,12 +391,32 @@ fun DrawerFront(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                 topLeft = Offset(pullCx + pullW / 2f - 4.dp.toPx(), pullY - 7.dp.toPx()),
                 size = Size(4.dp.toPx(), 7.dp.toPx())
             )
+            boltHead(
+                Offset(pullCx - pullW / 2f + 2.dp.toPx(), pullY - 3.5.dp.toPx()),
+                2.4.dp.toPx(), lightState
+            )
+            boltHead(
+                Offset(pullCx + pullW / 2f - 2.dp.toPx(), pullY - 3.5.dp.toPx()),
+                2.4.dp.toPx(), lightState
+            )
             // The keyhole escutcheon below the pull: a small brass
             // plate, its hole graphite — the drawer's one lock,
-            // and it is never locked against him.
+            // and it is never locked against him. A relieved rim
+            // and the escutcheon's tail below the hole, as the
+            // real plate is cut.
             val escCx = pullCx
             val escCy = size.height * 0.76f
             drawCircle(color = brass, radius = 6.dp.toPx(), center = Offset(escCx, escCy))
+            reliefRing(
+                StrongroomInks.Gold, StrongroomRoles.Field,
+                Offset(escCx, escCy), 5.2.dp.toPx(), 1.6.dp.toPx(), lightState,
+                litGradient = 0.7f, shadowGradient = -0.6f
+            )
+            drawRect(
+                color = brass,
+                topLeft = Offset(escCx - 1.6.dp.toPx(), escCy + 5.dp.toPx()),
+                size = Size(3.2.dp.toPx(), 4.5.dp.toPx())
+            )
             drawCircle(
                 color = StrongroomInks.Graphite, radius = 2.2.dp.toPx(),
                 center = Offset(escCx, escCy - 1.dp.toPx())
@@ -372,19 +552,92 @@ private fun DrawerBody(lightState: StrongroomLightState) {
             }
             yy += cell; cy++
         }
+        // The back panel's joinery and the body's depth: a
+        // framed panel inset on the back (its shadow sides cut
+        // toward violet, its lit sides a breath further), the
+        // floor's shadow gathering where the back meets the
+        // drawer's floor, and the cheeks' shade just inside the
+        // runners — the box has an inside, and the inside has
+        // corners. In the day's light the wood itself is one
+        // tone by law; the depth is carried by these violet-
+        // ward cuts, the room's own relief ink.
+        val backInset = 20.dp.toPx()
+        val shade1 = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 1
+        )
+        val shade2 = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 2
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(backInset, backInset),
+            size = Size(size.width - 2 * backInset, 1.6.dp.toPx())
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(backInset, backInset),
+            size = Size(1.6.dp.toPx(), size.height - 2 * backInset)
+        )
+        drawRect(
+            color = shade2,
+            topLeft = Offset(backInset, size.height - backInset - 1.6.dp.toPx()),
+            size = Size(size.width - 2 * backInset, 1.6.dp.toPx())
+        )
+        drawRect(
+            color = shade2,
+            topLeft = Offset(size.width - backInset - 1.6.dp.toPx(), backInset),
+            size = Size(1.6.dp.toPx(), size.height - 2 * backInset)
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(10.6.dp.toPx(), 0f),
+            size = Size(6.dp.toPx(), size.height)
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(size.width - 16.6.dp.toPx(), 0f),
+            size = Size(6.dp.toPx(), size.height)
+        )
+        drawRect(
+            color = shade1, topLeft = Offset(0f, size.height - 12.dp.toPx()),
+            size = Size(size.width, 12.dp.toPx())
+        )
+        drawRect(
+            color = shade2, topLeft = Offset(0f, size.height - 6.dp.toPx()),
+            size = Size(size.width, 6.dp.toPx())
+        )
         // The side cheeks: steel runners the drawer slides on,
         // at both edges — machinery at the furniture's flank.
+        // A runner is a rail: a grained steel member with a lit
+        // inner edge where the drawer body bears on it, bolted
+        // to the carcass along its run.
         val runner = StrongroomLight.relief(
             StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
         )
         drawRect(
             color = runner, topLeft = Offset(0f, 0f),
-            size = Size(5.dp.toPx(), size.height)
+            size = Size(9.dp.toPx(), size.height)
         )
         drawRect(
-            color = runner, topLeft = Offset(size.width - 5.dp.toPx(), 0f),
-            size = Size(5.dp.toPx(), size.height)
+            color = runner, topLeft = Offset(size.width - 9.dp.toPx(), 0f),
+            size = Size(9.dp.toPx(), size.height)
         )
+        val railLine = StrongroomLight.blendEighth(
+            StrongroomInks.Graphite, StrongroomInks.Violet, 3
+        )
+        drawRect(
+            color = railLine, topLeft = Offset(9.dp.toPx(), 0f),
+            size = Size(1.6.dp.toPx(), size.height)
+        )
+        drawRect(
+            color = railLine, topLeft = Offset(size.width - 10.6.dp.toPx(), 0f),
+            size = Size(1.6.dp.toPx(), size.height)
+        )
+        for (frac in listOf(0.16f, 0.5f, 0.84f)) {
+            boltHead(
+                Offset(4.5.dp.toPx(), size.height * frac), 3.dp.toPx(), lightState
+            )
+            boltHead(
+                Offset(size.width - 4.5.dp.toPx(), size.height * frac),
+                3.dp.toPx(), lightState
+            )
+        }
     }
 }
 
@@ -442,6 +695,67 @@ private fun HandingBackThreshold(
                         }
                         yy += cell; cy++
                     }
+                    // The slip as a made thing, still mute: a
+                    // pressed groove around its face (the die's
+                    // shadow cut, its far wall catching what
+                    // light the day gives), a bolt at each corner
+                    // where it is fastened, a crease where it was
+                    // folded, and its weight along its foot.
+                    drawRoundRect(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 6
+                        ),
+                        topLeft = Offset(4.8.dp.toPx(), 4.8.dp.toPx()),
+                        size = Size(size.width - 8.dp.toPx(), size.height - 8.dp.toPx()),
+                        cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
+                        style = Stroke(width = 1.2.dp.toPx())
+                    )
+                    drawRoundRect(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 2
+                        ),
+                        topLeft = Offset(3.2.dp.toPx(), 3.2.dp.toPx()),
+                        size = Size(size.width - 8.dp.toPx(), size.height - 8.dp.toPx()),
+                        cornerRadius = CornerRadius(1.5.dp.toPx(), 1.5.dp.toPx()),
+                        style = Stroke(width = 1.2.dp.toPx())
+                    )
+                    val creaseX = size.width * 0.33f
+                    drawLine(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 4
+                        ),
+                        start = Offset(creaseX, 5.dp.toPx()),
+                        end = Offset(creaseX, size.height - 5.dp.toPx()),
+                        strokeWidth = 1.4.dp.toPx()
+                    )
+                    drawLine(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 2
+                        ),
+                        start = Offset(creaseX + 1.8.dp.toPx(), 5.dp.toPx()),
+                        end = Offset(creaseX + 1.8.dp.toPx(), size.height - 5.dp.toPx()),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                    drawRect(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 6
+                        ),
+                        topLeft = Offset(0f, size.height - 3.5.dp.toPx()),
+                        size = Size(size.width, 3.5.dp.toPx())
+                    )
+                    boltHead(Offset(9.dp.toPx(), 9.dp.toPx()), 2.2.dp.toPx(), lightState)
+                    boltHead(
+                        Offset(size.width - 9.dp.toPx(), 9.dp.toPx()),
+                        2.2.dp.toPx(), lightState
+                    )
+                    boltHead(
+                        Offset(9.dp.toPx(), size.height - 9.dp.toPx()),
+                        2.2.dp.toPx(), lightState
+                    )
+                    boltHead(
+                        Offset(size.width - 9.dp.toPx(), size.height - 9.dp.toPx()),
+                        2.2.dp.toPx(), lightState
+                    )
                 }
             }
         }
@@ -481,6 +795,11 @@ private fun PlatePile(
                 .height(PileGeometry.pileHeightDp(plates.size).dp)
         ) {
             // Draw oldest first so newer plates lie over them.
+            // Each plate LIES as it landed: a hair off the stack's
+            // axis, turned a fraction — the deterministic lie of
+            // its depth in the pile, the same every time it is
+            // seen, as a real plate's lie would be. A pile that
+            // aligns perfectly is a diagram; this one has weight.
             for (index in plates.indices.reversed()) {
                 val plate = plates[index]
                 val isTop = index == 0
@@ -488,7 +807,11 @@ private fun PlatePile(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .offset(y = (index * PileGeometry.BAND_DP).dp)
+                        .offset(
+                            x = ((index * 29) % 7 - 3).dp,
+                            y = (index * PileGeometry.BAND_DP).dp
+                        )
+                        .rotate(((index * 41) % 5 - 2) * 0.35f)
                         .height(
                             if (isTop && lifted == null) {
                                 PileGeometry.PLATE_HEIGHT_DP.dp
@@ -509,6 +832,21 @@ private fun PlatePile(
                 }
             }
         }
+        // The pile's shadow on the drawer's floor: the stack
+        // stands IN the drawer, and the wood darkens cool at
+        // its foot — weight, stated in one band of shadow.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp)
+                .height(5.dp)
+                .background(
+                    StrongroomLight.blendEighth(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 2
+                    ),
+                    RoundedCornerShape(2.dp)
+                )
+        )
     }
 }
 
@@ -542,6 +880,22 @@ private fun LiftedPlate(
             }
             .clickable { onSettle() }
     ) {
+        // The lifted plate's shadow, thrown down-left onto the
+        // pile it rose from: a plate in the hand is OFF the
+        // stack, and the room says so in shadow before the eye
+        // measures the gap.
+        Box(
+            modifier = Modifier
+                .offset(y = 9.dp)
+                .fillMaxWidth()
+                .height(PileGeometry.PLATE_HEIGHT_DP.dp)
+                .background(
+                    StrongroomLight.blendEighth(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 2
+                    ),
+                    RoundedCornerShape(3.dp)
+                )
+        )
         PlateFace(plate = plate, seed = 59, lightState = lightState, whole = true)
     }
 }
@@ -590,6 +944,47 @@ private fun PlateFace(
                 }
                 yy += cell; cy++
             }
+            // The plate's struck furniture, before any hole: the
+            // die's groove pressed around the face — a shadow cut
+            // with the light thrown off its far wall — the lit
+            // crown along the plate's head, and the plate's
+            // THICKNESS along its foot: a plate is a slab of
+            // brass, not a card of it.
+            drawRoundRect(
+                color = StrongroomLight.descend(StrongroomInks.Gold, 2),
+                topLeft = Offset(5.8.dp.toPx(), 5.8.dp.toPx()),
+                size = Size(size.width - 10.dp.toPx(), size.height - 10.dp.toPx()),
+                cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+                style = Stroke(width = 1.3.dp.toPx())
+            )
+            drawRoundRect(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.55f, lightState
+                ),
+                topLeft = Offset(4.2.dp.toPx(), 4.2.dp.toPx()),
+                size = Size(size.width - 10.dp.toPx(), size.height - 10.dp.toPx()),
+                cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx()),
+                style = Stroke(width = 1.3.dp.toPx())
+            )
+            drawLine(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.7f, lightState
+                ),
+                start = Offset(7.dp.toPx(), 1.dp.toPx()),
+                end = Offset(size.width - 7.dp.toPx(), 1.dp.toPx()),
+                strokeWidth = 1.3.dp.toPx()
+            )
+            drawRect(
+                color = StrongroomLight.descend(StrongroomInks.Gold, 3),
+                topLeft = Offset(0f, size.height - 3.5.dp.toPx()),
+                size = Size(size.width, 3.5.dp.toPx())
+            )
+            drawLine(
+                color = StrongroomLight.descend(StrongroomInks.Gold, 4),
+                start = Offset(0f, size.height - 0.7.dp.toPx()),
+                end = Offset(size.width, size.height - 0.7.dp.toPx()),
+                strokeWidth = 1.2.dp.toPx()
+            )
             // The punched holes, in struck order, at their graded
             // diameters (ledger E-9; the doorway strip's figures:
             // reach 11 · held 7.5 · floor 4.5 dp).
@@ -603,6 +998,15 @@ private fun PlateFace(
                     LiftingPlate.PunchGrade.SMALL -> 4.5.dp.toPx()
                 }
                 if (hx + d > size.width * 0.58f) break
+                // The punch's recess: the mouth the die pressed
+                // into the brass before it broke through — a
+                // shadow ring standing off the hole toward the
+                // lamp, so the hole sits IN the plate.
+                drawCircle(
+                    color = StrongroomLight.descend(StrongroomInks.Gold, 3),
+                    radius = d / 2f + 1.2.dp.toPx(),
+                    center = Offset(hx + d / 2f - 0.8.dp.toPx(), midY - 0.8.dp.toPx())
+                )
                 drawCircle(
                     color = StrongroomInks.Graphite, radius = d / 2f,
                     center = Offset(hx + d / 2f, midY)
@@ -615,7 +1019,7 @@ private fun PlateFace(
                     startAngle = 20f, sweepAngle = 140f, useCenter = false,
                     topLeft = Offset(hx, midY - d / 2f),
                     size = Size(d, d),
-                    style = Stroke(width = 1.dp.toPx())
+                    style = Stroke(width = 1.4.dp.toPx())
                 )
                 hx += d + gap
             }
@@ -714,10 +1118,33 @@ private fun KeptSeals(count: Int, lightState: StrongroomLightState) {
                     DrawerTexture.Species.STEEL, index, 0,
                     seed = 61, state = lightState
                 )
-                drawCircle(color = lead, radius = 10.dp.toPx(), center = c)
+                // The crimped edge: the die's teeth pressed a
+                // scallop around the seal — a ring of small
+                // pressed bumps, not a drawn circle.
+                for (bump in 0 until 10) {
+                    val ba = Math.toRadians(bump * 36.0)
+                    drawCircle(
+                        color = lead,
+                        radius = 2.3.dp.toPx(),
+                        center = Offset(
+                            c.x + 9.4.dp.toPx() * kotlin.math.cos(ba).toFloat(),
+                            c.y + 9.4.dp.toPx() * kotlin.math.sin(ba).toFloat()
+                        )
+                    )
+                }
+                drawCircle(color = lead, radius = 9.2.dp.toPx(), center = c)
                 drawCircle(
-                    color = StrongroomInks.Graphite, radius = 10.dp.toPx(),
+                    color = StrongroomInks.Graphite, radius = 9.6.dp.toPx(),
                     center = c, style = Stroke(width = 1.dp.toPx())
+                )
+                drawArc(
+                    color = StrongroomLight.blendEighth(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 3
+                    ),
+                    startAngle = 150f, sweepAngle = 120f, useCenter = false,
+                    topLeft = Offset(c.x - 9.2.dp.toPx(), c.y - 9.2.dp.toPx()),
+                    size = Size(18.4.dp.toPx(), 18.4.dp.toPx()),
+                    style = Stroke(width = 1.6.dp.toPx())
                 )
                 // The snap: two cut lines across the crimp, offset —
                 // a broken seal, kept whole as proof.
@@ -746,7 +1173,7 @@ private fun KeptSeals(count: Int, lightState: StrongroomLightState) {
 @Composable
 private fun TaskSlips(tasks: List<DrawerTaskSlip>, lightState: StrongroomLightState) {
     Column {
-        tasks.forEach { task ->
+        tasks.forEachIndexed { index, task ->
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -759,13 +1186,49 @@ private fun TaskSlips(tasks: List<DrawerTaskSlip>, lightState: StrongroomLightSt
                         RoundedCornerShape(2.dp)
                     )
                     .border(1.dp, StrongroomInks.Gold, RoundedCornerShape(2.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .padding(end = 14.dp, top = 10.dp, bottom = 10.dp)
             ) {
-                Text(
-                    text = task.title,
-                    style = StrongroomType.Scr1,
-                    color = StrongroomInks.Gold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The slip's brass edge, GRAINED: a ruled
+                    // metal strip down its left side — the slip
+                    // was torn from the day's brass-bound pad.
+                    Canvas(
+                        modifier = Modifier
+                            .width(5.dp)
+                            .height(22.dp)
+                    ) {
+                        val cell = DrawerTexture.Species.BRASS.cellPx.dp.toPx()
+                        var cy = 0
+                        var yy = 0f
+                        while (yy < size.height) {
+                            val tone = DrawerTexture.cellTone(
+                                StrongroomInks.Gold, StrongroomInks.Graphite,
+                                DrawerTexture.Species.BRASS, index, cy,
+                                seed = 83, state = lightState
+                            )
+                            drawRect(
+                                color = tone, topLeft = Offset(0f, yy),
+                                size = Size(size.width, cell + 1f)
+                            )
+                            yy += cell; cy++
+                        }
+                        drawLine(
+                            color = StrongroomLight.relief(
+                                StrongroomInks.Gold, StrongroomInks.Graphite,
+                                0.6f, lightState
+                            ),
+                            start = Offset(0.6.dp.toPx(), 0f),
+                            end = Offset(0.6.dp.toPx(), size.height),
+                            strokeWidth = 1.dp.toPx()
+                        )
+                    }
+                    Spacer(Modifier.width(11.dp))
+                    Text(
+                        text = task.title,
+                        style = StrongroomType.Scr1,
+                        color = StrongroomInks.Gold
+                    )
+                }
             }
         }
     }

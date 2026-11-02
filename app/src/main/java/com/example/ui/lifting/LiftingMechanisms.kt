@@ -102,7 +102,12 @@ data class LiftCeremonyPose(
     val settled: Boolean,
     /** The struck plate's landing into the tray, 0..1 — a spring
      *  pose, integrated, never eased (see [PlateLandingBody]). */
-    val plateDropFraction: Double
+    val plateDropFraction: Double,
+    /** The pile's own answer to the landing: its dip under the
+     *  struck plate's arrival, 0..1 of its filed depth — the pile
+     *  is a body too, and it rings and settles (see
+     *  [PlateLanding.pileDipAt]). 0 before the strike. */
+    val pileDip: Double = 0.0
 )
 
 object LiftingCeremony {
@@ -198,7 +203,8 @@ object LiftingCeremony {
             doorAngleDeg = doorAngleAt(t, reducedMotion),
             struck = struck,
             settled = settled,
-            plateDropFraction = if (!struck) 0.0 else PlateLanding.fractionAt(t - strike)
+            plateDropFraction = if (!struck) 0.0 else PlateLanding.fractionAt(t - strike),
+            pileDip = if (!struck) 0.0 else PlateLanding.pileDipAt(t - strike)
         )
     }
 }
@@ -224,6 +230,125 @@ object PlateLanding {
         return BodyIntegrator.valueAt(0.0, 1.0, Body, msAfterStrike / 1000.0)
             .coerceIn(0.0, 1.05)
     }
+
+    /** The pile's body: a heavy stack on a stiff, under-damped
+     *  spring — struck by the landing plate it dips once, rings
+     *  small, and stills under the new weight. Filed figures:
+     *  mass 3.2 · ζ 0.35 · normalised stiffness 300 — the ring is
+     *  the pile's, never the plate's bounce. */
+    val PileBody: PhysicsBody = PhysicsBody.fromCharacter(
+        mass = 3.2, dampingRatio = 0.35, normalisedStiffness = 300.0,
+        settle = SettleSpec(distanceEpsilon = 0.002, velocityEpsilon = 0.02)
+    )
+
+    /** When the falling plate first MEETS the pile (its landing
+     *  fraction reaches 0.99), found by scanning the landing
+     *  body once at the integrator's own substep. Before this
+     *  instant the pile feels nothing. */
+    val ContactMs: Int by lazy {
+        var ms = 0
+        while (ms < 4_000 && fractionAt(ms) < 0.99) ms++
+        ms
+    }
+
+    /**
+     * The pile's dip at [msAfterStrike], 0..1 of its filed
+     * depth: nothing before contact; at contact the pile takes
+     * the blow at full dip and then rings on [PileBody] back to
+     * rest — integrated as the body's own decay from a struck
+     * displacement, never eased, never a bounce of the plate.
+     */
+    fun pileDipAt(msAfterStrike: Int): Double {
+        if (msAfterStrike <= ContactMs) return 0.0
+        val since = (msAfterStrike - ContactMs) / 1000.0
+        // The body's decay from displacement 1 toward rest at 0:
+        // valueAt(1 → 0) rings through zero and settles; the dip
+        // is its magnitude, spent by the pile's own stilling.
+        return BodyIntegrator.valueAt(1.0, 0.0, PileBody, since)
+            .coerceIn(-0.35, 1.0)
+    }
+}
+
+// ────────────────────────────────────────────────────────────────
+// THE HANDING BACK — the lift's first moment, as mechanism
+// (LEAD-MOVES richness pass, 2026-11-03)
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * THE HANDING BACK, RENDERED (C-11) — the domain machine's law
+ * stands untouched: the handing back is a PRECONDITION executed
+ * by the wiring as the lift fires, never a presented phase, and
+ * no list of those who waited stands on this surface — the
+ * names live at the Drawer's threshold, and Monolith keeps no
+ * list of its own. What this pass adds is PRESENCE WITHOUT
+ * PRESENTATION: the people who waited stand at the threshold as
+ * wordless brass slips — no name, no count printed, no word —
+ * and as the lock trips they are handed back one by one into
+ * the phone's own keeping, each slip sinking into the
+ * threshold's return slot on its own body, every one of them
+ * gone BEFORE the door's swing opens and long before the plate
+ * is struck — the day's own order (C-11: handed back BEFORE
+ * the plate is read) made visible as mechanism, not as text.
+ */
+object HandingBackMotion {
+
+    /** One slip's travel once its handing begins: a light brass
+     *  slip taken by the return — quicker than the plate, with
+     *  the smallest settle the hand allows. Filed figures:
+     *  mass 1.4 · ζ 0.85 · normalised stiffness 500. */
+    val SlipBody: PhysicsBody = PhysicsBody.fromCharacter(
+        mass = 1.4, dampingRatio = 0.85, normalisedStiffness = 500.0,
+        settle = SettleSpec(distanceEpsilon = 0.002, velocityEpsilon = 0.02)
+    )
+
+    /** The travel's filed length, in milliseconds — the slip
+     *  body is spent well inside it. */
+    const val TRAVEL_MS: Int = 900
+
+    /** The stagger between one slip's handing and the next: the
+     *  return takes them one at a time, first-waited first. */
+    const val STAGGER_MS: Int = 260
+
+    /** The handing's first instant: the lock's trip — the lift
+     *  fires, and its first act is the return. */
+    fun startMs(count: Int): Int = LiftingCeremony.TripMs
+
+    /** The stagger in force for [count] slips: compressed when
+     *  the pile of waiting is deep, so the LAST slip is always
+     *  handed back before the swing opens — the order is law,
+     *  not timing luck. */
+    fun staggerMs(count: Int): Int {
+        if (count <= 1) return STAGGER_MS
+        val budget = LiftingCeremony.SwingOpenMs - LiftingCeremony.TripMs - TRAVEL_MS
+        return minOf(STAGGER_MS, (budget / (count - 1)).coerceAtLeast(40))
+    }
+
+    /**
+     * Slip [index]'s handed fraction at ceremony [elapsedMs]:
+     * 0 = standing at the threshold, 1 = handed back, gone into
+     * the phone's own keeping. A pure pose off the slip body —
+     * under reduced motion the pose is a cut at the travel's
+     * midpoint, as the foundation's profile rules.
+     */
+    fun fractionFor(
+        index: Int,
+        count: Int,
+        elapsedMs: Int,
+        reducedMotion: Boolean = false
+    ): Double {
+        if (count <= 0 || index < 0 || index >= count) return 1.0
+        val start = startMs(count) + index * staggerMs(count)
+        val into = elapsedMs - start
+        if (into <= 0) return 0.0
+        if (reducedMotion) return if (into >= TRAVEL_MS / 2) 1.0 else 0.0
+        return BodyIntegrator.valueAt(0.0, 1.0, SlipBody, into / 1000.0)
+            .coerceIn(0.0, 1.0)
+    }
+
+    /** How many slips the threshold draws at once: the stack is
+     *  drawn, never counted — past this depth the standing slips
+     *  stand for the rest exactly as the pile's drawn stack does. */
+    const val DRAWN_SLIPS_MAX: Int = 6
 }
 
 // ────────────────────────────────────────────────────────────────

@@ -405,6 +405,36 @@ object StrongroomDay {
         fun spend(atWallMillis: Long): GovernorCrankWeek? =
             if (!minuteAvailable) null
             else copy(spentSeconds = CRANK_SECONDS, sealBroken = true, spentAtWallMillis = atWallMillis)
+
+        /** The wall instant the spent minute closes: the minute
+         *  spent at [spentAtWallMillis] runs for exactly
+         *  [CRANK_SECONDS] and no longer. Meaningful only once the
+         *  minute stands spent. */
+        val minuteEndsAtWallMillis: Long get() = spentAtWallMillis + CRANK_SECONDS * 1_000L
+
+        /**
+         * THE MINUTE RUNNING (PLACES cure — GAP-COORD-CRANK-
+         * CONSUMPTION closed): while this stands true, the seal's
+         * consumption is OPEN — the shell stands the break room
+         * for the minute, inside the block, and the seal resumes
+         * whole when it ends (a break inside the block, never the
+         * guard's death). The window is the spend's own 60
+         * seconds on the wall clock that struck it: not before
+         * the spend, not after its end, and never for an unspent
+         * week. A carried legacy spend reads by its own spent
+         * instant, like any other.
+         */
+        fun minuteRunningAt(nowWallMillis: Long): Boolean =
+            sealBroken && spentAtWallMillis > 0L &&
+                nowWallMillis >= spentAtWallMillis &&
+                nowWallMillis < minuteEndsAtWallMillis
+
+        /** The minute's remaining span at a wall reading, floored
+         *  at 0 — the break room's crank clock is anchored on
+         *  this figure. */
+        fun minuteRemainingMillisAt(nowWallMillis: Long): Long =
+            if (!minuteRunningAt(nowWallMillis)) 0L
+            else minuteEndsAtWallMillis - nowWallMillis
     }
 
     // ------------------------------------------------------------------

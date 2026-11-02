@@ -96,12 +96,55 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain assembleDebug compileDebugUnitTestKotlin
 
+      # Package speed (METHODS-SEAT, 2026-11-03): on full-venue
+      # events the installable package previously existed only at
+      # the end of the `build` job's chain — the unit suite runs
+      # first there, and only then assemble, the signer gate, and
+      # the upload — so the phone waited out the suite's minutes
+      # for an APK THIS job has already assembled. This job now
+      # uploads that same APK as `monolith-debug-early` the moment
+      # its compile is green, behind the SAME install-over proof
+      # the build job runs on its own upload: the built APK's
+      # signer must be the committed install-over key
+      # (bd15ad5f...27ff), and a mismatch dies loudly and uploads
+      # nothing. Nothing in the `build` job changes — its
+      # `monolith-debug` upload remains the provenance-carrying
+      # package, assembled after the suite and recorded in the
+      # release ledger; the early copy is distinctly named so the
+      # two can never be mistaken for each other. Its versionCode
+      # is computed by the same epoch-minutes scheme and may sit
+      # one minute below the canonical package's when the two jobs'
+      # assembles straddle a minute boundary — install-over needs
+      # only the newest, and the canonical upload is always last.
+      # Ordinary PRs are untouched: the step is skipped there and
+      # a slim PR run still uploads no APK (venue model).
+      - name: Verify early APK signer (install-over proof)
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' && (github.event_name != 'pull_request' || startsWith(github.head_ref, 'batch/') || startsWith(github.head_ref, 'train/')) }}
+        id: earlyapksigner
+        run: |
+          APKSIGNER="$(command -v apksigner || echo "$ANDROID_HOME/build-tools/37.0.0/apksigner")"
+          FP=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk | grep -m1 -o "[0-9a-f]\{64\}")
+          echo "apk_fingerprint=$FP" >> "$GITHUB_OUTPUT"
+          if [ "$FP" != "bd15ad5fe9b6964464c0f867c7ae96f61ddd34093b3877f6032befa1d10f27ff" ]; then
+            echo "::error::early app-debug.apk signer $FP is not the install-over key bd15ad5f...27ff — refusing to upload an early package that would not install over the phone build."
+            exit 1
+          fi
+          echo "Early APK signer verified: $FP"
+      - name: Upload monolith-debug-early (first installable package)
+        if: ${{ !cancelled() && steps.earlyapksigner.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: monolith-debug-early
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
       - name: Compile summary
         if: always()
         run: |
           {
             echo "## Compile verdict — ${{ github.ref_name }} · ${{ github.sha }}"
             echo "- Assemble debug + unit-test compile: ${{ steps.compile.outcome }}"
+            echo "- Early package (full-venue events only): signer gate ${{ steps.earlyapksigner.outcome }} — on success, monolith-debug-early was uploaded from THIS job, ahead of the build job's canonical monolith-debug; on ordinary PRs the step is skipped and no package ships, per the venue model."
             echo "- This job executes NO tests. Its conclusion is the compile-is-binary gate's read on this head: green = app + test code compile here, independent of the unit-test floor (issue #166)."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -310,7 +353,7 @@ jobs:
             echo "- Signing: committed debug keystore, SHA-256 ${{ steps.keystore.outputs.fingerprint }} — the key that signed the installed builds, so this APK installs over the Monolith on Sarthak's phone (versionCode permitting)."
             echo "- APK signer gate (apksigner on the built APK): ${{ steps.apksigner.outcome }} - ${{ steps.apksigner.outputs.apk_fingerprint }}"
             echo "- APK versionCode: ${{ steps.apksigner.outputs.version_code }} (epoch-minutes scheme, issue #25 ruling: computed in the build, never hand-set, never lower than any previous build)"
-            echo "- Screenshots: separate job in this same run — its artifact is screens-${{ github.sha }} when the harness passes (Robolectric renders of THIS tree; states the harness cannot render are named on issue #382, never faked)."
+            echo "- Screenshots: separate job in this same run — its artifact is screens-${{ github.sha }}, carrying every shot the harness rendered even when a face fails its gate (Robolectric renders of THIS tree; states the harness cannot render are named on issue #382, never faked)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Issue #24 (finding 3): the debug job above proves the phone
@@ -415,11 +458,23 @@ jobs:
   # build. A dedicated job, parallel to `build`, with its own time
   # budget: the harness's minutes are paid exactly once, here, and
   # neither the #166 shared floor (the build job's red suite) nor
-  # this job's verdict can block or poison the other. The upload is
-  # gated on THIS job's harness outcome — a red harness publishes
-  # nothing — and the output dir is a fresh build dir inside a
-  # fresh checkout, so no stale PNG can ride along; if no PNG
-  # lands, the upload errors instead of warning.
+  # this job's verdict can block or poison the other.
+  #
+  # METHODS-SEAT cure (2026-11-03): the upload no longer waits for
+  # a fully green harness. The old gate (upload only on harness
+  # success) meant one face failing its in-test gate — the three
+  # Drawer shots on the current main — published NOTHING: every
+  # main run carried zero screens, and a broken opening screen
+  # reached Sarthak's phone unreviewed. The harness writes each
+  # PNG BEFORE it asserts on it, so a failed face still leaves
+  # its render on disk; the upload now fires on !cancelled() and
+  # ships whatever rendered, pass or fail — a broken surface is
+  # exactly what this artifact exists to show. The job still
+  # concludes FAILURE when the harness does (nothing is hidden),
+  # and the output dir is a fresh build dir inside a fresh
+  # checkout, so no stale PNG can ride along. If no PNG lands at
+  # all the upload warns instead of erroring — the harness step's
+  # own verdict already carries that failure.
   screenshots:
     name: Screenshots (screens with every build)
     # Full venue only (new merge gate): no screenshot gauntlet per PR.
@@ -450,12 +505,17 @@ jobs:
           chmod +x gradlew
           ./gradlew --console=plain testDebugUnitTest --tests "com.example.ScreenshotHarnessTest"
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: steps.screens.outcome == 'success'
+      # !cancelled(), not harness success: the artifact carries
+      # every shot the harness rendered — including a face that
+      # failed its in-test gate, whose PNG was written before the
+      # assertion. Reviewing THAT render is the artifact's purpose.
+      - name: Upload screens (every rendered shot, pass or fail)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: screens-${{ github.sha }}
           path: app/build/outputs/screenshots
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Screenshots summary
@@ -467,7 +527,10 @@ jobs:
             if [ "${{ steps.screens.outcome }}" = "success" ]; then
               echo "- Artifact: screens-${{ github.sha }} — Robolectric renders of THIS tree, one PNG per harness-captured screen (states the harness cannot render are named on issue #382, never faked)."
             else
-              echo "- ⚠️ No screenshots artifact in this run — the harness did not pass."
+              echo "- ⚠️ The harness did NOT pass — this job's verdict stays FAILURE. Artifact screens-${{ github.sha }} still carries every shot the harness rendered before failing, including the failing faces' own PNGs (each is written before its gate asserts), so the broken surface can be reviewed from the artifact instead of reaching the phone unseen."
+            fi
+            if [ -d app/build/outputs/screenshots ]; then
+              echo "- Shots in the artifact: $(ls app/build/outputs/screenshots | wc -l) — $(ls app/build/outputs/screenshots | paste -sd ' ' -)"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

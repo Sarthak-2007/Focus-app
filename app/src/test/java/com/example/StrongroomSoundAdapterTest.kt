@@ -135,12 +135,54 @@ class StrongroomSoundAdapterTest {
     }
 
     @Test
-    fun unmappedCuePlaysNothing() {
+    fun plateStrikeFailureSpeaksItsFiledVoice() {
+        // REPINNED by the SOUND seat's voice-debt clearance
+        // (2026-11-03): this test formerly pinned the failure
+        // strike's voicelessness ("the adapter must not fake
+        // one"). The debt is now cleared with a real voice —
+        // SOUND-SR-4's FAILURE-STRIKE, specced in the registry —
+        // so the pin inverts: the failure speaks, lower and
+        // damper than the strike it failed to be.
         val (adapter, dispatched) = recordingAdapter()
-        // PLATE_STRIKE_FAILURE: the voice table carries no
-        // failure-strike voice — the adapter must not fake one.
         val row = SensoryRegistry.row(HapticEvent.PLATE_STRIKE_FAILURE)
         adapter.play(row.sound, HapticEvent.PLATE_STRIKE_FAILURE)
-        assertTrue(dispatched.isEmpty())
+        assertEquals(listOf(SoundEvent.PLATE_STRIKE_FAILURE), dispatched)
+        val failure = SoundRegistry.spec(SoundEvent.PLATE_STRIKE_FAILURE).voice!!
+        val strike = SoundRegistry.spec(SoundEvent.PLATE_STRIKE).voice!!
+        assertEquals(690f, failure.pitchHz, 0.01f)
+        assertTrue(failure.pitchHz < strike.pitchHz)
+        assertTrue(failure.gain < strike.gain)
+        assertTrue(failure.durationMs < strike.durationMs)
+    }
+
+    @Test
+    fun theNineVoiceDebtsAreCleared() {
+        // The ledger's nine voice debts (SOUND seat, 2026-11-03):
+        // each named cue now resolves to real voices through the
+        // adapter, and each cue's filed figures are its lead
+        // voice's figures — the two registries agree by name.
+        val debts = listOf(
+            HapticEvent.COMBINATION_GATE,
+            HapticEvent.DRUM_LAND,
+            HapticEvent.GUARD_TIGHTEN_DETENT,
+            HapticEvent.GUARD_TIGHTEN_SEAT,
+            HapticEvent.GUARD_RAISE_ROCK,
+            HapticEvent.STRETCH_SCRAPE,
+            HapticEvent.STRETCH_CARVE,
+            HapticEvent.DRAWER_OPEN,
+            HapticEvent.PLATE_STRIKE_FAILURE
+        )
+        val (adapter, dispatched) = recordingAdapter()
+        debts.forEach { event ->
+            dispatched.clear()
+            val row = SensoryRegistry.row(event)
+            adapter.play(row.sound, event)
+            assertTrue("$event still voiceless", dispatched.isNotEmpty())
+            val lead = SoundRegistry.spec(dispatched.first()).voice!!
+            assertEquals("$event cue/voice pitch", row.sound.pitchHz, lead.pitchHz)
+            assertEquals("$event cue/voice duration", row.sound.durationMs, lead.durationMs)
+            assertEquals("$event cue/voice gain", row.sound.gain, lead.gain)
+            assertEquals("$event cue/voice chord", row.sound.chordRatio, lead.chordRatio)
+        }
     }
 }

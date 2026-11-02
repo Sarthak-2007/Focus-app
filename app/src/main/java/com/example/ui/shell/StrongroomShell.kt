@@ -45,6 +45,18 @@ import com.example.ui.foundation.StrongroomTheme
  * the lifting/plate) are their own slices seating behind this
  * one; nothing finished is authored here.
  *
+ * THE BREAK'S STANDING, FROM THE STRONGROOM DAY (PLACES cure):
+ * the BREAK place stands on THREE standings, any one sufficient —
+ * the kept session's standing break (the shell's original fact),
+ * [strongroomBreakStanding] (the Strongroom span's own firing
+ * running — the time-lock's priced break, derived by the host
+ * from the sealed day's span, never from the legacy session), and
+ * [crankMinuteStanding] (the governor's crank minute running —
+ * the week's 60 seconds open a break inside the block). Before
+ * this cure the derivation read the legacy session alone, so for
+ * a Strongroom-sealed day no break room ever stood and nothing
+ * unblocked at the firing.
+ *
  * THE SEALED STANDING, UNIFIED (BUILD-SR-38 merge composition,
  * consuming BUILD-SR-37's named remainder): the seal's standing
  * is derived ONCE — from the sealed day's standing record, as the
@@ -58,14 +70,17 @@ import com.example.ui.foundation.StrongroomTheme
  * in the composition. [sealedStanding] = null keeps the shell's
  * standalone default (the kept session's standing) for callers
  * that compose the shell without the Strongroom seal's facts.
- * The break's and the lifting's inputs remain the kept session /
- * finish facts — those places are other slices' derivations and
- * this unification touches the seal's standing only.
+ * The lifting's inputs remain the finish facts. The break's
+ * inputs are the kept session's standing break PLUS the
+ * Strongroom day's own standings (the firing + the crank
+ * minute), supplied by the host — the PLACES cure in the head.
  */
 @Composable
 fun StrongroomShell(
     viewModel: MonolithViewModel,
     sealedStanding: Boolean? = null,
+    strongroomBreakStanding: Boolean = false,
+    crankMinuteStanding: Boolean = false,
     doorwayContent: @Composable () -> Unit = { DoorwayBirthWord() },
     sealedFaceContent: @Composable () -> Unit = {},
     antechamberContent: @Composable () -> Unit = {},
@@ -79,7 +94,8 @@ fun StrongroomShell(
     val finishNow = finish
     val place = deriveShellPlace(
         sealed = sealedStanding ?: (session?.isActive == true),
-        onBreak = session?.isInSafeBreak == true,
+        onBreak = session?.isInSafeBreak == true ||
+            strongroomBreakStanding || crankMinuteStanding,
         lifting = finishNow != null && !finishNow.issued,
         atAntechamber = standingPlace == StrongroomPlace.ANTECHAMBER
     )

@@ -39,6 +39,7 @@ import com.example.data.StrongroomDayEntity
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.data.StrongroomStore
 import com.example.data.toPurse
+import com.example.data.toSealSpan
 import com.example.data.toSigningRecord
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
@@ -52,6 +53,7 @@ import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
 import com.example.service.StrongroomEngineBridge
+import com.example.service.haptics.HapticEvent
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
@@ -64,7 +66,6 @@ import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
 import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
-import com.example.ui.drawer.drawerSurfaceSecure
 import com.example.ui.lifting.Lifting
 import com.example.ui.lifting.LiftingState
 import com.example.ui.lifting.PlatePileView
@@ -98,16 +99,13 @@ import kotlinx.coroutines.withContext
 //
 // BUILD-SR-34 (the shell slice): ShellHost now composes the
 // Strongroom's own order (com.example.ui.shell.StrongroomShell)
-// on the composed foundation (PR #868, merged). The archive
-// FLAG_SECURE law that rode the dead VAULT destination died
-// with the enum in this act — its successor surface is the
-// drawer's room inside the doorway, whose own slice (R-6)
-// re-earns FLAG_SECURE when the drawer stands.
-// BUILD-SR-41 (the Drawer slice): R-6 DISCHARGED in this act —
-// ShellHost now holds the re-earned effect beside its predicate
-// (com.example.ui.drawer.drawerSurfaceSecure): while the drawer
-// stands open, the window is FLAG_SECURE, exactly as the old
-// archive law held it for the VAULT.
+// on the composed foundation (PR #868, merged).
+// SCREENSHOT RESTRICTIONS REMOVED (Sarthak's order, Nov 3, 2026:
+// "Remove screenshot restrictions from the app"): the drawer
+// slice's FLAG_SECURE effect (the old R-6 re-earn) is deleted
+// whole — no surface in this app sets FLAG_SECURE, and
+// screenshots and Recents thumbnails are allowed everywhere,
+// the drawer included.
 // ==================================================================
 
 /** Issue #78 (Audit R2, ipc-intents): the system Settings app's
@@ -391,13 +389,9 @@ class MainActivity : ComponentActivity() {
  * ON_RESUME watch sweep + return-service stop, the ON_STOP airlock
  * abandonment note) and the airlock-holds-Back law, and it composes
  * the Strongroom's own order (StrongroomShell) as the app's whole
- * visual structure. The archive FLAG_SECURE effect that keyed on
- * the old standing destination died with the enum (BUILD-SR-34;
- * named in the file head) — no place in the new order IS the
- * archive; the drawer's slice re-earns the flag when it stands.
- * BUILD-SR-41: the re-earn stands below — the effect keyed on
- * the drawer's own standing ([drawerSurfaceSecure]), beside the
- * doorway furniture it protects.
+ * visual structure. No window in this host is ever made secure:
+ * screenshot restrictions were removed whole on Sarthak's order
+ * (Nov 3, 2026) — see the file head.
  *
  * BUILD-SR-35 (composition, second act): the shell's DOORWAY
  * place-host carries the Doorway surface itself, its state read
@@ -447,6 +441,42 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // lawful exactly when the snapshot stands.
         viewModel.noteStrongroomSealStanding(facts.first != null)
     }
+    // PLACES (the break's standing, from the Strongroom day
+    // itself): the sealed span's firing + the crank week, read on
+    // the same tick AND whenever the standing place changes —
+    // the crank is spent from inside the antechamber, and its
+    // spend moves the place, which is this host's signal to
+    // re-read the week before the minute runs. The standings are
+    // then derived per reading from a short clock tick: the
+    // firing runs on the elapsed clock the span was struck on,
+    // the crank minute on the wall clock that struck its spend.
+    // Before this cure the shell derived the BREAK place from
+    // the legacy session alone, so a Strongroom day's firing
+    // stood no room and unblocked nothing.
+    var spanBreakFacts by remember {
+        mutableStateOf<Pair<StrongroomDay.BreakFiring?, StrongroomDay.GovernorCrankWeek?>>(
+            null to null
+        )
+    }
+    val standingPlaceForBreak by viewModel.currentPlace.collectAsStateWithLifecycle()
+    LaunchedEffect(doorwayRefreshTick.value, standingPlaceForBreak) {
+        spanBreakFacts = loadSpanBreakFacts(appContext)
+    }
+    var shellNowElapsed by remember {
+        mutableStateOf(android.os.SystemClock.elapsedRealtime())
+    }
+    var shellNowWall by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(250L)
+            shellNowElapsed = android.os.SystemClock.elapsedRealtime()
+            shellNowWall = System.currentTimeMillis()
+        }
+    }
+    val strongroomBreakStanding =
+        spanBreakFacts.first?.isRunning(shellNowElapsed) == true
+    val crankMinuteStanding =
+        spanBreakFacts.second?.minuteRunningAt(shellNowWall) == true
     // BUILD-SR-40 (the Lifting + Plate Strike slice): the
     // lifting's standing facts, read from the Strongroom store
     // on the same tick — the newest struck day (its plate, struck
@@ -461,12 +491,26 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         liftingState = loadLiftingState(appContext, finishForLifting?.e0Mono)
     }
     val sealedFaceActions = SealedFaceActions(
-        // The knock's sound/haptic substance rides the Stage 13/14
-        // slices through this seam; platform-edge reaches are
-        // already answered by the engine's knock voice via the
-        // bridge. The face itself changes nothing in answer.
-        onKnock = {},
+        // The knock's sound/haptic substance rides through this
+        // seam (collected by the SOUND seat, 2026-11-03): a rap on
+        // the face fires the KNOCK through the one bus — the same
+        // voice the bridge's platform-edge reach fires, once per
+        // rap, never twice (the reach and the rap are different
+        // acts). The face itself changes nothing in answer.
+        // (LEAD-SEALED's live leg reached the same wiring by its
+        // own route and yielded to this one at the rebase — one
+        // bus, one voice, whoever holds the pen.)
+        onKnock = {
+            StrongroomEngineBridge.fireSurfaceEvent(
+                appContext, HapticEvent.KNOCK
+            )
+        },
         onGrilleOpen = {
+            // The deliberate second touch speaks its low
+            // mechanical touch as the room opens (GRILLE_TOUCH).
+            StrongroomEngineBridge.fireSurfaceEvent(
+                appContext, HapticEvent.GRILLE_TOUCH
+            )
             viewModel.moveToPlace(com.example.session.StrongroomPlace.ANTECHAMBER)
         }
     )
@@ -481,38 +525,6 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     var drawerState by remember { mutableStateOf(DrawerState()) }
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
-    }
-
-    // R-6 · FLAG_SECURE, RE-EARNED (BUILD-SR-41, named obligation
-    // from BUILD-SR-34's enum-death accounting): the old VAULT's
-    // archive law (issue #264 B-264-31 — archiveSurfaceSecure +
-    // its effect: while the archive stood, no screenshot and no
-    // Recents thumbnail of his history) died with the enum. Its
-    // successor surface is this drawer — the room where every
-    // finished day is kept — and its successor predicate is
-    // [drawerSurfaceSecure]. While the drawer stands open the
-    // window is secure; every other standing clears the flag,
-    // exactly the old law's matrix. The flag is also cleared
-    // when this host leaves composition, so a secure standing
-    // can never leak past the drawer's own life.
-    val drawerWindow = (context as? android.app.Activity)?.window
-    LaunchedEffect(drawerOpen) {
-        if (drawerSurfaceSecure(drawerOpen)) {
-            drawerWindow?.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        } else {
-            drawerWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            drawerWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
     }
 
     // Watch Store residency (census §2c, re-carried): the old
@@ -578,6 +590,12 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // the face's place in parallel: one derivation, and both
         // hosts render its one snapshot.
         sealedStanding = sealedFaceState != null,
+        // THE BREAK'S STRONGROOM STANDINGS (PLACES cure): the
+        // span's firing + the crank minute, derived above from
+        // the sealed day's own facts — either one standing stands
+        // the BREAK place for a Strongroom day.
+        strongroomBreakStanding = strongroomBreakStanding,
+        crankMinuteStanding = crankMinuteStanding,
         doorwayContent = {
             // While a Strongroom seal stands, the doorway place
             // itself stands as the sealed face (BUILD-SR-37;
@@ -644,6 +662,19 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                         )
                     )
                 } else {
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                ) {
+                // THE FACE (LEAD-DOORFIX, 2026-11-03): the
+                // seven-ink print stands behind the whole doorway
+                // place — the door IS this surface, edge to edge;
+                // the Doorway's furniture, the swing act, the
+                // signing table and the drawer's front all stand
+                // on it. (Before this, the place stood on the bare
+                // field and the Doorway's drawn leaf — 26% of the
+                // room's width — read on Sarthak's phone as a tiny
+                // door floating in a void.)
+                com.example.ui.doorway.DoorFace()
                 androidx.compose.foundation.layout.Column(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
@@ -686,7 +717,15 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                     }
                     // The drawer's shut front — the room's
                     // furniture at the foot of the signing place.
-                    DrawerFront(onOpen = { drawerOpen = true })
+                    // The opening act is the drawer's slide
+                    // (DRAWER_OPEN, wired by the SOUND seat).
+                    DrawerFront(onOpen = {
+                        StrongroomEngineBridge.fireSurfaceEvent(
+                            appContext, HapticEvent.DRAWER_OPEN
+                        )
+                        drawerOpen = true
+                    })
+                }
                 }
                 }
             }
@@ -753,10 +792,14 @@ private fun ShellHost(viewModel: MonolithViewModel) {
  * closed.
  *
  * The governor's crank: this host persists the week's spend and
- * returns him to the sealed face. The door's crack for that
- * minute is the seal's own consumption and no kept verb carries
- * it — named GAP-COORD-CRANK-CONSUMPTION on the slice's PR, never
- * invented here.
+ * returns him to the sealed face. The minute itself is carried
+ * by the week's own window (GovernorCrankWeek.minuteRunningAt):
+ * while it runs, the shell stands the BREAK place on the crank's
+ * standing and the break room renders the minute's own clock —
+ * the seal's consumption, opened for exactly those 60 seconds
+ * inside the block (GAP-COORD-CRANK-CONSUMPTION, closed by the
+ * PLACES wiring: the shell's crankMinuteStanding + BreakHost's
+ * crank clock below).
  */
 @Composable
 private fun AntechamberHost(viewModel: MonolithViewModel) {
@@ -926,15 +969,20 @@ private fun AntechamberHost(viewModel: MonolithViewModel) {
  * clock is re-derived from the engine's standing facts on every
  * engine tick: first the Strongroom day's own firing (the
  * signing's offset + priced length against the seal's elapsed
- * span, through the domain's breakFiring), else the kept
+ * span, through the domain's breakFiring), else the governor's
+ * crank minute while its 60-second window runs (PLACES — the
+ * one clock here anchored on the wall reading that struck the
+ * spend, since the week's spend is a wall fact), else the kept
  * session's standing break facts (its length in force + its
  * remaining seconds — the same facts the shell's place
  * derivation stands on). Between ticks the surface interpolates
- * on the monotonic clock alone; the wall clock is never
- * consulted. When neither clock stands, the host renders
- * nothing — a break that is not firing has no surface, and a
- * legacy session break on a day no Strongroom signing stands
- * for is the old engine's business, not this room's.
+ * on the monotonic clock alone. When no clock stands, the host
+ * renders nothing — a break that is not firing has no surface,
+ * and a legacy session break on a day no Strongroom signing
+ * stands for is the old engine's business, not this room's.
+ * The shell now stands this place from the same Strongroom
+ * facts (ShellHost's span-break derivation), not from the
+ * legacy session alone — the PLACES cure.
  *
  * The interior's acts are the held room's own, through the same
  * store verbs the antechamber host uses: a within-reach launch
@@ -990,12 +1038,29 @@ private fun BreakHost(viewModel: MonolithViewModel) {
                         com.example.ui.`break`.BreakClock.fromFiring(firing, nowE)
                     }
             } else null
+            // THE CRANK'S CLOCK (PLACES — GAP-COORD-CRANK-
+            // CONSUMPTION closed): the week's spent minute,
+            // while its own 60-second window runs, is a break
+            // inside the block — a 60-second clock anchored on
+            // the minute's remaining span at this reading, so
+            // the room renders the crank minute itself and its
+            // within-reach acts stand for exactly that long.
+            val crankClock = store.crankWeek(System.currentTimeMillis()).let { week ->
+                val remaining = week.minuteRemainingMillisAt(System.currentTimeMillis())
+                if (remaining <= 0L) null
+                else com.example.ui.`break`.BreakClock(
+                    totalMillis = StrongroomDay.CRANK_SECONDS * 1_000L,
+                    remainingAtAnchorMillis = remaining,
+                    anchorElapsedMillis = nowE
+                )
+            }
             val sessionClock = session?.takeIf { it.isInSafeBreak }?.let { s ->
                 com.example.ui.`break`.BreakClock.fromSession(
                     s.effectiveBreakSeconds, s.safeBreakSecondsRemaining, nowE
                 )
             }
-            val clock = firingClock ?: sessionClock ?: return@withContext null
+            val clock = firingClock ?: crankClock ?: sessionClock
+                ?: return@withContext null
             val heldRows = store.heldArrivals(row.filingDateIso)
             val waiting = com.example.ui.antechamber.AntechamberModel.waitingPile(heldRows)
             Triple(row.toSigningRecord(), clock, waiting)
@@ -1080,7 +1145,14 @@ private fun BreakHost(viewModel: MonolithViewModel) {
                     refreshTick++
                 }
             },
-            onKnock = {}
+            // A rap on the break's face is the same knock (the
+            // break lives behind the same door) — fired through
+            // the one bus, as on the sealed face (SOUND seat).
+            onKnock = {
+                StrongroomEngineBridge.fireSurfaceEvent(
+                    appContext, HapticEvent.KNOCK
+                )
+            }
         )
     )
 }
@@ -1089,14 +1161,17 @@ private fun BreakHost(viewModel: MonolithViewModel) {
  * BUILD-SR-36 composition glue — the Signing (census C-02, a HERO)
  * in the doorway place, under the Doorway's furniture.
  *
- * The standing day is read from the Strongroom store exactly as
- * [loadDoorwayState] reads it (the composed main's own pattern):
- * today's filing-day row standing COMPOSED or SIGNED, re-expressed
- * as a [com.example.domain.StrongroomComposition.ComposedDay]. No
- * week standing order exists in the kept engine, so none is
- * invented: a day that does not stand in the store does not stand
- * at the table — the host renders nothing until it stands
- * (stillness, census GAP-R03), and the Doorway above stands AtRest.
+ * The standing day is read from the Strongroom store: TOMORROW's
+ * filing-day row standing COMPOSED or SIGNED (the signing is the
+ * evening's act for tomorrow's day), re-expressed as a
+ * [com.example.domain.StrongroomComposition.ComposedDay], with
+ * today's row as the fallback when tomorrow's cannot stand. The
+ * day stands because the birth composed it
+ * ([com.example.data.StrongroomDayBirth]: the standing order is
+ * his loadout's carry, composed through the store's own path at
+ * every entry load) — a day that cannot be born (no lifting hour
+ * in his data) does not stand at the table, and the host renders
+ * nothing until one stands (stillness, census GAP-R03).
  *
  * Amendments amend the standing composition in memory AND persist
  * through the store's own verb for a fully-formed record
@@ -1140,13 +1215,31 @@ private fun SigningHost(viewModel: MonolithViewModel) {
 
     LaunchedEffect(Unit) {
         val facts = withContext(Dispatchers.IO) {
-            val store = StrongroomStore(AppContainer.dao(appContext))
+            val dao = AppContainer.dao(appContext)
+            val store = StrongroomStore(dao)
+            // THE DAY'S BIRTH (DAYBIRTH): the signing table stands
+            // on a born day — the host ensures the standing days
+            // before it reads, exactly as the doorway and the
+            // seal's facts do. THE TABLE'S DAY: the signing is the
+            // evening's act for TOMORROW's filing day (the page
+            // tonight's settling seals at tomorrow's first
+            // sitting), so tomorrow's standing row is the table's
+            // day; today's row serves only when tomorrow's cannot
+            // stand (e.g. the morning's own signing before the
+            // swing, when the birth has not carried a tomorrow).
+            com.example.data.StrongroomDayBirth.ensureStandingDays(
+                store, dao, System.currentTimeMillis()
+            )
             val todayIso = com.example.domain.StrongroomDay.filingDateIso(
                 System.currentTimeMillis()
             )
-            val row = store.day(todayIso)?.takeIf {
-                it.state == StrongroomDayEntity.STATE_COMPOSED ||
-                    it.state == StrongroomDayEntity.STATE_SIGNED
+            val tomorrowIso = java.time.LocalDate.parse(todayIso)
+                .plusDays(1).toString()
+            val row = listOf(tomorrowIso, todayIso).firstNotNullOfOrNull { iso ->
+                store.day(iso)?.takeIf {
+                    it.state == StrongroomDayEntity.STATE_COMPOSED ||
+                        it.state == StrongroomDayEntity.STATE_SIGNED
+                }
             }
             Triple(
                 row?.let {
@@ -1254,6 +1347,11 @@ private fun SigningHost(viewModel: MonolithViewModel) {
                                 .sign(standing.record, amended = true)
                         }
                     }
+                },
+                onFeelEvent = { event ->
+                    // The wheel's earned felt events, fired
+                    // through the bridge's one bus (FEEL-SEAT).
+                    StrongroomEngineBridge.fireSurfaceEvent(appContext, event)
                 }
             ),
             modifier = androidx.compose.ui.Modifier.weight(1f)
@@ -1286,9 +1384,12 @@ private fun SigningHost(viewModel: MonolithViewModel) {
  *    record from the row, the signing-amendment fact from the
  *    row), then mapped by the Doorway's own
  *    [com.example.ui.doorway.DoorwayComposition.fromComposedDay]
- *    inside [DoorwayState.fromFacts]. No week standing order
- *    exists in the kept engine, so none is invented here: a day
- *    that does not stand in the store does not stand at the door.
+ *    inside [DoorwayState.fromFacts]. The standing order the
+ *    birth composes from is his own loadout's carry
+ *    ([com.example.data.StrongroomDayBirth] — the LegacyCarry
+ *    route); when his data holds no lifting hour, no day is born
+ *    and a day that does not stand in the store does not stand
+ *    at the door.
  *  - **The held-waiting fact**: any arrival still WAITING in
  *    today's held pile.
  *  - **Yesterday's plate**: the plate of the filing day before
@@ -1302,7 +1403,16 @@ private fun SigningHost(viewModel: MonolithViewModel) {
  */
 private suspend fun loadDoorwayState(context: Context): DoorwayState =
     withContext(Dispatchers.IO) {
-        val store = StrongroomStore(AppContainer.dao(context.applicationContext))
+        val dao = AppContainer.dao(context.applicationContext)
+        val store = StrongroomStore(dao)
+        // THE DAY'S BIRTH (DAYBIRTH): the doorway's read ensures
+        // the standing days first — today + tomorrow composed
+        // through the store's own compose path from his loadout,
+        // so a day stands at the door whether or not he came to
+        // it (B-2). Idempotent: standing days are not recomposed.
+        com.example.data.StrongroomDayBirth.ensureStandingDays(
+            store, dao, System.currentTimeMillis()
+        )
         val todayIso = StrongroomDay.filingDateIso(System.currentTimeMillis())
         val yesterdayIso = java.time.LocalDate.parse(todayIso).minusDays(1).toString()
 
@@ -1422,6 +1532,35 @@ private suspend fun loadDrawerState(context: Context): DrawerState =
     }
 
 /**
+ * The break's Strongroom standing facts (PLACES) — the ONLY
+ * source of the shell's strongroomBreakStanding /
+ * crankMinuteStanding in the composed app:
+ *
+ *  - **The firing**: the sealed day's signing + its struck span,
+ *    through the domain's [StrongroomDay.breakFiring] — null when
+ *    no seal stands or the signing priced no break. Whether it
+ *    RUNS is the firing's own arithmetic against the elapsed
+ *    clock, derived by the host per reading.
+ *  - **The crank week**: the week's minute as the store stands
+ *    it (legacy carry included). Whether its 60 seconds RUN is
+ *    the week's own arithmetic against the wall clock.
+ */
+private suspend fun loadSpanBreakFacts(
+    context: Context
+): Pair<StrongroomDay.BreakFiring?, StrongroomDay.GovernorCrankWeek?> =
+    withContext(Dispatchers.IO) {
+        val store = StrongroomStore(AppContainer.dao(context.applicationContext))
+        val row = store.sealedDay()
+        val firing = row?.let {
+            val span = it.toSealSpan()
+            if (span != null) StrongroomDay.breakFiring(it.toSigningRecord(), span)
+            else null
+        }
+        val crank = store.crankWeek(System.currentTimeMillis())
+        firing to crank
+    }
+
+/**
  * The seal's standing facts (BUILD-SR-37) — the ONLY source of the
  * sealed face and the swing's invocability in the composed app:
  *
@@ -1442,7 +1581,15 @@ private suspend fun loadDrawerState(context: Context): DrawerState =
 private suspend fun loadSealFacts(context: Context): Pair<SealedFaceState?, Boolean> =
     withContext(Dispatchers.IO) {
         val appContext = context.applicationContext
-        val store = StrongroomStore(AppContainer.dao(appContext))
+        val dao = AppContainer.dao(appContext)
+        val store = StrongroomStore(dao)
+        // THE DAY'S BIRTH (DAYBIRTH): today's day must stand
+        // before the swing can be read as standing — the seal's
+        // facts load ensures the birth first, as the doorway's
+        // does. Idempotent; a sealed/struck day is never recomposed.
+        com.example.data.StrongroomDayBirth.ensureStandingDays(
+            store, dao, System.currentTimeMillis()
+        )
         val sealedRow = store.sealedDay()
         val face = sealedRow?.let { row ->
             SealedFaceState.standing(
@@ -1512,10 +1659,21 @@ private suspend fun loadLiftingState(
     val offset = finishE0Mono?.let {
         (android.os.SystemClock.elapsedRealtime() - it).toInt()
     } ?: com.example.ui.lifting.LiftingCeremony.ScoreEndMs
+    // The handing back's standing fact (LEAD-MOVES): how many
+    // people waited through the standing struck day — distinct
+    // lines still WAITING on its held-arrivals rows, each person
+    // once. A count only: the names stand at the Drawer's
+    // threshold, and the lifting surface draws wordless slips.
+    val waiting = store.heldArrivals(struckRows.first().filingDateIso)
+        .filter { it.state == StrongroomHeldArrivalEntity.STATE_WAITING }
+        .map { it.line }
+        .distinct()
+        .size
     LiftingState(
         plate = latest,
         pile = PlatePileView.fromPlates(views),
         isFailure = latest.isFailure,
+        waitingSlips = waiting,
         ceremonyStartOffsetMs = offset.coerceIn(
             0, com.example.ui.lifting.LiftingCeremony.ScoreEndMs
         )
