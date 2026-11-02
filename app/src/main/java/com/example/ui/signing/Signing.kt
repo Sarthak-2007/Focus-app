@@ -41,7 +41,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -50,7 +49,6 @@ import androidx.compose.ui.unit.dp
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomGuard
-import com.example.service.StrongroomEngineBridge
 import com.example.service.haptics.HapticEvent
 import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
@@ -155,7 +153,12 @@ data class SigningActions(
     val onAllowanceMove: (targetMinutes: Int) -> Unit,
     /** The signature is whole. Carries nothing — by construction
      *  there is no combination value to carry. */
-    val onSignature: () -> Unit
+    val onSignature: () -> Unit,
+    /** A felt event the wheel's mechanism earned (FEEL-SEAT):
+     *  the surface authors no waveform — it names the event and
+     *  the host fires it through the one SensoryBus, so the
+     *  felt, heard and seen halves stay one registry row. */
+    val onFeelEvent: (com.example.service.haptics.HapticEvent) -> Unit = {}
 )
 
 @Composable
@@ -309,7 +312,6 @@ private fun SigningDialSurface(
     lightState: StrongroomLightState
 ) {
     val record = state.day.record
-    val context = LocalContext.current
     var previewMinute by remember(record.liftingTime) {
         mutableStateOf(SigningDial.minuteOfDay(record.liftingTime))
     }
@@ -363,8 +365,7 @@ private fun SigningDialSurface(
                             // size up — felt only, by filed law.
                             val detent = SigningDial.minuteFor(dragAngle) / 15
                             if (lastDetent != null && detent != lastDetent) {
-                                StrongroomEngineBridge.fireSurfaceEvent(
-                                    context,
+                                actions.onFeelEvent(
                                     if ((detent * 15) % 60 == 0) {
                                         HapticEvent.HOUR_DETENT_WHOLE
                                     } else {
@@ -488,7 +489,6 @@ private fun BreakRail(
     lightState: StrongroomLightState
 ) {
     val record = state.day.record
-    val context = LocalContext.current
     var preview by remember(record.breakLengthMinutes) {
         mutableStateOf(record.breakLengthMinutes)
     }
@@ -512,13 +512,9 @@ private fun BreakRail(
                                 // resting pulse on a preset.
                                 when {
                                     preview == 0 ->
-                                        StrongroomEngineBridge.fireSurfaceEvent(
-                                            context, HapticEvent.BREAK_ZERO_STOP
-                                        )
+                                        actions.onFeelEvent(HapticEvent.BREAK_ZERO_STOP)
                                     BreakChoice.isPreset(preview) ->
-                                        StrongroomEngineBridge.fireSurfaceEvent(
-                                            context, HapticEvent.BREAK_PRESET_REST
-                                        )
+                                        actions.onFeelEvent(HapticEvent.BREAK_PRESET_REST)
                                 }
                                 actions.onAmend(
                                     StrongroomComposition.SigningAmendment(
@@ -539,8 +535,7 @@ private fun BreakRail(
                                 // preset is crossed — felt only.
                                 val prev = lastPreview
                                 if (prev != null && preview != prev) {
-                                    StrongroomEngineBridge.fireSurfaceEvent(
-                                        context,
+                                    actions.onFeelEvent(
                                         when {
                                             BreakChoice.isPreset(preview) ->
                                                 HapticEvent.BREAK_PRESET_NOTCH
@@ -614,9 +609,7 @@ private fun BreakRail(
                         .clickable {
                             preview = BreakChoice.shortcut(preset)
                             // A tap lands ON the notch (C5.2).
-                            StrongroomEngineBridge.fireSurfaceEvent(
-                                context, HapticEvent.BREAK_PRESET_NOTCH
-                            )
+                            actions.onFeelEvent(HapticEvent.BREAK_PRESET_NOTCH)
                             actions.onAmend(
                                 StrongroomComposition.SigningAmendment(
                                     breakLengthMinutes = preview
@@ -645,7 +638,6 @@ private fun AllowancePawlSurface(
     lightState: StrongroomLightState
 ) {
     val guard = state.guard
-    val context = LocalContext.current
     var preview by remember(guard.allowanceMinutes, guard.pendingAllowanceMinutes) {
         mutableStateOf(
             if (guard.pendingAllowanceMinutes >= 0) guard.pendingAllowanceMinutes
@@ -676,9 +668,7 @@ private fun AllowancePawlSurface(
                             // none — it never seats today; its rock
                             // is a dawn event, not a signing one.
                             if (preview < startAllowance) {
-                                StrongroomEngineBridge.fireSurfaceEvent(
-                                    context, HapticEvent.GUARD_TIGHTEN_SEAT
-                                )
+                                actions.onFeelEvent(HapticEvent.GUARD_TIGHTEN_SEAT)
                             }
                             actions.onAllowanceMove(preview)
                         },
@@ -697,13 +687,9 @@ private fun AllowancePawlSurface(
                             // winding a raise, the hollow detent —
                             // felt only, late by design.
                             if (preview < before) {
-                                StrongroomEngineBridge.fireSurfaceEvent(
-                                    context, HapticEvent.GUARD_TIGHTEN_DETENT
-                                )
+                                actions.onFeelEvent(HapticEvent.GUARD_TIGHTEN_DETENT)
                             } else if (preview > before) {
-                                StrongroomEngineBridge.fireSurfaceEvent(
-                                    context, HapticEvent.GUARD_RAISE_DETENT
-                                )
+                                actions.onFeelEvent(HapticEvent.GUARD_RAISE_DETENT)
                             }
                             change.consume()
                         }
@@ -860,7 +846,7 @@ private fun GreatWheelSignature(
     lightState: StrongroomLightState
 ) {
     val spin = remember { CombinationSpin() }
-    val context = LocalContext.current
+    val feel = remember { SigningFeel() }
     var rotation by remember { mutableStateOf(0.0) }
     var lastVelocity by remember { mutableStateOf(0.0) }
     var seats by remember { mutableStateOf(0) }
@@ -880,26 +866,18 @@ private fun GreatWheelSignature(
                     detectDragGestures(
                         onDragStart = { lastAngle = null },
                         onDragEnd = {
-                            val clockwise = lastVelocity > 0.0
-                            if (spin.attemptSeat(rotation, lastVelocity, clockwise)) {
-                                seats = spin.seatsTaken
-                                // The seat speaks (SOUND seat wiring,
-                                // 2026-11-03): the final seat is the
-                                // combination settling whole; a lesser
-                                // seat latches, and the wheel's turnover
-                                // into the next pass passes the GATE —
-                                // the clack after the felt void.
-                                if (spin.isComplete) {
-                                    StrongroomEngineBridge.fireSurfaceEvent(
-                                        context, HapticEvent.COMBINATION_FINAL_SEAT
-                                    )
-                                } else {
-                                    StrongroomEngineBridge.fireSurfaceEvent(
-                                        context, HapticEvent.SIGNATURE_LATCH
-                                    )
-                                    StrongroomEngineBridge.fireSurfaceEvent(
-                                        context, HapticEvent.COMBINATION_GATE
-                                    )
+                            if (spin.isComplete) {
+                                // A seat attempt against the
+                                // seated dial: its flat wall
+                                // (FEEL-SR-3 C1.3, via SigningFeel).
+                                feel.onAttemptAgainstSeatedDial()
+                                    .forEach(actions.onFeelEvent)
+                            } else {
+                                val clockwise = lastVelocity > 0.0
+                                if (spin.attemptSeat(rotation, lastVelocity, clockwise)) {
+                                    seats = spin.seatsTaken
+                                    feel.onSeatTaken(finalSeat = spin.isComplete)
+                                        .forEach(actions.onFeelEvent)
                                 }
                             }
                         },
@@ -922,16 +900,13 @@ private fun GreatWheelSignature(
                                 if (velocity > 240.0) velocity = 240.0
                                 if (velocity < -240.0) velocity = -240.0
                                 lastVelocity = velocity
-                                val stationBefore = spin.stationAt(rotation)
                                 rotation += velocity * dt
-                                // A station crossed under the hand
-                                // speaks its tick (the spin's ratchet
-                                // work, wired by the SOUND seat).
-                                if (spin.stationAt(rotation) != stationBefore) {
-                                    StrongroomEngineBridge.fireSurfaceEvent(
-                                        context, HapticEvent.COMBINATION_STATION
-                                    )
-                                }
+                                // The travel the mechanism accepted
+                                // is the travel the hand feels:
+                                // station notches and gates, read
+                                // off the governed rotation itself.
+                                feel.onTravel(rotation)
+                                    .forEach(actions.onFeelEvent)
                             }
                             lastAngle = angle
                             lastMs = change.uptimeMillis
