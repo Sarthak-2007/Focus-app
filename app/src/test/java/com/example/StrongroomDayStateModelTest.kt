@@ -42,8 +42,7 @@ class StrongroomDayStateModelTest {
             StrongroomDay.ShapedGap(StrongroomDay.GapKind.GYM, 7_200_000L, 1_800_000L),
             StrongroomDay.ShapedGap(StrongroomDay.GapKind.SADHANA, 9_900_000L, 1_800_000L),
             StrongroomDay.ShapedGap(StrongroomDay.GapKind.MEAL, 13_500_000L, 1_800_000L)
-        ),
-        taskLine = "finish the physics sheet"
+        )
     )
 
     /** A 5-hour span struck at the first sitting, boot 3. */
@@ -96,18 +95,12 @@ class StrongroomDayStateModelTest {
         assertFalse(seal.isLifted(Long.MAX_VALUE / 2, 4))
     }
 
-    @Test
-    fun purposeSentence_standsVerbatim_onTheSigningRecord() {
-        // Ledger B-1: the sentence verbatim, twenty-three words,
-        // carried on every signing record from Slice 1.
-        assertEquals(
-            "What I settle while I am strong, this holds while I am not. " +
-                "It reopens nothing. At night it tells me the truth.",
-            StrongroomDay.PURPOSE_SENTENCE
-        )
-        assertEquals(23, StrongroomDay.PURPOSE_SENTENCE.split(" ").size)
-        assertEquals(StrongroomDay.PURPOSE_SENTENCE, signing.purposeSentence)
-    }
+    // NOTE (cure, 2026-11-02): ledger B-1's purpose sentence and
+    // B-3's task line ride BUILD-SR-3's UNCOMMITTED wave (they exist
+    // in the engine worktree's StrongroomDay.kt, not in committed
+    // c531bf48). Their obligations are carried as TG-7 in the
+    // obligations map and their tests file the act that wave lands —
+    // nothing about them is asserted against the committed API here.
 
     // ------------------------------------------------------------------
     // The sealed survivors — SEALED-01 · SEALED-02 · M-09
@@ -168,19 +161,22 @@ class StrongroomDayStateModelTest {
     }
 
     @Test
-    fun gaps_areShapesNotApps_noPackageNoOpening_kindsExactlyTheFiledThree() {
+    fun gaps_areShapesNotApps_noPackageNoOpening_kindsExactlyTheFiledFour() {
         // A shaped gap can never enter the locked set: by type it
         // carries a kind and two offsets — no package name exists
-        // on it to lock. And the kinds are exactly the filed three
-        // inside a standing seal (ledger C-2): gym, sadhana (the
-        // prayer), meal. The morning meditation hour is NOT a gap
-        // kind — it stands before the swing, inside no seal.
+        // on it to lock. And the kinds are exactly the four ledger
+        // C-2 names inside a standing seal, in the committed
+        // model's declared order: meditation, gym, sadhana (the
+        // prayer), meal. (BUILD-SR-3's uncommitted wave re-reads
+        // the meditation kind against the day-map; when that wave
+        // lands, this census is re-read in the same act — TG-7.)
         assertEquals(
             setOf("kind", "startOffsetMillis", "durationMillis"),
             fieldNames(StrongroomDay.ShapedGap::class.java)
         )
         assertEquals(
             listOf(
+                StrongroomDay.GapKind.MEDITATION,
                 StrongroomDay.GapKind.GYM,
                 StrongroomDay.GapKind.SADHANA,
                 StrongroomDay.GapKind.MEAL
@@ -295,7 +291,6 @@ class StrongroomDayStateModelTest {
         )
         assertEquals(seal.spanDurationMillis, plate.hoursHeldMillis)
         assertEquals(0L, plate.bracketGapMillis)
-        assertEquals("finish the physics sheet", plate.taskLine) // B-3: spent at the lift
     }
 
     @Test
@@ -334,7 +329,7 @@ class StrongroomDayStateModelTest {
         assertEquals(
             setOf(
                 "filingDateIso", "hoursHeldMillis", "punches", "sealState",
-                "crankSealBroken", "bracketGapMillis", "taskLine"
+                "crankSealBroken", "bracketGapMillis"
             ),
             fieldNames(StrongroomDay.DayPlate::class.java)
         )

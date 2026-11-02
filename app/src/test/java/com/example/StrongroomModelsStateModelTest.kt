@@ -47,18 +47,18 @@ class StrongroomModelsStateModelTest {
         gaps = listOf(
             StrongroomDay.ShapedGap(StrongroomDay.GapKind.GYM, 7_200_000L, 1_800_000L),
             StrongroomDay.ShapedGap(StrongroomDay.GapKind.MEAL, 13_500_000L, 1_800_000L)
-        ),
-        taskLine = "finish the physics sheet"
+        )
     )
 
     @Test
     fun signingRecord_roundTripsThroughItsEntity_whole() {
         // Every settled field survives the trip to the row and
         // back — packages, the hour, his sentence, the freely
-        // chosen break, the gaps in order, his own task line.
-        val entity = signing.toEntity(dayShape = "ORDINARY", amendedBySigning = true)
-        assertEquals("ORDINARY", entity.dayShape)
-        assertTrue(entity.amendedBySigning)
+        // chosen break, the gaps in order. (The composition's
+        // day-shape/amendment facts and the task line ride
+        // BUILD-SR-3's uncommitted wave — TG-1/TG-7 in the map;
+        // they join this round-trip the act that wave lands.)
+        val entity = signing.toEntity()
         assertEquals(signing, entity.toSigningRecord())
     }
 
