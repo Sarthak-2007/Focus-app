@@ -35,7 +35,7 @@ class LiftingMechanismsTest {
     // ── The ceremony clock ─────────────────────────────────────
 
     @Test
-    fun ceremony standsStillUntilTheLockTrips() {
+    fun `ceremony standsStillUntilTheLockTrips`() {
         val pose = LiftingCeremony.poseAt(0)
         assertEquals(LiftCeremonyPhase.STILLNESS, pose.phase)
         assertEquals(0, pose.boltsWithdrawn)
