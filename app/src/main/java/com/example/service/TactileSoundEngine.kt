@@ -1329,6 +1329,65 @@ class TactileSoundEngine(private val context: Context) {
         )
     }
 
+    /**
+     * THE KNOCK (Strongroom — Audit A §2.3; spec: [StrongroomKnock]):
+     * reaching for a locked app while the seal stands. One dull,
+     * heavy thud, felt more than heard — the hand takes the blow
+     * (the THUD primitive at full scale where the hardware speaks
+     * it, the spec's mass-strike waveform below that), the ear
+     * takes only the low body at 118 Hz, under the seal's gain.
+     * The face does not answer this voice with any movement: the
+     * knock is the whole reply, and it fires exactly once per
+     * reach — the caller's reach event is the spend, never a
+     * press repeat.
+     */
+    fun playKnock() {
+        if (!triggerThudPrimitive()) {
+            triggerWaveform(
+                timingsMs = StrongroomKnock.HAPTIC_TIMINGS_MS,
+                amplitudes = StrongroomKnock.HAPTIC_AMPLITUDES,
+                fallbackMs = StrongroomKnock.HAPTIC_FALLBACK_MS
+            )
+        }
+        enqueueTransient(
+            fundamentalHz = StrongroomKnock.PITCH_HZ,
+            durationMs = StrongroomKnock.DURATION_MS,
+            gain = StrongroomKnock.GAIN,
+            chordRatio = StrongroomKnock.CHORD_RATIO
+        )
+    }
+
+    /** The THUD primitive alone, where the hardware speaks it
+     *  (API 30+): returns whether it fired, so [playKnock] spends
+     *  the waveform only when the primitive did not — one haptic
+     *  event per reach, never both. Mirrors the gates every other
+     *  haptic path obeys (a torn-down engine and a haptics fact of
+     *  OFF both stay silent); any failure reads as "not fired"
+     *  and the waveform carries the blow. */
+    private fun triggerThudPrimitive(): Boolean {
+        if (!running || !hapticsEnabled) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return try {
+            val vibrator = resolveVibrator() ?: return false
+            if (!vibrator.hasVibrator()) return false
+            val supported = vibrator.arePrimitivesSupported(
+                VibrationEffect.Composition.PRIMITIVE_THUD
+            )
+            if (supported.isEmpty() || !supported[0]) return false
+            vibrator.vibrate(
+                VibrationEffect.startComposition()
+                    .addPrimitive(
+                        VibrationEffect.Composition.PRIMITIVE_THUD,
+                        StrongroomKnock.THUD_PRIMITIVE_SCALE
+                    )
+                    .compose()
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /** Two-stage latch: strike, gap, seat. Engaging snaps sharp;
      *  releasing lands heavier on the seat. [unattended] marks a
      *  machinery-fired latch (the break boundaries): DND then
