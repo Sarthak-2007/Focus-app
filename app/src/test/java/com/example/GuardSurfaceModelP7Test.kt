@@ -257,6 +257,97 @@ class GuardSurfaceModelP7Test {
         assertEquals("Off stands from Wednesday 4 November, 03:30.", row.line)
     }
 
+    // ---------- VERIFY-SR-4's owed P7-T names, by name ----------
+    // The pre-verification map (ascent/build-first-usable/work/
+    // verify-sr-4/p2-p7-state-test-map.md, P7 table) owes these
+    // names; each is discharged here against the same model the
+    // tests above prove in this lane's own words.
+
+    @Test
+    fun tighten_appliesInstantly_fromSurface() {
+        // The tighten wheel is in the inventory in EVERY state —
+        // no pending, no day-start, no queue exists for it in the
+        // model: presence here IS the surface's instant tighten.
+        assertTrue(surface().has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL))
+        assertTrue(
+            surface(snapshot(sealedBlockActive = true))
+                .has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL)
+        )
+    }
+
+    @Test
+    fun raise_effectiveNextDayStart_shownAsPendingUntilThen() {
+        val model = surface(
+            snapshot(pendingAllowanceMinutes = 45, pendingAllowanceFromMillis = nextDayStart)
+        )
+        // Until the day-start lands, the standing allowance is
+        // still today's word and the raise reads as pending.
+        assertEquals(GuardCopy.allowanceLine(30), model.allowanceLine)
+        assertTrue(model.pendingRaiseLine!!.contains("stands from Wednesday 4 November, 03:30"))
+    }
+
+    @Test
+    fun offControl_schedulesNextDayStart_neverImmediate() {
+        val calm = surface()
+        assertTrue(calm.has(GuardControl.GUARD_REQUEST_OFF))
+        assertTrue(GuardCopy.OFF_LAW.contains("next day-start"))
+        // Once asked, it stands as a PENDING off landing at the
+        // day-start — the standing line still reads ON until then.
+        val pending = surface(snapshot(pendingOffFromMillis = nextDayStart))
+        assertEquals(GuardCopy.STANDING_ON, pending.standingLine)
+        assertTrue(pending.pendingOffLine!!.contains("Wednesday 4 November, 03:30"))
+    }
+
+    @Test
+    fun offControl_absentWhileSealedBlockActive() {
+        assertFalse(
+            surface(snapshot(sealedBlockActive = true)).has(GuardControl.GUARD_REQUEST_OFF)
+        )
+    }
+
+    @Test
+    fun stretchSetup_endDateIsTheExit_noOffControlRendered() {
+        val end =
+            LocalDate.of(2026, 11, 10).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+        val inside = surface(snapshot(stretchEndMillis = end))
+        assertFalse(inside.has(GuardControl.GUARD_REQUEST_OFF))
+        assertTrue(inside.stretchLine!!.contains("That date is the exit"))
+    }
+
+    @Test
+    fun noWitnessOrUrgeButton_anywhereInStretchSurfaces() {
+        val names = GuardControl.values().map { it.name }
+        assertTrue(names.none { it.contains("WITNESS") || it.contains("URGE") })
+        val end =
+            LocalDate.of(2026, 11, 10).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+        val inside = surface(snapshot(stretchEndMillis = end))
+        assertTrue(
+            inside.controls.none {
+                it.name.contains("WITNESS") || it.name.contains("URGE")
+            }
+        )
+    }
+
+    @Test
+    fun guardSurfaces_offerNoSpendableExitStockpile() {
+        val model = surface()
+        // Exits render as NAMES; the valve as a whole/spent fact.
+        assertTrue(model.exitNames.isNotEmpty())
+        assertEquals(GuardCopy.valveLine(false), model.valveLine)
+        assertTrue(GuardControl.values().none { it.name.contains("EXIT") })
+    }
+
+    @Test
+    fun routinesSettle_underGuardRules_notStandalone() {
+        val on = GuardRoutineSnapshot(id = 2, name = "Evening block", enabled = true)
+        val row = surface(snapshot(routines = listOf(on))).routineRows.single()
+        assertEquals(setOf(GuardControl.ROUTINE_TURN_OFF), row.controls)
+        // The routine's off is the Guard's own slow road — the
+        // same day-start law the Guard's off stands under.
+        assertTrue(GuardCopy.ROUTINES_LAW.contains("next day-start"))
+        assertTrue(GuardCopy.OFF_LAW.contains("next day-start"))
+    }
+
     // ---------- G-a: carried unresolved, D-1 applied as filed ----------
 
     @Test

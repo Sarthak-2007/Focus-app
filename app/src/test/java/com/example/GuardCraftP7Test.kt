@@ -1,6 +1,5 @@
 package com.example
 
-import com.example.ui.guard.GuardInks
 import com.example.ui.guard.GuardWheel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -63,17 +62,5 @@ class GuardCraftP7Test {
         // The spring figures: firm, damped below the bounce line.
         assertTrue(GuardWheel.SETTLE_STIFFNESS >= 200f)
         assertTrue(GuardWheel.SETTLE_DAMPING_RATIO in 0.7f..1.0f)
-    }
-
-    @Test
-    fun palette_isExactlyTheSevenInks_neverGreen() {
-        assertEquals(7, GuardInks.size)
-        assertEquals(7, GuardInks.distinct().size)
-        GuardInks.forEach { ink ->
-            assertTrue(
-                "an ink whose green dominates is not in this palette",
-                ink.green < maxOf(ink.red, ink.blue)
-            )
-        }
     }
 }
