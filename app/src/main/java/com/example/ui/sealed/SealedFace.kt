@@ -1,6 +1,7 @@
 package com.example.ui.sealed
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -33,16 +34,20 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.ui.foundation.DrivenDoor
 import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
@@ -87,10 +92,19 @@ import kotlin.math.sin
  * the whole face mass descended 3/8 toward graphite, the engraved
  * hour and the pinstripe glint the two promoted reads, no third.
  *
- * TEXTURE (intake §1): a surface property, not a filter — enamel,
- * steel and brass grain derived from each surface's own ink
- * through RELIGHT eighths ([SealedTexture]); no flat fill carries
- * a material surface; no image of any kind exists in this file.
+ * THE BASE (LEAD-SEALED): the face's ground is THE PRINT — the
+ * exact seven-ink vault-door photograph Sarthak picked and
+ * cleared by his own eye (Nov 1, 2026) — carried full-screen as
+ * the leaf itself. The door's furniture stands IN the print: the
+ * great wheel, the bolts, the pinstripe are the photograph's own,
+ * and its dial is dead the plain way — a photograph does not
+ * turn, and never shows a time. The four printings are engraved
+ * OVER the print in the palette's own line-work, each cut reading
+ * by its light-lip (the foundation's law for the hour: it reads
+ * first-glance by its shadow). Only the grille is still drawn —
+ * a small lattice in the print's dark floor, in graphite and
+ * gold tones. [SealedTexture] remains in this file for the swing
+ * act's leaf, which is another surface's business.
  *
  * THE KNOCK (C-10): a tap on the face — a reach's landing inside
  * the room — is answered by the knock and nothing else: the door
@@ -172,6 +186,26 @@ data class SealedFaceActions(
     val onGrilleOpen: () -> Unit
 )
 
+/** The engraving's light-lip for a DARK cut (the hour, graphite):
+ *  an engraving reads by the light its lower edge catches — a
+ *  warmed gold lip standing just under the glyph, so the cut
+ *  reads on the print's bright ring and its dark steel alike. */
+private val DarkCutLip = Shadow(
+    color = StrongroomLight.sealedPinstripeLitLip().copy(alpha = 0.65f),
+    offset = Offset(0f, 3f),
+    blurRadius = 3f
+)
+
+/** The engraving's depth for a GOLD cut (the door-word, his
+ *  sentence): a graphite shadow standing just under the glyph,
+ *  so the gold reads on the print's brass and its dark glass
+ *  alike. */
+private val GoldCutShadow = Shadow(
+    color = StrongroomInks.Graphite.copy(alpha = 0.85f),
+    offset = Offset(0f, 3f),
+    blurRadius = 3f
+)
+
 @Composable
 fun SealedFace(
     state: SealedFaceState,
@@ -191,7 +225,6 @@ private fun SealedFaceInSealedLight(
     actions: SealedFaceActions,
     modifier: Modifier = Modifier
 ) {
-    val lightState = StrongroomLightState.SEALED
     val printings = state.printings
 
     // THE KNOCK, absorbed: a blow's displacement, decaying dead
@@ -238,7 +271,7 @@ private fun SealedFaceInSealedLight(
                     }
                 }
         ) {
-            DoorLeafCanvas(lightState, latchSeated)
+            SealedDoorPrint(latchSeated)
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -253,7 +286,7 @@ private fun SealedFaceInSealedLight(
                 ) {
                     Text(
                         text = printings.liftingHour.text,
-                        style = StrongroomType.Eng1,
+                        style = StrongroomType.Eng1.copy(shadow = DarkCutLip),
                         color = StrongroomLight.sealedHourMark(),
                         textAlign = TextAlign.Center
                     )
@@ -266,7 +299,7 @@ private fun SealedFaceInSealedLight(
                 if (word != null) {
                     Text(
                         text = word,
-                        style = StrongroomType.Prt3,
+                        style = StrongroomType.Prt3.copy(shadow = GoldCutShadow),
                         color = StrongroomRoles.OnGround,
                         textAlign = TextAlign.Center
                     )
@@ -281,7 +314,7 @@ private fun SealedFaceInSealedLight(
                 if (sentence != null) {
                     Text(
                         text = sentence,
-                        style = StrongroomType.Prt4,
+                        style = StrongroomType.Prt4.copy(shadow = GoldCutShadow),
                         color = StrongroomRoles.OnGround,
                         textAlign = TextAlign.Center,
                         maxLines = 3
@@ -297,9 +330,9 @@ private fun SealedFaceInSealedLight(
                 // ── Rank 4 · the held mark (PRT-2's place): a
                 // shallow punch at the printed floor — a mark, not
                 // a glyph, never live, never the quiet dot.
-                HeldMarkPunch(lightState)
+                HeldMarkPunch()
                 Spacer(Modifier.weight(1f))
-                // The grille's ground is drawn by the leaf canvas;
+                // The grille's ground is drawn over the print;
                 // its touch stands in the overlay below.
                 Spacer(Modifier.height(96.dp))
             }
@@ -335,17 +368,14 @@ private fun SealedFaceInSealedLight(
  *  word stands in it. */
 @Composable
 private fun KeptPlaceSlot(widthDp: Int, heightDp: Int) {
-    val lightState = LocalStrongroomLightState.current
     Box(
         modifier = Modifier
             .size(width = widthDp.dp, height = heightDp.dp)
             .background(
-                StrongroomLight.blendEighth(
-                    StrongroomLight.stateSurface(
-                        StrongroomInks.Violet, lightState, StrongroomLitSurface.FACE
-                    ),
-                    StrongroomInks.Graphite, 3
-                ),
+                // A recess cut into the print: graphite dark
+                // enough to read as a slot in the metal on any
+                // ground the photograph offers.
+                StrongroomInks.Graphite.copy(alpha = 0.52f),
                 RoundedCornerShape(2.dp)
             )
             .border(
@@ -369,179 +399,92 @@ private fun KeptPlaceSlot(widthDp: Int, heightDp: Int) {
  *  the printed floor — a recessed impression a finger could learn,
  *  struck once, identical for the whole seal. */
 @Composable
-private fun HeldMarkPunch(lightState: StrongroomLightState) {
+private fun HeldMarkPunch() {
     Canvas(modifier = Modifier.size(26.dp)) {
-        val enamel = StrongroomLight.stateSurface(
-            StrongroomInks.Violet, lightState, StrongroomLitSurface.FACE
-        )
-        // The punch's lit lip (upper-left) and its recessed floor.
+        // The punch's lit lip (upper-left) and its recessed floor,
+        // cut into the print: graphite depths with a gold lip.
         drawCircle(
             color = StrongroomLight.blendEighth(StrongroomInks.Gold, StrongroomInks.Graphite, 6),
             radius = size.minDimension / 2f,
             center = center
         )
         drawCircle(
-            color = StrongroomLight.blendEighth(enamel, StrongroomInks.Graphite, 4),
+            color = StrongroomLight.blendEighth(StrongroomInks.Graphite, StrongroomInks.Gold, 1),
             radius = size.minDimension / 2f - 2.dp.toPx(),
             center = center + Offset(0.5.dp.toPx(), 0.5.dp.toPx())
         )
         drawCircle(
-            color = StrongroomLight.blendEighth(enamel, StrongroomInks.Graphite, 2),
+            color = StrongroomLight.blendEighth(
+                StrongroomInks.Graphite,
+                StrongroomLight.shadowPartner(StrongroomInks.Graphite), 2
+            ),
             radius = size.minDimension / 4f,
             center = center
         )
     }
 }
 
-/** The leaf itself: enamel grain over the whole face, the hand-laid
- *  pinstripe, the dial ring the hour is engraved on, the great
- *  wheel at rest, the three bolts driven home into the frame, and
- *  the grille's lattice in the flank with its latch. */
+/** The leaf itself: THE PRINT — the seven-ink vault-door
+ *  photograph Sarthak picked and cleared, carried full-screen as
+ *  the door. Everything the drawn leaf used to fake stands in the
+ *  print for real: the great wheel, the dead dial, the bolts
+ *  driven home, the pinstripe. Only the grille is still drawn —
+ *  a small lattice in the print's dark floor (bottom-start), in
+ *  graphite and gold, with its latch bar seated across when the
+ *  first touch has taken. The print is cropped to the screen,
+ *  centred on the wheel: its floor band carries the grille, and
+ *  the ring's top arc carries the engraved hour. */
 @Composable
-private fun DoorLeafCanvas(lightState: StrongroomLightState, latchSeated: Boolean) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
-        val enamel = StrongroomLight.stateSurface(
-            StrongroomInks.Violet, lightState, StrongroomLitSurface.FACE
+private fun SealedDoorPrint(latchSeated: Boolean) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(id = R.drawable.sealed_door_print),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
         )
-        // Enamel grain — the surface's own grain, cell by cell.
-        val cell = SealedTexture.Species.ENAMEL.cellPx.dp.toPx()
-        var cy = 0
-        var yy = 0f
-        while (yy < h) {
-            var cx = 0
-            var xx = 0f
-            while (xx < w) {
-                drawRect(
-                    color = SealedTexture.cellTone(
-                        enamel, StrongroomInks.Graphite,
-                        SealedTexture.Species.ENAMEL, cx, cy,
-                        seed = 37, state = lightState
-                    ),
-                    topLeft = Offset(xx, yy),
-                    size = Size(cell + 1f, cell + 1f)
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val h = size.height
+            val lightState = StrongroomLightState.SEALED
+            val rimLit = StrongroomLight.relief(
+                StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
+            )
+            val pin = StrongroomLight.sealedPinstripe()
+            // The grille in the flank (bottom-start): a small
+            // lattice door of steel bars over the room's dark, its
+            // latch bar seated across when the first touch has
+            // taken.
+            val gx = 28.dp.toPx()
+            val gy = h - 22.dp.toPx() - 72.dp.toPx()
+            val gw = 92.dp.toPx()
+            val gh = 72.dp.toPx()
+            drawRect(color = StrongroomInks.Graphite, topLeft = Offset(gx, gy), size = Size(gw, gh))
+            for (i in 1 until 5) {
+                val bx = gx + gw * i / 5f
+                drawLine(
+                    color = rimLit, start = Offset(bx, gy + 4.dp.toPx()),
+                    end = Offset(bx, gy + gh - 4.dp.toPx()), strokeWidth = 3.dp.toPx()
                 )
-                xx += cell; cx++
             }
-            yy += cell; cy++
-        }
-        // The hand-laid gold pinstripe: the glint is a promoted
-        // read in L-SEALED — exact gold, held.
-        val pin = StrongroomLight.sealedPinstripe()
-        val inset = 14.dp.toPx()
-        drawRect(color = pin, topLeft = Offset(inset, inset), size = Size(w - 2 * inset, 2.dp.toPx()))
-        drawRect(
-            color = pin, topLeft = Offset(inset, h - inset - 2.dp.toPx()),
-            size = Size(w - 2 * inset, 2.dp.toPx())
-        )
-        drawRect(color = pin, topLeft = Offset(inset, inset), size = Size(2.dp.toPx(), h - 2 * inset))
-        drawRect(
-            color = pin, topLeft = Offset(w - inset - 2.dp.toPx(), inset),
-            size = Size(2.dp.toPx(), h - 2 * inset)
-        )
-
-        // The dial ring, high on the face: steel case, gold ticks,
-        // its hand DEAD — pointing down at rest, and it does not
-        // move while the seal stands. The engraved hour stands in
-        // the ring's middle (the overlay's rank-1 printing).
-        val dialC = Offset(w / 2f, 22.dp.toPx() + 75.dp.toPx())
-        val dialR = 74.dp.toPx()
-        drawCircle(color = StrongroomInks.Graphite, radius = dialR, center = dialC)
-        drawCircle(color = pin, radius = dialR, center = dialC, style = Stroke(width = 2.dp.toPx()))
-        drawCircle(
-            color = StrongroomLight.sealedPinstripeLitLip(), radius = dialR * 0.86f,
-            center = dialC, style = Stroke(width = 1.5.dp.toPx())
-        )
-        for (i in 0 until 12) {
-            val a = (i * 30f) * (Math.PI / 180f).toFloat()
-            val inner = dialC + Offset(sin(a) * dialR * 0.90f, -cos(a) * dialR * 0.90f)
-            val outer = dialC + Offset(sin(a) * dialR * 0.97f, -cos(a) * dialR * 0.97f)
-            drawLine(color = pin, start = inner, end = outer, strokeWidth = 1.5.dp.toPx())
-        }
-
-        // The great wheel, at rest — the face's furniture, worked
-        // at the swing, still now. Steel rim relieved on its lit
-        // side, three spokes, a gold hub.
-        val wheelC = Offset(w / 2f, h * 0.70f)
-        val wheelR = w * 0.19f
-        val rimLit = StrongroomLight.relief(
-            StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
-        )
-        val rimShadow = StrongroomLight.relief(
-            StrongroomInks.Graphite, StrongroomInks.Violet, -0.85f, lightState
-        )
-        drawArc(
-            color = rimShadow, startAngle = -40f, sweepAngle = 180f, useCenter = false,
-            topLeft = Offset(wheelC.x - wheelR, wheelC.y - wheelR),
-            size = Size(wheelR * 2, wheelR * 2), style = Stroke(width = 8.dp.toPx())
-        )
-        drawArc(
-            color = rimLit, startAngle = 140f, sweepAngle = 180f, useCenter = false,
-            topLeft = Offset(wheelC.x - wheelR, wheelC.y - wheelR),
-            size = Size(wheelR * 2, wheelR * 2), style = Stroke(width = 8.dp.toPx())
-        )
-        for (deg in listOf(90f, 210f, 330f)) {
-            val a = deg * (Math.PI / 180f).toFloat()
-            drawLine(
-                color = StrongroomInks.Graphite, start = wheelC,
-                end = wheelC + Offset(cos(a) * wheelR * 0.92f, sin(a) * wheelR * 0.92f),
-                strokeWidth = 6.dp.toPx()
-            )
-        }
-        drawCircle(color = StrongroomInks.Gold, radius = wheelR * 0.20f, center = wheelC)
-        drawCircle(color = StrongroomInks.Graphite, radius = wheelR * 0.08f, center = wheelC)
-
-        // The three bolts, DRIVEN HOME: steel bars seated from the
-        // leaf's right edge into the frame, in seat order top to
-        // bottom — the swing's end state, standing.
-        for (i in 0 until 3) {
-            val by = h * (0.30f + i * 0.20f)
+            for (i in 1 until 3) {
+                val by2 = gy + gh * i / 3f
+                drawLine(
+                    color = rimLit, start = Offset(gx + 4.dp.toPx(), by2),
+                    end = Offset(gx + gw - 4.dp.toPx(), by2), strokeWidth = 3.dp.toPx()
+                )
+            }
             drawRect(
-                color = StrongroomInks.Graphite,
-                topLeft = Offset(w - inset - 34.dp.toPx(), by - 5.dp.toPx()),
-                size = Size(34.dp.toPx(), 10.dp.toPx())
+                color = pin, topLeft = Offset(gx, gy), size = Size(gw, 2.dp.toPx())
             )
-            drawRect(
-                color = rimLit,
-                topLeft = Offset(w - inset - 34.dp.toPx(), by - 5.dp.toPx()),
-                size = Size(34.dp.toPx(), 2.dp.toPx())
-            )
-        }
-
-        // The grille in the flank (bottom-start): a small lattice
-        // door of steel bars over the room's dark, its latch bar
-        // seated across when the first touch has taken.
-        val gx = 28.dp.toPx()
-        val gy = h - 22.dp.toPx() - 72.dp.toPx()
-        val gw = 92.dp.toPx()
-        val gh = 72.dp.toPx()
-        drawRect(color = StrongroomInks.Graphite, topLeft = Offset(gx, gy), size = Size(gw, gh))
-        for (i in 1 until 5) {
-            val bx = gx + gw * i / 5f
-            drawLine(
-                color = rimLit, start = Offset(bx, gy + 4.dp.toPx()),
-                end = Offset(bx, gy + gh - 4.dp.toPx()), strokeWidth = 3.dp.toPx()
-            )
-        }
-        for (i in 1 until 3) {
-            val by2 = gy + gh * i / 3f
-            drawLine(
-                color = rimLit, start = Offset(gx + 4.dp.toPx(), by2),
-                end = Offset(gx + gw - 4.dp.toPx(), by2), strokeWidth = 3.dp.toPx()
-            )
-        }
-        drawRect(
-            color = pin, topLeft = Offset(gx, gy), size = Size(gw, 2.dp.toPx())
-        )
-        if (latchSeated) {
-            // The latch, seated: one brass bar across the grille's
-            // middle — the first touch's visible fact.
-            drawRect(
-                color = StrongroomInks.Gold,
-                topLeft = Offset(gx + 6.dp.toPx(), gy + gh / 2f - 3.dp.toPx()),
-                size = Size(gw - 12.dp.toPx(), 6.dp.toPx())
-            )
+            if (latchSeated) {
+                // The latch, seated: one brass bar across the
+                // grille's middle — the first touch's visible fact.
+                drawRect(
+                    color = StrongroomInks.Gold,
+                    topLeft = Offset(gx + 6.dp.toPx(), gy + gh / 2f - 3.dp.toPx()),
+                    size = Size(gw - 12.dp.toPx(), 6.dp.toPx())
+                )
+            }
         }
     }
 }

@@ -14,7 +14,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.LiftingPlate
+import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
+import com.example.domain.StrongroomGuard
+import com.example.ui.doorway.DoorFace
+import com.example.ui.doorway.Doorway
+import com.example.ui.doorway.DoorwayState
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
@@ -30,11 +35,19 @@ import com.example.ui.`break`.Break
 import com.example.ui.`break`.BreakActions
 import com.example.ui.`break`.BreakClock
 import com.example.ui.`break`.BreakState
+import androidx.compose.ui.graphics.toArgb
 import com.example.ui.lifting.Lifting
+import com.example.ui.lifting.LiftingCeremony
 import com.example.ui.lifting.LiftingState
 import com.example.ui.lifting.PlatePileView
 import com.example.ui.lifting.StruckPlateView
-import androidx.compose.ui.graphics.toArgb
+import com.example.ui.sealed.SealedFace
+import com.example.ui.sealed.SealedFaceActions
+import com.example.ui.sealed.SealedFaceState
+import com.example.ui.signing.Signing
+import com.example.ui.signing.SigningActions
+import com.example.ui.signing.SigningState
+import com.example.ui.signing.SigningToken
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
@@ -47,6 +60,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
 import java.io.FileOutputStream
+import java.time.DayOfWeek
 import java.time.LocalTime
 
 /**
@@ -411,48 +425,31 @@ class ScreenshotHarnessTest {
         shootBreak("break-redriving.png", remainingMs = 1_500L, openPile = false)
     }
 
-    // ── THE LIFTING + PLATE STRIKE (LEAD-MOVES) — the morning's
-    // act, rendered MID-MOTION ──
-    // The ceremony is a driven clock seeded at an offset; these
-    // shots seed it INSIDE its motions, not at its rests — the
-    // handing back mid-return, the door mid-swing on its weight
-    // body, the plate mid-fall — so the return carries proof the
-    // motions are real poses of real bodies, not end-state
-    // stills. Fixture plates are fabricated standings, named as
-    // such; the waiting slips stand for four people who waited.
+    // ── THE DOORWAY (LEAD-DOORFIX) — the opening, as the phone
+    // hosts it ─────────────────────────────────────────────────
+    // The opening surface composed the way MainActivity's doorway
+    // place composes it: the Doorway in its weight(1f) reach, the
+    // signing region below at weight(1.35f) — standing EMPTY here,
+    // as the host's SigningHost renders nothing on a day with no
+    // composed day standing (the state Sarthak's phone opened in,
+    // 2026-11-03 03:35 IST) — and the drawer's shut front at the
+    // foot. One place, shot whole: this is the app's first screen.
 
-    private fun liftingPlate(iso: String): StruckPlateView =
-        StruckPlateView.fromPlateTruth(
-            LiftingPlate.PlateTruth(
-                filingDateIso = iso,
-                hoursHeldMillis = 11L * 3_600_000L + 24L * 60_000L,
-                punches = listOf(
-                    LiftingPlate.Punch(LiftingPlate.PunchKind.REACH, 3_600_000L),
-                    LiftingPlate.Punch(LiftingPlate.PunchKind.HELD, 10_800_000L),
-                    LiftingPlate.Punch(LiftingPlate.PunchKind.FLOOR, 19_800_000L),
-                    LiftingPlate.Punch(LiftingPlate.PunchKind.REACH, 30_600_000L)
-                ),
-                sealTruth = LiftingPlate.SealTruth.WHOLE,
-                crankSealBroken = false
-            )
-        )
-
-    private fun shootLifting(name: String, offsetMs: Int, waitingSlips: Int) {
-        val plate = liftingPlate("2026-08-31")
-        val pile = PlatePileView.fromPlates(
-            listOf(plate, liftingPlate("2026-08-30"), liftingPlate("2026-08-29"))
-        )
+    private fun shootDoorway(name: String) {
         val bitmap = drawShot {
-            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
                 Box(Modifier.size(412.dp, 915.dp)) {
-                    Lifting(
-                        LiftingState(
-                            plate = plate,
-                            pile = pile,
-                            waitingSlips = waitingSlips,
-                            ceremonyStartOffsetMs = offsetMs
-                        )
-                    )
+                    // The face behind the whole place, as the host
+                    // lays it (LEAD-DOORFIX): the seven-ink print,
+                    // edge to edge — the door IS the surface.
+                    DoorFace()
+                    Column(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f)) {
+                            Doorway(state = DoorwayState.AtRest)
+                        }
+                        Box(Modifier.weight(1.35f)) {}
+                        DrawerFront(onOpen = {})
+                    }
                 }
             }
         }
@@ -460,35 +457,8 @@ class ScreenshotHarnessTest {
     }
 
     @Test
-    fun lifting_handingBack_midReturn() {
-        // 1,500 ms in: the lock has tripped (600) and the four
-        // waiting slips are mid-return on their staggered bodies —
-        // handed back BEFORE the swing opens (2,680) and long
-        // before the plate is struck (5,574).
-        shootLifting("lifting-handing-back.png", offsetMs = 1_500, waitingSlips = 4)
-    }
-
-    @Test
-    fun lifting_midOpen_theDoorByWeight() {
-        // 4,200 ms in: the bolts home in their housings, the slips
-        // gone, the door MID-SWING on its driven weight body —
-        // neither shut nor at the stop.
-        shootLifting("lifting-mid-open.png", offsetMs = 4_200, waitingSlips = 4)
-    }
-
-    @Test
-    fun lifting_plateMidFall() {
-        // 120 ms after the strike (5,574): the plate is MID-FALL
-        // into the tray, dropped part-way on its landing body,
-        // still askew — not yet in the pile.
-        shootLifting("lifting-plate-mid-fall.png", offsetMs = 5_694, waitingSlips = 4)
-    }
-
-    @Test
-    fun lifting_struck_settled() {
-        // The score's end (6,300): the plate rests struck in the
-        // pile, the pile's own dip rung out, the door at its stop.
-        shootLifting("lifting-struck-settled.png", offsetMs = 6_300, waitingSlips = 4)
+    fun doorway_opening_atRest() {
+        shootDoorway("doorway-opening.png")
     }
 
     // ── THE DRAWER (BUILD-SR-41) — the kept days, rendered ─────
@@ -625,5 +595,385 @@ class ScreenshotHarnessTest {
                 actions = DrawerActions()
             )
         }
+    }
+
+    // ── THE LIFTING + THE PLATE STRIKE (BUILD-SR-40) and THE
+    // SEALED FACE'S LAWFUL VARIANTS (BUILD-SR-37), joined by
+    // TEST-SEAT — the blind spots LEAD-LIFT named: until here
+    // the harness carried no Lifting face at all and no sealed
+    // face. The three seal-truth states stand each on the
+    // surface the law gives them, honestly labelled:
+    //   · SEAL WHOLE — the sealed face standing as struck (the
+    //     face is printed ONCE at the closing and never alters
+    //     while the seal stands, so no variant of truth can
+    //     stand ON it), and the ceremony's end: the door open,
+    //     today's plate struck WHOLE on the pile.
+    //   · SEAL BROKEN — never a defaced face (damage imagery is
+    //     dead law): a broken day stands as the host derives it
+    //     — the failure face (LiftingState.isFailure follows the
+    //     plate's own truth, as loadLiftingState derives it),
+    //     its plate's seal line reading "seal broken".
+    //   · DOOR AJAR — the fallen day's failure face: the door
+    //     ajar in a dark room, the plate struck WITH THE GAP
+    //     (the bracket pair in its settled form).
+    // Ceremony shots freeze the compose test clock
+    // (mainClock.autoAdvance = false): the pose drawn is the
+    // pose at the state's own ceremony offset, never a drifted
+    // frame. Fixture plates are fabricated standings, named as
+    // such, built through the very mappings the host uses
+    // (StruckPlateView.fromStruckPlate · PlatePileView.fromPlates).
+
+    private fun liftingPlate(
+        iso: String,
+        heldMillis: Long,
+        seal: StrongroomDay.SealState,
+        kinds: List<StrongroomDay.PunchKind>,
+        crank: Boolean = false,
+        gapMillis: Long = 0L,
+        task: String? = null
+    ) = StrongroomDay.DayPlate(
+        filingDateIso = iso,
+        hoursHeldMillis = heldMillis,
+        punches = kinds.mapIndexed { i, kind ->
+            StrongroomDay.Punch(kind, (i + 1) * (heldMillis / (kinds.size + 1)))
+        },
+        sealState = seal,
+        crankSealBroken = crank,
+        bracketGapMillis = gapMillis,
+        taskLine = task
+    )
+
+    private fun plateView(plate: StrongroomDay.DayPlate) =
+        StruckPlateView.fromStruckPlate(plate, sealedAtWallMillis = 1_788_000_000_000L)
+
+    private fun wholePlateView() = plateView(
+        liftingPlate(
+            "2026-11-02", 26_400_000L, StrongroomDay.SealState.LIFTED,
+            listOf(
+                StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                StrongroomDay.PunchKind.SHOWING, StrongroomDay.PunchKind.FLOOR,
+                StrongroomDay.PunchKind.REACH
+            ),
+            task = "finish the optics one-shot"
+        )
+    )
+
+    private fun restingViews(): List<StruckPlateView> = listOf(
+        plateView(
+            liftingPlate(
+                "2026-11-01", 21_600_000L, StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                    StrongroomDay.PunchKind.FLOOR
+                ),
+                crank = true
+            )
+        ),
+        plateView(
+            liftingPlate(
+                "2026-10-31", 19_800_000L, StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.HELD, StrongroomDay.PunchKind.REACH,
+                    StrongroomDay.PunchKind.FLOOR, StrongroomDay.PunchKind.FLOOR
+                )
+            )
+        ),
+        plateView(
+            liftingPlate(
+                "2026-10-30", 2_520_000L, StrongroomDay.SealState.BROKEN,
+                listOf(
+                    StrongroomDay.PunchKind.FLOOR, StrongroomDay.PunchKind.HELD
+                )
+            )
+        )
+    )
+
+    private fun shootLifting(name: String, state: LiftingState) {
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val bitmap = drawShot {
+                StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                    Box(Modifier.size(412.dp, 915.dp)) {
+                        Lifting(state = state)
+                    }
+                }
+            }
+            writeShot(name, bitmap)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    private fun ceremonyState(offsetMs: Int): LiftingState {
+        val whole = wholePlateView()
+        return LiftingState(
+            plate = whole,
+            pile = PlatePileView.fromPlates(listOf(whole) + restingViews()),
+            isFailure = false,
+            ceremonyStartOffsetMs = offsetMs
+        )
+    }
+
+    @Test
+    fun lifting_doorMidOpen_byWeight() {
+        // Half the swing-open's travel on the ceremony's own
+        // clock: bolts withdrawn, the door mid-travel BY WEIGHT,
+        // the plate not yet struck.
+        val midOpen = LiftingCeremony.SwingOpenMs +
+            (LiftingCeremony.StrikeMs - LiftingCeremony.SwingOpenMs) / 2
+        shootLifting("lifting-door-mid-open.png", ceremonyState(midOpen))
+    }
+
+    @Test
+    fun lifting_plateStrike_theLanding() {
+        // 250 ms past the strike: the door's travel has met its
+        // stop, the day is struck, the brass is mid-landing into
+        // the tray (PlateLanding's own fraction at this offset).
+        shootLifting(
+            "lifting-plate-strike.png",
+            ceremonyState(LiftingCeremony.StrikeMs + 250)
+        )
+    }
+
+    @Test
+    fun lifting_platePile_theDayStruckWhole() {
+        // The score's end: the door rests open, today's plate
+        // stands landed on the pile — seal line "seal whole".
+        shootLifting(
+            "lifting-plate-pile.png",
+            ceremonyState(LiftingCeremony.ScoreEndMs)
+        )
+    }
+
+    @Test
+    fun lifting_handingBack_midReturn() {
+        // LEAD-MOVES: THE HANDING BACK, mid-return. 1,500 ms into
+        // the ceremony — the lock tripped at 600 and four people
+        // who waited stand at the threshold as wordless brass
+        // slips, each mid-travel into the threshold's return slot
+        // on its own staggered body (HandingBackMotion): handed
+        // back BEFORE the swing opens (2,680) and long before
+        // the plate is struck. No names, no printed count — the
+        // slips are the presence; the names live at the Drawer.
+        val whole = wholePlateView()
+        shootLifting(
+            "lifting-handing-back.png",
+            LiftingState(
+                plate = whole,
+                pile = PlatePileView.fromPlates(listOf(whole) + restingViews()),
+                isFailure = false,
+                waitingSlips = 4,
+                ceremonyStartOffsetMs = 1_500
+            )
+        )
+    }
+
+    @Test
+    fun lifting_failureFace_sealBroken() {
+        val broken = plateView(
+            liftingPlate(
+                "2026-11-02", 11_700_000L, StrongroomDay.SealState.BROKEN,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.FLOOR,
+                    StrongroomDay.PunchKind.FLOOR
+                )
+            )
+        )
+        shootLifting(
+            "lifting-failure-seal-broken.png",
+            LiftingState(
+                plate = broken,
+                pile = PlatePileView.fromPlates(listOf(broken) + restingViews().take(2)),
+                isFailure = broken.isFailure,
+                ceremonyStartOffsetMs = LiftingCeremony.ScoreEndMs
+            )
+        )
+    }
+
+    @Test
+    fun lifting_failureFace_ajarFallenDay() {
+        val ajar = plateView(
+            liftingPlate(
+                "2026-11-02", 18_120_000L, StrongroomDay.SealState.AJAR,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                    StrongroomDay.PunchKind.FLOOR
+                ),
+                gapMillis = 5_400_000L
+            )
+        )
+        shootLifting(
+            "lifting-failure-ajar.png",
+            LiftingState(
+                plate = ajar,
+                pile = PlatePileView.fromPlates(listOf(ajar) + restingViews().take(1)),
+                isFailure = ajar.isFailure,
+                ceremonyStartOffsetMs = LiftingCeremony.ScoreEndMs
+            )
+        )
+    }
+
+    // ── THE SEALED FACE (BUILD-SR-37) — the face standing ──────
+    // The face stands ONLY from a standing seal
+    // (SealedFaceState.standing on a sealed day's record), in
+    // its own sealed light, which the composable itself
+    // provides. Two lawful standings: the printings cut whole
+    // (his sentence engraved, his door-word set), and the kept
+    // places standing (sentence and door-word both unset — the
+    // blanks are the form, never placeholders).
+
+    private fun sealedSigning(sentence: String?): StrongroomDay.SigningRecord =
+        StrongroomDay.SigningRecord(
+            filingDateIso = "2026-08-31",
+            lockedPackages = emptySet(),
+            allowedPackages = labels.keys.toList(),
+            liftingTime = LocalTime.of(20, 0),
+            sentence = sentence,
+            breakLengthMinutes = 30,
+            breakFiresAtOffsetMillis = -1L,
+            allowanceMinutes = 30,
+            gaps = emptyList()
+        )
+
+    private fun shootSealedFace(name: String, state: SealedFaceState) {
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val bitmap = drawShot {
+                StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                    Box(Modifier.size(412.dp, 915.dp)) {
+                        SealedFace(
+                            state = state,
+                            actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {})
+                        )
+                    }
+                }
+            }
+            writeShot(name, bitmap)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun sealedFace_standing_sealWhole() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        shootSealedFace("sealed-face-standing.png", state)
+    }
+
+    @Test
+    fun sealedFace_keptPlaces() {
+        val state = SealedFaceState.standing(sealedSigning(null), doorWord = null)!!
+        shootSealedFace("sealed-face-kept-places.png", state)
+    }
+
+    // ── THE DOORWAY, POPULATED · THE SIGNING (METHODS-SEAT,
+    // 2026-11-03) — the two standings the harness still lacked:
+    // the doorway with its day standing in it (TEST-SEAT's shot
+    // carries the opening at rest; this one carries the sheet on
+    // the press, the waiting slip, and yesterday's struck plate
+    // at the press), and the signing table itself — the last
+    // face of the day with no shot at all. Same contract as
+    // every face above: fabricated standings, the harness's own
+    // gate, one PNG per face.
+
+    /** Tomorrow, standing composed from a fabricated week's
+     *  standing order (the P1 fixture's shape): every weekday
+     *  ordinary, the template carrying the harness labels into
+     *  the vault, a gym gap, and a task in his own words. */
+    private fun composedDay(): StrongroomComposition.ComposedDay {
+        val template = StrongroomComposition.DayTemplate(
+            lockedPackages = labels.keys.toSet(),
+            liftingTime = LocalTime.of(6, 0),
+            breakLengthMinutes = 30,
+            breakFiresAtOffsetMillis = 7_200_000L,
+            allowanceMinutes = 30,
+            gaps = listOf(
+                StrongroomDay.ShapedGap(
+                    StrongroomDay.GapKind.GYM, 7_200_000L, 3_600_000L
+                )
+            ),
+            taskLine = "finish the optics one-shot"
+        )
+        val order = StrongroomComposition.WeekStandingOrder(
+            shapeByWeekday = DayOfWeek.values().associateWith {
+                StrongroomComposition.DayShape.ORDINARY
+            },
+            templateByShape = mapOf(
+                StrongroomComposition.DayShape.ORDINARY to template
+            )
+        )
+        // 2026-11-03 is a Tuesday (the P1 fixture's own date).
+        return StrongroomComposition.compose(order, "2026-11-03")
+    }
+
+    /** A whole struck day, as the plate tells it: three graded
+     *  punches, the seal whole, the crank seal unbroken. */
+    private fun plateTruth(): LiftingPlate.PlateTruth = LiftingPlate.PlateTruth(
+        filingDateIso = "2026-11-02",
+        hoursHeldMillis = 6L * 3_600_000L,
+        punches = listOf(
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.REACH,
+                atOffsetMillis = 900_000L, packageName = "app.whatsapp"
+            ),
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.HELD,
+                atOffsetMillis = 1_800_000L, packageName = "app.youtube"
+            ),
+            LiftingPlate.Punch(
+                kind = LiftingPlate.PunchKind.FLOOR,
+                atOffsetMillis = 2_700_000L, packageName = "app.chrome"
+            )
+        ),
+        sealTruth = LiftingPlate.SealTruth.WHOLE,
+        crankSealBroken = false
+    )
+
+    @Test
+    fun doorway_theDayStanding() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Doorway(
+                        state = DoorwayState.fromFacts(
+                            composedDay = composedDay(),
+                            waitingSlipPresent = true,
+                            plate = plateTruth()
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("doorway-day-standing.png", bitmap)
+    }
+
+    @Test
+    fun signing_theTableStanding() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = SigningState(
+                            day = composedDay(),
+                            tokens = labels.map { (pkg, label) ->
+                                SigningToken(pkg, label)
+                            },
+                            guard = StrongroomGuard.GuardState(
+                                allowanceMinutes = 30
+                            )
+                        ),
+                        actions = SigningActions(
+                            onAmend = {},
+                            onAllowanceMove = {},
+                            onSignature = {}
+                        )
+                    )
+                }
+            }
+        }
+        writeShot("signing.png", bitmap)
     }
 }
