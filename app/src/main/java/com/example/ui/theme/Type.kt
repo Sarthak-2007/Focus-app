@@ -185,12 +185,13 @@ object MonolithType {
         "One plain notification on the plain lock screen, OS-presented size and tracking; " +
         "the type law governs form, not spacing. KB10 NO VERDICT.")
 
-    /** The notification's wording, RULED at type-system Amendment A-6.2
-     *  ("Locked until the hour" — FIT-S5-2, concurred; this supersedes
-     *  Audit A G-6's 'unfixed, build-chosen' framing on the record).
-     *  The notification itself is built by P8; the words live here so no
-     *  lane re-chooses them. KB10 NO VERDICT stands over the context. */
-    const val Hld1Wording: String = "Locked until the hour"
+    // The notification's wording (RULED at type-system Amendment
+    // A-6.2: "Locked until the hour") — the Hld1Wording mirror is
+    // RETIRED (BUILD-SR-23, step 7, named cure): the line lives
+    // only in the single copy source (copy_10_2_notification in
+    // res/values/strongroom_strings.xml), where P8's poster reads
+    // it. The type system keeps the HLD-1 FORM (above); it no
+    // longer keeps a second literal home for the words.
 }
 
 // =========================================================================

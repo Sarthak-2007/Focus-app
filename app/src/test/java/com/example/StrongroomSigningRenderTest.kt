@@ -12,7 +12,7 @@ import com.example.ui.strongroom.CompositionDraft
 import com.example.ui.strongroom.SigningAppOption
 import com.example.ui.strongroom.SigningResult
 import com.example.ui.strongroom.SigningScreen
-import com.example.ui.strongroom.SigningWords
+import com.example.ui.strongroom.StrongroomCopy
 import com.example.ui.theme.MyApplicationTheme
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
@@ -68,7 +68,7 @@ class StrongroomSigningRenderTest {
         // The composition: purpose + telling stand; no spent-day
         // telling on an unspent day; leaving is still possible.
         composeRule.onNodeWithTag("signing_purpose").assertIsDisplayed()
-        composeRule.onNodeWithText(SigningWords.PURPOSE_LINE).assertExists()
+        composeRule.onNodeWithText(composeRule.activity.getString(StrongroomCopy.Purpose)).assertExists()
         composeRule.onNodeWithTag("signing_telling").assertExists()
         composeRule.onNodeWithTag("signing_codes_wait").assertDoesNotExist()
         composeRule.onNodeWithTag("signing_leave").assertExists()
@@ -92,7 +92,7 @@ class StrongroomSigningRenderTest {
         // The clause stands here, at the signature — and the
         // moment the spinning begins, leaving is gone.
         composeRule.onNodeWithTag("signing_clause").assertIsDisplayed()
-        composeRule.onNodeWithText(SigningWords.SIGNING_CLAUSE).assertExists()
+        composeRule.onNodeWithText(composeRule.activity.getString(StrongroomCopy.Clause)).assertExists()
         composeRule.onNodeWithTag("signing_leave").assertExists()
         // A-16 (BUILD-SR-22): the combination is worked through
         // the great wheel — a drag around its centre turns it;
@@ -143,6 +143,6 @@ class StrongroomSigningRenderTest {
             }
         }
         composeRule.onNodeWithTag("signing_codes_wait").assertIsDisplayed()
-        composeRule.onNodeWithText(SigningWords.CODES_WAIT_LINE).assertExists()
+        composeRule.onNodeWithText(composeRule.activity.getString(StrongroomCopy.CodesWaitTonight)).assertExists()
     }
 }

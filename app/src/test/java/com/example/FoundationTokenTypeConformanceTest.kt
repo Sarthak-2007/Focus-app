@@ -190,7 +190,7 @@ class FoundationTokenTypeConformanceTest {
         assertEquals("Anonymous Pro", MonolithType.Plt2.face)
         assertEquals("Atkinson Hyperlegible", MonolithType.Hld1.face)
         assertEquals(400, MonolithType.Hld1.weight)
-        assertEquals("Locked until the hour", MonolithType.Hld1Wording)
+        assertEquals("Locked until the hour", deckString("copy_10_2_notification")) // RE-POINTED (BUILD-SR-23): Hld1Wording mirror retired; the ruled line is pinned at the single copy source
         // PRT-5 the citation (A-6.6): Anonymous Pro 700, the 48pt
         // size-class ENG-1 binds to — and ENG-1 itself stands as
         // the one consumable 48pt style.
@@ -207,4 +207,12 @@ class FoundationTokenTypeConformanceTest {
             .toSet()
         assertEquals(setOf("Plt1", "Plt2", "Hld1", "Prt5"), descriptors)
     }
+}
+
+// The single copy source, read as the file the app ships (BUILD-SR-23 re-point).
+private fun deckString(key: String): String {
+    val xml = java.io.File("src/main/res/values/strongroom_strings.xml").readText()
+    val match = Regex("<string name=\"" + key + "\">(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
+        .find(xml) ?: error("deck key missing from the single source: $key")
+    return match.groupValues[1]
 }

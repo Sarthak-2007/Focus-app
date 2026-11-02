@@ -300,50 +300,15 @@ private fun SealMark(truth: LiftingPlate.PlateTruth) {
 }
 
 /**
- * THE AJAR FACE (A-12 / B-11 / E-6) — what a fallen day shows:
- * the sealed face's door standing ajar in a dark room, the seal
- * gone and NOTHING added. The door is the kept violet, swung a
- * crack on its hinge; behind the crack, darkness only — no
- * message, no apology, no summary. The failure's telling lives
- * on its plate (the bracket strike), never on this face.
+ * THE AJAR FACE — RETIRED (BUILD-SR-23, step 7, named cure):
+ * P6's placeholder ajar door stood here until the composition
+ * landed. Its ground is fully covered by P3's seal-gone form
+ * (B-11 / R7-1, BUILD-SR-14): the production host
+ * (StrongroomFlow's LiftingPlace) supplies failureFace on every
+ * fallen day, so the placeholder's fallback branch was
+ * unreachable, and the only test reference to it asserted its
+ * ABSENCE when the form is supplied. Removed whole; the fallen
+ * day's testimony is the seal-gone face and its bracket-struck
+ * plate, never a second face.
  */
-@Composable
-fun AjarDoorFace(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(420.dp)
-            .background(PlateDarkRoom)
-            .testTag("ajar_face")
-    ) {
-        // The crack of darkness the ajar door stands open on —
-        // wider at the swinging edge, nothing behind it.
-        Canvas(Modifier.matchParentSize()) {
-            val doorLeft = size.width * 0.16f
-            val doorRight = size.width * 0.80f
-            val gap = Path().apply {
-                moveTo(doorRight, size.height * 0.06f)
-                lineTo(doorRight + 16f, size.height * 0.10f)
-                lineTo(doorRight + 16f, size.height * 0.94f)
-                lineTo(doorRight, size.height * 0.98f)
-                close()
-            }
-            drawPath(gap, color = PlateDarkRoom)
-            // The door itself: kept violet, ajar on its left hinge.
-            drawRect(
-                color = PlateDoorGround,
-                topLeft = Offset(doorLeft, size.height * 0.06f),
-                size = androidx.compose.ui.geometry.Size(
-                    doorRight - doorLeft, size.height * 0.92f
-                )
-            )
-            // Its gold pinstripe, swung with it.
-            drawLine(
-                color = PlateInkGold.copy(alpha = 0.7f),
-                start = Offset(doorLeft + 22f, size.height * 0.06f),
-                end = Offset(doorLeft + 22f, size.height * 0.98f),
-                strokeWidth = 2.5f
-            )
-        }
-    }
-}
+

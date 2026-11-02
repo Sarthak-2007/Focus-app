@@ -118,6 +118,17 @@ class StrongroomCompositionP1Test {
             StrongroomDay.PURPOSE_SENTENCE
         )
         assertEquals(23, StrongroomDay.PURPOSE_SENTENCE.split(" ").size)
+        // KEPT, BOUND (BUILD-SR-23, step 7, named cure): the
+        // domain's PURPOSE_SENTENCE is the record's carried-content
+        // default — data, not display copy — and the domain layer
+        // cannot read Android resources, so the constant stays;
+        // this assertion binds it to the single copy source so
+        // any drift between the carried default and the deck's
+        // purpose line fails here, by name.
+        assertEquals(
+            deckString("copy_1_5_purpose"),
+            StrongroomDay.PURPOSE_SENTENCE
+        )
         val composed = StrongroomComposition.compose(order, "2026-11-03")
         assertEquals(StrongroomDay.PURPOSE_SENTENCE, composed.record.purposeSentence)
     }
@@ -132,4 +143,12 @@ class StrongroomCompositionP1Test {
         }
         assertTrue(broken.isFailure)
     }
+}
+
+// The single copy source, read as the file the app ships (BUILD-SR-23 binding).
+private fun deckString(key: String): String {
+    val xml = java.io.File("src/main/res/values/strongroom_strings.xml").readText()
+    val match = Regex("<string name=\"" + key + "\">(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
+        .find(xml) ?: error("deck key missing from the single source: $key")
+    return match.groupValues[1]
 }

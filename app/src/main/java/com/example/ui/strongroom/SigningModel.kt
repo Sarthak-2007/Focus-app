@@ -113,30 +113,16 @@ data class SigningResult(
     val breakMinutes: Int
 )
 
-/** The signing's standing words — verbatim, as filed. */
-object SigningWords {
-    /** Ledger B-1 / Stage 5 TI-01: the purpose sentence, at the
-     *  signing, in its fixed 23 words. */
-    const val PURPOSE_LINE =
-        "What I settle while I am strong, this holds while I am not. " +
-            "It reopens nothing. At night it tells me the truth."
-
-    /** Ledger B-19: the door's telling — stands at every signing,
-     *  told once, quiet, never announced. */
-    const val TELLING_LINE =
-        "You can close this room yourself, on any calm evening, " +
-            "in any month, and it will read as a kept account."
-
-    /** Ledger B-4: the spent-day telling, in plain words,
-     *  verbatim — the signing surface itself says it, before the
-     *  seal, on a spent day and no other. */
-    const val CODES_WAIT_LINE = "codes wait tonight"
-
-    /** Ledger B-5: the signing clause — a term of the signing,
-     *  spoken whole only at the signing; never on the face,
-     *  never on the plate. */
-    const val SIGNING_CLAUSE = "do not listen to me after this"
-}
+/**
+ * THE SIGNING'S STANDING WORDS — the SigningWords mirror is
+ * RETIRED (BUILD-SR-23, step 7, named cure): the purpose, the
+ * telling, the codes-wait line, and the clause live ONLY in the
+ * single copy source (res/values/strongroom_strings.xml, via the
+ * StrongroomCopy facade), and every surface reads them there
+ * (BUILD-SR-17, completed by BUILD-SR-16/23's compositions). No
+ * second literal home stands in production code; the pinning
+ * tests were re-pointed at the source in the same act.
+ */
 
 /**
  * The flow's state — immutable; every act returns the next state.

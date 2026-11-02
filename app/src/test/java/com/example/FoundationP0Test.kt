@@ -158,7 +158,7 @@ class FoundationP0Test {
         assertEquals("Atkinson Hyperlegible", MonolithType.Hld1.face)
         assertEquals(400, MonolithType.Hld1.weight)
         // The notification's wording is RULED (type-system A-6.2).
-        assertEquals("Locked until the hour", MonolithType.Hld1Wording)
+        assertEquals("Locked until the hour", deckString("copy_10_2_notification")) // RE-POINTED (BUILD-SR-23): Hld1Wording mirror retired; the ruled line is pinned at the single copy source
         // FRM-1: Atkinson 400 at the SCR-2 size class, size equivalence only.
         // Its tracking is set once at the completed-form value (FL-2/CF-1):
         // SCR-2's +0.01em at 16sp = 0.16sp (TYPE-SR-5 cure D-03).
@@ -253,4 +253,12 @@ class FoundationP0Test {
         assertEquals(seal.map { it.atMs }, lift.map { it.atMs })
         assertEquals(seal.map { it.weight }, lift.map { it.weight })
     }
+}
+
+// The single copy source, read as the file the app ships (BUILD-SR-23 re-point).
+private fun deckString(key: String): String {
+    val xml = java.io.File("src/main/res/values/strongroom_strings.xml").readText()
+    val match = Regex("<string name=\"" + key + "\">(.*?)</string>", RegexOption.DOT_MATCHES_ALL)
+        .find(xml) ?: error("deck key missing from the single source: $key")
+    return match.groupValues[1]
 }

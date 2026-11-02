@@ -2,7 +2,6 @@ package com.example
 
 import androidx.compose.ui.graphics.Color
 import com.example.domain.LiftingPlate
-import com.example.ui.strongroom.AjarDoorFace
 import com.example.ui.strongroom.DayPlateView
 import com.example.ui.strongroom.LiftingScreen
 import com.example.ui.strongroom.PlatePileScreen

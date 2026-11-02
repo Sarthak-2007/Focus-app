@@ -43,7 +43,6 @@ import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomRouting
-import com.example.service.SessionNotification
 import com.example.service.StrongroomEngineBridge
 import com.example.service.StrongroomLift
 import com.example.service.TactileSoundEngine
@@ -298,7 +297,12 @@ fun StrongroomFlowHost(
                             StrongroomEngineBridge.activateSeal(appContext, todayIso)
                         }
                         if (span != null) {
-                            SessionNotification.beginSession(appContext)
+                            // R-7 DISCHARGED (BUILD-SR-23, step 7):
+                            // this host's SessionNotification
+                            // beginSession is STRUCK — BUILD-SR-14's
+                            // bridge wiring (PR #856, step 2) fires
+                            // beginSession inside activateSeal
+                            // itself, and it is the surviving home.
                             engine.playSealThrow()
                             place = StrongroomFlowModel.Place.SEALED_FACE
                         }
@@ -817,9 +821,30 @@ private fun LiftingPlace(
     }
     var settled by remember(row.filingDateIso) { mutableStateOf(false) }
     val failure = row.state != StrongroomDay.SealState.LIFTED.name
+    // The failureFace supply (BUILD-SR-23, step 7 — the act
+    // BUILD-SR-14 named as P9's composition act): on a fallen day
+    // the lifting presents P3's seal-gone form, struck from the
+    // day's own recorded facts — the signing's lifting hour and
+    // sentence carried unchanged, the bracket's standing hour =
+    // the seal's striking wall hour, its fallen hour = the hour
+    // of this presenting check (the same two recorded instants
+    // the plate supply below stands on; bounds from recorded
+    // facts, never a check log).
+    val failureFace = if (failure) {
+        val signing = row.toSigningRecord()
+        SealedFaceState.sealGone(
+            liftingHour = StrongroomFlowModel.hourText(signing.liftingTime),
+            sentence = signing.sentenceOrKeptPlace,
+            standingHour = StrongroomFlowModel.hourText(row.sealedAtWallMillis),
+            fallenHour = StrongroomFlowModel.hourText(System.currentTimeMillis())
+        )
+    } else null
     LaunchedEffect(row.filingDateIso) {
-        // The one notification's life ends at the lifting (E-4).
-        SessionNotification.cancel(context.applicationContext)
+        // R-7 DISCHARGED (BUILD-SR-23, step 7): the host's
+        // SessionNotification.cancel is STRUCK — the bridge's
+        // onFiringWake cancels at the lifting (PR #856), the
+        // surviving home (E-4 stands: the one line's life ends at
+        // the lifting, fired by the bridge, not the host).
         plate = withContext(Dispatchers.IO) {
             val dayPlate = store.strikePlate(
                 row.filingDateIso,
@@ -841,7 +866,13 @@ private fun LiftingPlace(
                 plate = plate,
                 handingBack = LiftingPlate.HandingBack.prepare(emptyList()),
                 failure = failure,
-                onHandedBack = { SessionNotification.cancel(context.applicationContext) },
+                failureFace = failureFace,
+                onHandedBack = {
+                    // The handing-back precondition stands; its
+                    // former SessionNotification.cancel arm is
+                    // STRUCK under R-7 (the bridge's cancel at the
+                    // lifting is the surviving home).
+                },
                 onBoltWithdrawn = { index ->
                     StrongroomLift.BOLT_VOICES.getOrNull(index)?.let { voice ->
                         engine.playSeatKnock(

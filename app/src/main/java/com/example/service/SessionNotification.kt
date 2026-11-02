@@ -24,8 +24,9 @@ import com.example.R
  *
  * THE WORDING IS RULED, NOT CHOSEN HERE. Stage 5's type system,
  * Amendment A-6.2, rules it: "Locked until the hour" (FIT-S5-2,
- * concurred; P0 carries the same words as `MonolithType.Hld1Wording`
- * on agent/build-sr-foundation). That ruling supersedes Audit A
+ * concurred; the words now live only in the single copy source
+ * (copy_10_2_notification) since the Hld1Wording/WORDING mirrors
+ * retired at composition (BUILD-SR-23, step 7). That ruling supersedes Audit A
  * G-6's earlier "unfixed, build-chosen" framing on the record
  * (AL-0056 — the record governs; BUILD-SR-6's opening line flags the
  * supersession by name). The line carries no numbers at all — the
@@ -78,10 +79,11 @@ object SessionNotificationSpec {
 
     const val CHANNEL_ID: String = "monolith_session_state"
 
-    /** The ruled line — Stage 5 Amendment A-6.2. Must read exactly
-     *  as P0's `MonolithType.Hld1Wording` when the lanes compose;
-     *  the P8 test pins the literal so a drift fails the build. */
-    const val WORDING: String = "Locked until the hour"
+    // The ruled line — Stage 5 Amendment A-6.2 ("Locked until
+    // the hour"): the WORDING mirror is RETIRED (BUILD-SR-23,
+    // step 7, named cure). The poster below reads the line from
+    // the single copy source (R.string.copy_10_2_notification);
+    // the P8 test pins THE SOURCE so a drift fails the build.
 
     /** One text field only (Spec 1 §4): the line is the content
      *  text; a content title is NEVER set. */

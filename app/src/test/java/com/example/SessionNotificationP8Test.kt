@@ -12,18 +12,31 @@ import org.junit.Test
  * P8b — THE ONE NOTIFICATION (service/SessionNotification.kt):
  *
  *  - ONE card: a single fixed ID, updated in place.
- *  - THE RULED LINE: the wording is Stage 5 Amendment A-6.2's —
- *    the exact literal P0 carries as Hld1Wording — with no digit
- *    anywhere in it (the notification carries no numbers).
+ *  - THE RULED LINE: the wording is Stage 5 Amendment A-6.2's,
+ *    carried in the single copy source (copy_10_2_notification)
+ *    since the mirrors retired — with no digit anywhere in it
+ *    (the notification carries no numbers).
  *  - IT NEVER PROMOTES ITSELF: low importance, low priority,
  *    silent, ongoing while the seal stands, no chronometer, no
  *    badge, no actions.
  */
 class SessionNotificationP8Test {
 
+    // RE-POINTED (BUILD-SR-23, step 7): the WORDING mirror is
+    // retired; the ruled line lives only in the single copy
+    // source, which the poster reads. These tests pin THE SOURCE.
+    private fun deckString(key: String): String {
+        val xml = java.io.File("src/main/res/values/strongroom_strings.xml").readText()
+        val match = Regex(
+            "<string name=\"" + key + "\">(.*?)</string>",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(xml) ?: error("deck key missing from the single source: $key")
+        return match.groupValues[1]
+    }
+
     @Test
     fun wording_isTheRuledLine_exactly() {
-        assertEquals("Locked until the hour", SessionNotificationSpec.WORDING)
+        assertEquals("Locked until the hour", deckString("copy_10_2_notification"))
     }
 
     @Test
@@ -44,9 +57,9 @@ class SessionNotificationP8Test {
     fun wording_carriesNoNumber() {
         assertFalse(
             "the one plain line carries no digit — FIG-8 claims no figure for this context",
-            SessionNotificationSpec.WORDING.any { it.isDigit() }
+            deckString("copy_10_2_notification").any { it.isDigit() }
         )
-        assertFalse(SessionNotificationSpec.WORDING.contains("%"))
+        assertFalse(deckString("copy_10_2_notification").contains("%"))
     }
 
     @Test

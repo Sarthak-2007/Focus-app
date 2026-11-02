@@ -5,7 +5,6 @@ import com.example.ui.strongroom.SigningAppOption
 import com.example.ui.strongroom.SigningResult
 import com.example.ui.strongroom.SigningState
 import com.example.ui.strongroom.SigningStep
-import com.example.ui.strongroom.SigningWords
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -216,19 +215,34 @@ class StrongroomSigningModelTest {
         assertEquals(45, s.result?.breakMinutes)
     }
 
+    // RE-POINTED (BUILD-SR-23, step 7): the SigningWords mirror
+    // is retired; the signing's standing words live only in the
+    // single copy source. This test now pins THE SOURCE ITSELF
+    // (res/values/strongroom_strings.xml, read as the file the
+    // app ships) — the deck's lines verbatim, the purpose at its
+    // fixed 23 words.
+    private fun deckString(key: String): String {
+        val xml = java.io.File("src/main/res/values/strongroom_strings.xml").readText()
+        val match = Regex(
+            "<string name=\"" + key + "\">(.*?)</string>",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(xml) ?: error("deck key missing from the single source: $key")
+        return match.groupValues[1]
+    }
+
     @Test
     fun standingWords_areVerbatimAsFiled() {
         assertEquals(
             "You can close this room yourself, on any calm evening, " +
                 "in any month, and it will read as a kept account.",
-            SigningWords.TELLING_LINE
+            deckString("copy_1_8_telling")
         )
-        assertEquals("codes wait tonight", SigningWords.CODES_WAIT_LINE)
-        assertEquals("do not listen to me after this", SigningWords.SIGNING_CLAUSE)
+        assertEquals("codes wait tonight", deckString("copy_1_6_codes_wait_tonight"))
+        assertEquals("do not listen to me after this", deckString("copy_1_7_clause"))
         // B-1: the purpose sentence, in its fixed 23 words.
-        assertEquals(23, SigningWords.PURPOSE_LINE.split(" ").size)
+        assertEquals(23, deckString("copy_1_5_purpose").split(" ").size)
         assertTrue(
-            SigningWords.PURPOSE_LINE.startsWith("What I settle while I am strong")
+            deckString("copy_1_5_purpose").startsWith("What I settle while I am strong")
         )
     }
 
