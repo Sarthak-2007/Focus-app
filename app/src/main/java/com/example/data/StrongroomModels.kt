@@ -52,6 +52,14 @@ data class StrongroomDayEntity(
     val sealedBootCount: Int = -1,
     val spanDurationMillis: Long = 0L,
     val state: String = STATE_SIGNED,
+    /** The composition's day-shape (a StrongroomComposition
+     *  .DayShape name) and whether an evening signing amended the
+     *  composed day (a record fact; it gates nothing). */
+    val dayShape: String = "ORDINARY",
+    val amendedBySigning: Boolean = false,
+    /** The task line (B-3): his own words, verbatim, attached to
+     *  this day's sealing. */
+    val taskLine: String? = null,
     val struckHeldMillis: Long = 0L,
     val struckBracketGapMillis: Long = 0L,
     val crankSealBroken: Boolean = false,
@@ -60,8 +68,13 @@ data class StrongroomDayEntity(
     val carriedFromSessionId: Int = -1
 ) {
     companion object {
+        const val STATE_COMPOSED = "COMPOSED"
         const val STATE_SIGNED = "SIGNED"
         const val STATE_SEALED = "SEALED"
+
+        /** States in which the plate already stands struck (B-14:
+         *  struck once, never re-struck). */
+        val STRUCK_STATES: Set<String> = setOf("LIFTED", "BROKEN", "AJAR")
     }
 }
 
@@ -137,7 +150,10 @@ object StrongroomEncoding {
     }
 }
 
-fun StrongroomDay.SigningRecord.toEntity(): StrongroomDayEntity = StrongroomDayEntity(
+fun StrongroomDay.SigningRecord.toEntity(
+    dayShape: String = "ORDINARY",
+    amendedBySigning: Boolean = false
+): StrongroomDayEntity = StrongroomDayEntity(
     filingDateIso = filingDateIso,
     lockedPackagesCsv = StrongroomEncoding.encodePackages(lockedPackages),
     liftingHour = liftingTime.hour,
@@ -146,7 +162,10 @@ fun StrongroomDay.SigningRecord.toEntity(): StrongroomDayEntity = StrongroomDayE
     breakLengthMinutes = breakLengthMinutes,
     breakFiresAtOffsetMillis = breakFiresAtOffsetMillis,
     allowanceTotalMinutes = allowanceMinutes,
-    gapsEncoded = StrongroomEncoding.encodeGaps(gaps)
+    gapsEncoded = StrongroomEncoding.encodeGaps(gaps),
+    dayShape = dayShape,
+    amendedBySigning = amendedBySigning,
+    taskLine = taskLine
 )
 
 fun StrongroomDayEntity.toSigningRecord(): StrongroomDay.SigningRecord = StrongroomDay.SigningRecord(
@@ -157,7 +176,8 @@ fun StrongroomDayEntity.toSigningRecord(): StrongroomDay.SigningRecord = Strongr
     breakLengthMinutes = breakLengthMinutes,
     breakFiresAtOffsetMillis = breakFiresAtOffsetMillis,
     allowanceMinutes = allowanceTotalMinutes,
-    gaps = StrongroomEncoding.decodeGaps(gapsEncoded)
+    gaps = StrongroomEncoding.decodeGaps(gapsEncoded),
+    taskLine = taskLine
 )
 
 /** The span of a sealed day row; null while the day is only signed. */

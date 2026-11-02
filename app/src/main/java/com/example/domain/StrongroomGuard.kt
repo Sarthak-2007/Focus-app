@@ -11,6 +11,13 @@ package com.example.domain
  *     once the day's purse is spent, loosening controls sit beyond
  *     the hard stop (a raise cannot even be SCHEDULED from inside
  *     a spent day — the control is unreachable, not merely delayed).
+ *     FX-29 / OBJ-T7-4 — UNRESOLVED, carried by name: whether a
+ *     raise also travels the two-signature road (ledger B-6: a
+ *     loosening lands at the first day-start after the SECOND
+ *     signature) is Ren's open line. This machine applies D-1 as
+ *     filed (raise effective next day-start) and does NOT settle
+ *     the interaction; no filing from this lane may claim it
+ *     settled.
  *  2. SLOW OFF — off takes effect at the next day-start; on is
  *     instant; NO off exists while a sealed block is active (the
  *     request is refused, not queued — there is no off to queue).

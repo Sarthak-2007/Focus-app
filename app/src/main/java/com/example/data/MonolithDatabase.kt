@@ -576,6 +576,9 @@ abstract class MonolithDatabase : RoomDatabase() {
                         "`sealedBootCount` INTEGER NOT NULL, " +
                         "`spanDurationMillis` INTEGER NOT NULL, " +
                         "`state` TEXT NOT NULL, " +
+                        "`dayShape` TEXT NOT NULL, " +
+                        "`amendedBySigning` INTEGER NOT NULL, " +
+                        "`taskLine` TEXT, " +
                         "`struckHeldMillis` INTEGER NOT NULL, " +
                         "`struckBracketGapMillis` INTEGER NOT NULL, " +
                         "`crankSealBroken` INTEGER NOT NULL, " +

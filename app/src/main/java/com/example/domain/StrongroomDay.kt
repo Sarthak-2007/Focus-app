@@ -14,16 +14,26 @@ import java.time.ZoneId
  * The substance is Audit A §2 + Stage 2's signed state material,
  * carried verbatim:
  *
- *  - The SIGNING (evening, calm hour) locks tomorrow: the locked set,
- *    the lifting hour, the sentence (or its kept place), the day's
- *    break priced at signing.
- *  - The SEAL spans the whole signed day and is an ELAPSED-TIME span
- *    from the sealing: the span's length is fixed ONCE at sealing and
- *    only elapsed (monotonic) time advances it — the wall clock
- *    cannot move the lifting hour after the seal.
- *  - Meditation / gym / sadhana / meals are SHAPED GAPS INSIDE the
- *    seal — never openings, never in the locked set. A gap carries
- *    no package name; by type it cannot be a locked app.
+ *  - SIGNATURE ≠ SWING (refit Floor 1, Beat 1/2 + the Stage 2
+ *    day-map, governing over Audit A §2's compression): the
+ *    SIGNATURE is the evening's act (choose · set · spin the
+ *    combination). The SWING — bolts driving home — is the SEAL's
+ *    act at the FIRST STUDY SITTING, washed and settled. Between
+ *    them the morning stands inside NO seal: rising (03:30), bath,
+ *    and the meditation hour stand before the beats and this model
+ *    has NO state for them — the app's absence there is their whole
+ *    specification (day-map M-02/M-04/M-05). Sleep likewise stands
+ *    after the beats, unsealed.
+ *  - The SEAL spans the composed day from the swing and is an
+ *    ELAPSED-TIME span from the sealing: the span's length is fixed
+ *    ONCE at sealing and only elapsed (monotonic) time advances it —
+ *    the wall clock cannot move the lifting hour after the seal. A
+ *    hold made late seals what is left of the day.
+ *  - Gym / sadhana (the prayer) / the first meal are SHAPED GAPS
+ *    INSIDE the seal — planned at the composition, never openings,
+ *    never in the locked set: they were never put into the vault,
+ *    so the door never opens for them. A gap carries no package
+ *    name; by type it cannot be a locked app.
  *  - The door has exactly TWO openings: the lifting hour, and the
  *    governor's crank (the week's 60-second minute). The Break is a
  *    FIRING of the time-lock set at signing — invocable by no one,
@@ -51,6 +61,15 @@ object StrongroomDay {
 
     /** The governor's crank: one 60-second minute per week. */
     const val CRANK_SECONDS: Int = 60
+
+    /**
+     * The purpose sentence, verbatim (ledger B-1 — the record of
+     * every surface it governs; twenty-three words, nothing minted
+     * beyond it). Carried on every signing record from Slice 1.
+     */
+    const val PURPOSE_SENTENCE: String =
+        "What I settle while I am strong, this holds while I am not. " +
+            "It reopens nothing. At night it tells me the truth."
 
     /**
      * One-tap break shortcuts (Audit A §2.4). Shortcuts ONLY — the
@@ -82,7 +101,15 @@ object StrongroomDay {
         val breakLengthMinutes: Int,
         val breakFiresAtOffsetMillis: Long,
         val allowanceMinutes: Int,
-        val gaps: List<ShapedGap>
+        val gaps: List<ShapedGap>,
+        /** The task line (ledger B-3): the reason for the block, in
+         *  HIS OWN WORDS, attached to the block's sealing and spent
+         *  when that sealing lifts. His words are exempt from any
+         *  word-bench, wholly — this model validates nothing about
+         *  them: no length, no form, no vocabulary. */
+        val taskLine: String? = null,
+        /** The purpose sentence as carried (ledger B-1). */
+        val purposeSentence: String = PURPOSE_SENTENCE
     ) {
         init {
             require(breakLengthMinutes >= 0) { "break length cannot be negative" }
@@ -99,7 +126,16 @@ object StrongroomDay {
     // Shaped gaps — inside the seal, never openings
     // ------------------------------------------------------------------
 
-    enum class GapKind { MEDITATION, GYM, SADHANA, MEAL }
+    /**
+     * The shaped gaps INSIDE a standing seal, per the governing
+     * filings (refit Beat 2; day-map sealed span): gym, sadhana
+     * (the prayer), the first meal. MEDITATION IS NOT HERE: the
+     * morning meditation hour stands before the seal, inside no
+     * seal, and no gap value may be invented for it — a meditation
+     * inside the day after the swing is sadhana's shape, not this
+     * enum's to mint.
+     */
+    enum class GapKind { GYM, SADHANA, MEAL }
 
     /**
      * A shaped gap inside the seal: a named shape of his day
@@ -355,7 +391,10 @@ object StrongroomDay {
         val punches: List<Punch>,
         val sealState: SealState,
         val crankSealBroken: Boolean,
-        val bracketGapMillis: Long = 0L
+        val bracketGapMillis: Long = 0L,
+        /** The day's task line, spent at this striking (B-3): his
+         *  words carried onto the plate verbatim, never edited. */
+        val taskLine: String? = null
     ) {
         /** Punches in striking order, grouped by kind for the face
          *  that renders graded holes. Order within a kind is time. */
@@ -380,7 +419,8 @@ object StrongroomDay {
             punches = punches.sortedBy { it.atOffsetMillis },
             sealState = state,
             crankSealBroken = crank.sealBroken,
-            bracketGapMillis = seal.bracketGapMillis(nowElapsedMillis, nowBootCount, sealFailed)
+            bracketGapMillis = seal.bracketGapMillis(nowElapsedMillis, nowBootCount, sealFailed),
+            taskLine = signing.taskLine
         )
     }
 

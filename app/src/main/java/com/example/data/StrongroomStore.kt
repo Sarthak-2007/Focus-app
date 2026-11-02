@@ -21,26 +21,109 @@ import java.time.ZoneId
 class StrongroomStore(private val dao: MonolithDao) {
 
     // ------------------------------------------------------------------
-    // Signing + sealing
+    // Composition + signing (amendment) + sealing (the swing)
     // ------------------------------------------------------------------
 
-    suspend fun sign(signing: StrongroomDay.SigningRecord) {
+    /**
+     * Compose [dateIso] from the week's standing order (B-2): the
+     * day stands whether or not he comes to the door. Idempotent —
+     * a day already standing (composed, amended, or sealed) is
+     * returned as it stands, never recomposed (the restart law,
+     * B-10, is this same rule at the store's door).
+     */
+    suspend fun composeDay(
+        order: com.example.domain.StrongroomComposition.WeekStandingOrder,
+        dateIso: String
+    ): com.example.domain.StrongroomComposition.ComposedDay {
+        dao.getStrongroomDay(dateIso)?.let { row ->
+            return com.example.domain.StrongroomComposition.ComposedDay(
+                filingDateIso = dateIso,
+                shape = runCatching {
+                    com.example.domain.StrongroomComposition.DayShape.valueOf(row.dayShape)
+                }.getOrDefault(com.example.domain.StrongroomComposition.DayShape.ORDINARY),
+                record = row.toSigningRecord(),
+                amendedBySigning = row.amendedBySigning
+            )
+        }
+        val composed = com.example.domain.StrongroomComposition.compose(order, dateIso)
+        dao.insertStrongroomDay(
+            composed.record.toEntity(dayShape = composed.shape.name, amendedBySigning = false)
+                .copy(state = StrongroomDayEntity.STATE_COMPOSED)
+        )
+        return composed
+    }
+
+    /**
+     * The evening signing AMENDS a standing composition (B-2): the
+     * named fields move, the rest stands as composed. When no
+     * composition stands yet (the signing is the first touch of
+     * the day), the amendment is applied over [order]'s composition
+     * — the signing still never creates the day from nothing.
+     * Returns the amended day, or null once the day is sealed (a
+     * sealed day is amended by no one).
+     */
+    suspend fun amendDay(
+        order: com.example.domain.StrongroomComposition.WeekStandingOrder,
+        dateIso: String,
+        amendment: com.example.domain.StrongroomComposition.SigningAmendment
+    ): com.example.domain.StrongroomComposition.ComposedDay? {
+        val composed = composeDay(order, dateIso)
+        val row = dao.getStrongroomDay(dateIso) ?: return null
+        if (row.state == StrongroomDayEntity.STATE_SEALED ||
+            row.state in StrongroomDayEntity.STRUCK_STATES
+        ) return null
+        val amended = com.example.domain.StrongroomComposition.amend(composed, amendment)
+        dao.insertStrongroomDay(
+            row.copy(
+                lockedPackagesCsv = StrongroomEncoding.encodePackages(amended.record.lockedPackages),
+                liftingHour = amended.record.liftingTime.hour,
+                liftingMinute = amended.record.liftingTime.minute,
+                sentence = amended.record.sentence,
+                breakLengthMinutes = amended.record.breakLengthMinutes,
+                breakFiresAtOffsetMillis = amended.record.breakFiresAtOffsetMillis,
+                allowanceTotalMinutes = amended.record.allowanceMinutes,
+                allowanceSpentMinutes = minOf(row.allowanceSpentMinutes, amended.record.allowanceMinutes),
+                gapsEncoded = StrongroomEncoding.encodeGaps(amended.record.gaps),
+                taskLine = amended.record.taskLine,
+                amendedBySigning = true,
+                state = StrongroomDayEntity.STATE_SIGNED
+            )
+        )
+        return amended
+    }
+
+    /**
+     * Persist a fully-formed effective record (the carry and the
+     * first-signing flow build these). [amended] marks whether an
+     * evening signing produced it; a composed record persists with
+     * the composed state. Sealing never consults either fact.
+     */
+    suspend fun sign(signing: StrongroomDay.SigningRecord, amended: Boolean = true) {
         require(StrongroomDay.gapsAreLawful(signing.gaps, Long.MAX_VALUE)) {
             // Overlap is checked against the real span at sealing;
             // here only the shape law (positive, ordered) is cheap —
             // sealing re-checks against the struck span.
             "gaps must not overlap"
         }
-        dao.insertStrongroomDay(signing.toEntity())
+        dao.insertStrongroomDay(
+            signing.toEntity(amendedBySigning = amended).copy(
+                state = if (amended) StrongroomDayEntity.STATE_SIGNED
+                else StrongroomDayEntity.STATE_COMPOSED
+            )
+        )
     }
 
     /**
-     * Seal a signed day: strike the elapsed span from the honest
-     * wall AT SEALING (the one wall consultation — [StrongroomDay]
+     * THE SWING: seal a standing day at the first study sitting.
+     * Strike the elapsed span from the honest wall AT SEALING (the
+     * one wall consultation — [StrongroomDay]
      * .spanDurationAtSealing), freeze it, and mark the day SEALED.
-     * Returns the struck span, or null when the day is unsigned or
-     * its gaps do not fit the struck span (a signing error surfaces,
-     * never a silently trimmed gap).
+     * The day may be COMPOSED (never signed) or SIGNED (amended):
+     * the app never checks whether the evening happened (B-2), so
+     * this function reads no signing fact. Returns the struck span,
+     * or null when no day stands or its gaps do not fit the struck
+     * span (a composition error surfaces, never a silently trimmed
+     * gap).
      */
     suspend fun seal(
         dateIso: String,
@@ -111,6 +194,12 @@ class StrongroomStore(private val dao: MonolithDao) {
      * persists the strike on the day row (state = the seal state's
      * name) and returns the plate. The crank's snapped seal is read
      * from the crank week containing the day.
+     *
+     * STRUCK ONCE, NEVER RE-STRUCK (B-14): a day whose plate
+     * already stands returns the plate as struck — its stored held
+     * / bracket facts and its state — and nothing is written. Late
+     * standings are confessed as they stand, never backdated into
+     * a second strike.
      */
     suspend fun strikePlate(
         dateIso: String,
@@ -120,6 +209,19 @@ class StrongroomStore(private val dao: MonolithDao) {
         zone: ZoneId = ZoneId.systemDefault()
     ): StrongroomDay.DayPlate? {
         val row = dao.getStrongroomDay(dateIso) ?: return null
+        if (row.state in StrongroomDayEntity.STRUCK_STATES) {
+            // The plate as struck, re-read — never re-struck (B-14).
+            return StrongroomDay.DayPlate(
+                filingDateIso = dateIso,
+                hoursHeldMillis = row.struckHeldMillis,
+                punches = punches(dateIso),
+                sealState = runCatching { StrongroomDay.SealState.valueOf(row.state) }
+                    .getOrDefault(StrongroomDay.SealState.BROKEN),
+                crankSealBroken = row.crankSealBroken,
+                bracketGapMillis = row.struckBracketGapMillis,
+                taskLine = row.taskLine
+            )
+        }
         val span = row.toSealSpan() ?: return null
         val signing = row.toSigningRecord()
         val crank = crankWeek(row.sealedAtWallMillis, zone)
