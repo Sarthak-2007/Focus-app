@@ -448,7 +448,186 @@ private fun ShellHost(viewModel: MonolithViewModel) {
 
     StrongroomShell(
         viewModel = viewModel,
-        doorwayContent = { Doorway(state = doorwayState) }
+        doorwayContent = {
+            // The signing place, composed (BUILD-SR-35 + BUILD-SR-36
+            // at merge): the Doorway's four furniture pieces stand
+            // in the room's upper reach, and the signing table —
+            // the evening's act — stands at the open door below
+            // them. One place, not two destinations (census C-21 +
+            // C-02; GAP-R01: no navigation glue exists).
+            androidx.compose.foundation.layout.Column(
+                modifier = androidx.compose.ui.Modifier.fillMaxSize()
+            ) {
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.weight(1f)
+                ) {
+                    Doorway(state = doorwayState)
+                }
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.weight(1.35f)
+                ) {
+                    SigningHost(viewModel = viewModel)
+                }
+            }
+        }
+    )
+}
+
+/**
+ * BUILD-SR-36 composition glue — the Signing (census C-02, a HERO)
+ * in the doorway place, under the Doorway's furniture.
+ *
+ * The standing day is read from the Strongroom store exactly as
+ * [loadDoorwayState] reads it (the composed main's own pattern):
+ * today's filing-day row standing COMPOSED or SIGNED, re-expressed
+ * as a [com.example.domain.StrongroomComposition.ComposedDay]. No
+ * week standing order exists in the kept engine, so none is
+ * invented: a day that does not stand in the store does not stand
+ * at the table — the host renders nothing until it stands
+ * (stillness, census GAP-R03), and the Doorway above stands AtRest.
+ *
+ * Amendments amend the standing composition in memory AND persist
+ * through the store's own verb for a fully-formed record
+ * ([StrongroomStore.sign], the first-signing flow's verb — it
+ * marks the day SIGNED, which is the signing's own fact: the
+ * evening's amendments are the signing). The signature itself
+ * re-signs the record as it stands when the wheel's turnover
+ * completes; it seals nothing — the swing (the store's `seal`) is
+ * the first sitting's act, service-side, and is not this host's.
+ * The allowance pawl's moves run through the store's Guard verbs
+ * (tightenGuard / requestGuardRaise), which carry D-1's law in the
+ * domain. Task and sentence also issue the session ViewModel's
+ * commands for the facts the kept engine carries in its own right
+ * (intention · shield intention).
+ */
+@Composable
+private fun SigningHost(viewModel: MonolithViewModel) {
+    val context = LocalContext.current
+    val appContext = context.applicationContext
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val apps by viewModel.apps.collectAsStateWithLifecycle()
+
+    var day by remember {
+        mutableStateOf<com.example.domain.StrongroomComposition.ComposedDay?>(null)
+    }
+    var guard by remember {
+        mutableStateOf(
+            com.example.domain.StrongroomGuard.GuardState(
+                allowanceMinutes = StrongroomStore.DEFAULT_ALLOWANCE_MINUTES
+            )
+        )
+    }
+    var firstSigning by remember { mutableStateOf(false) }
+    var codesWait by remember { mutableStateOf(false) }
+    var signed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        val facts = withContext(Dispatchers.IO) {
+            val store = StrongroomStore(AppContainer.dao(appContext))
+            val todayIso = com.example.domain.StrongroomDay.filingDateIso(
+                System.currentTimeMillis()
+            )
+            val row = store.day(todayIso)?.takeIf {
+                it.state == StrongroomDayEntity.STATE_COMPOSED ||
+                    it.state == StrongroomDayEntity.STATE_SIGNED
+            }
+            Triple(
+                row?.let {
+                    com.example.domain.StrongroomComposition.ComposedDay(
+                        filingDateIso = it.filingDateIso,
+                        shape = runCatching {
+                            com.example.domain.StrongroomComposition.DayShape
+                                .valueOf(it.dayShape)
+                        }.getOrDefault(
+                            com.example.domain.StrongroomComposition.DayShape.ORDINARY
+                        ),
+                        record = it.toSigningRecord(),
+                        amendedBySigning = it.amendedBySigning
+                    )
+                },
+                store.guardState(System.currentTimeMillis()),
+                Triple(
+                    store.isFirstSigning(),
+                    row?.let {
+                        it.allowanceTotalMinutes > 0 &&
+                            it.allowanceSpentMinutes >= it.allowanceTotalMinutes
+                    } ?: false,
+                    row?.state == StrongroomDayEntity.STATE_SIGNED
+                )
+            )
+        }
+        day = facts.first
+        guard = facts.second
+        firstSigning = facts.third.first
+        codesWait = facts.third.second
+        signed = facts.third.third
+    }
+
+    val standing = day ?: return
+
+    com.example.ui.signing.Signing(
+        state = com.example.ui.signing.SigningState(
+            day = standing,
+            tokens = apps.map {
+                com.example.ui.signing.SigningToken(it.packageName, it.appName)
+            },
+            guard = guard,
+            firstSigning = firstSigning,
+            codesWaitTonight = codesWait,
+            signed = signed
+        ),
+        actions = com.example.ui.signing.SigningActions(
+            onAmend = { amendment ->
+                val amended = com.example.domain.StrongroomComposition
+                    .amend(standing, amendment)
+                day = amended
+                amendment.taskLine?.let { viewModel.setIntentionText(it) }
+                amendment.sentence?.let { viewModel.setShieldIntention(it) }
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .sign(amended.record, amended = true)
+                    }
+                }
+            },
+            onAllowanceMove = { target ->
+                scope.launch {
+                    val now = System.currentTimeMillis()
+                    val todayIso = com.example.domain.StrongroomDay
+                        .filingDateIso(now)
+                    val next = withContext(Dispatchers.IO) {
+                        val store = StrongroomStore(AppContainer.dao(appContext))
+                        val current = store.guardState(now)
+                        when (
+                            val move = com.example.ui.signing.AllowancePawl.move(
+                                current, target, todayIso,
+                                com.example.domain.StrongroomDay
+                                    .nextDayStartMillis(now)
+                            )
+                        ) {
+                            is com.example.ui.signing.AllowancePawl.Move.Tightened ->
+                                store.tightenGuard(now, move.state.allowanceMinutes)
+                            is com.example.ui.signing.AllowancePawl.Move.RaiseWound ->
+                                store.requestGuardRaise(
+                                    now, move.state.pendingAllowanceMinutes
+                                ).first
+                            is com.example.ui.signing.AllowancePawl.Move.BeyondHardStop ->
+                                current
+                        }
+                    }
+                    guard = next
+                }
+            },
+            onSignature = {
+                signed = true
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .sign(standing.record, amended = true)
+                    }
+                }
+            }
+        )
     )
 }
 
