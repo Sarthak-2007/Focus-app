@@ -64,7 +64,6 @@ import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
 import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
-import com.example.ui.drawer.drawerSurfaceSecure
 import com.example.ui.lifting.Lifting
 import com.example.ui.lifting.LiftingState
 import com.example.ui.lifting.PlatePileView
@@ -98,16 +97,13 @@ import kotlinx.coroutines.withContext
 //
 // BUILD-SR-34 (the shell slice): ShellHost now composes the
 // Strongroom's own order (com.example.ui.shell.StrongroomShell)
-// on the composed foundation (PR #868, merged). The archive
-// FLAG_SECURE law that rode the dead VAULT destination died
-// with the enum in this act — its successor surface is the
-// drawer's room inside the doorway, whose own slice (R-6)
-// re-earns FLAG_SECURE when the drawer stands.
-// BUILD-SR-41 (the Drawer slice): R-6 DISCHARGED in this act —
-// ShellHost now holds the re-earned effect beside its predicate
-// (com.example.ui.drawer.drawerSurfaceSecure): while the drawer
-// stands open, the window is FLAG_SECURE, exactly as the old
-// archive law held it for the VAULT.
+// on the composed foundation (PR #868, merged).
+// SCREENSHOT RESTRICTIONS REMOVED (Sarthak's order, Nov 3, 2026:
+// "Remove screenshot restrictions from the app"): the drawer
+// slice's FLAG_SECURE effect (the old R-6 re-earn) is deleted
+// whole — no surface in this app sets FLAG_SECURE, and
+// screenshots and Recents thumbnails are allowed everywhere,
+// the drawer included.
 // ==================================================================
 
 /** Issue #78 (Audit R2, ipc-intents): the system Settings app's
@@ -391,13 +387,9 @@ class MainActivity : ComponentActivity() {
  * ON_RESUME watch sweep + return-service stop, the ON_STOP airlock
  * abandonment note) and the airlock-holds-Back law, and it composes
  * the Strongroom's own order (StrongroomShell) as the app's whole
- * visual structure. The archive FLAG_SECURE effect that keyed on
- * the old standing destination died with the enum (BUILD-SR-34;
- * named in the file head) — no place in the new order IS the
- * archive; the drawer's slice re-earns the flag when it stands.
- * BUILD-SR-41: the re-earn stands below — the effect keyed on
- * the drawer's own standing ([drawerSurfaceSecure]), beside the
- * doorway furniture it protects.
+ * visual structure. No window in this host is ever made secure:
+ * screenshot restrictions were removed whole on Sarthak's order
+ * (Nov 3, 2026) — see the file head.
  *
  * BUILD-SR-35 (composition, second act): the shell's DOORWAY
  * place-host carries the Doorway surface itself, its state read
@@ -481,38 +473,6 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     var drawerState by remember { mutableStateOf(DrawerState()) }
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
-    }
-
-    // R-6 · FLAG_SECURE, RE-EARNED (BUILD-SR-41, named obligation
-    // from BUILD-SR-34's enum-death accounting): the old VAULT's
-    // archive law (issue #264 B-264-31 — archiveSurfaceSecure +
-    // its effect: while the archive stood, no screenshot and no
-    // Recents thumbnail of his history) died with the enum. Its
-    // successor surface is this drawer — the room where every
-    // finished day is kept — and its successor predicate is
-    // [drawerSurfaceSecure]. While the drawer stands open the
-    // window is secure; every other standing clears the flag,
-    // exactly the old law's matrix. The flag is also cleared
-    // when this host leaves composition, so a secure standing
-    // can never leak past the drawer's own life.
-    val drawerWindow = (context as? android.app.Activity)?.window
-    LaunchedEffect(drawerOpen) {
-        if (drawerSurfaceSecure(drawerOpen)) {
-            drawerWindow?.addFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        } else {
-            drawerWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose {
-            drawerWindow?.clearFlags(
-                android.view.WindowManager.LayoutParams.FLAG_SECURE
-            )
-        }
     }
 
     // Watch Store residency (census §2c, re-carried): the old

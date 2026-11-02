@@ -109,10 +109,10 @@ import kotlin.math.roundToInt
  * carried in the model and rendered nowhere: no format for it
  * was ever decided, and this surface mints none.
  *
- * R-6 · FLAG_SECURE: while this drawer stands open, the host
- * holds the window FLAG_SECURE ([drawerSurfaceSecure] — the
- * re-earned archive law, named in DrawerMechanisms). His kept
- * days are not screenshotted and do not thumbnail in Recents.
+ * SCREENSHOTS ALLOWED (Sarthak's order, Nov 3, 2026): this
+ * drawer carries no screenshot restriction — the old R-6
+ * FLAG_SECURE law is deleted whole; his kept days screenshot
+ * and thumbnail in Recents like every other surface.
  *
  * TEXTURE (intake §1): wood-dark drawer furniture, brass
  * plates, steel fittings — grain derived from each surface

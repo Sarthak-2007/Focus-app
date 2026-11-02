@@ -9,7 +9,6 @@ import com.example.ui.drawer.DrawerSlide
 import com.example.ui.drawer.DrawerTexture
 import com.example.ui.drawer.HandingBackGate
 import com.example.ui.drawer.PileGeometry
-import com.example.ui.drawer.drawerSurfaceSecure
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import org.junit.Assert.assertEquals
@@ -21,8 +20,10 @@ import org.junit.Test
 /**
  * BUILD-SR-41 covering tests: THE DRAWER's mechanisms — the
  * struck-row mapping (one model, two views), the pile's order
- * and geometry, the handing-back gate (C-11), the FLAG_SECURE
- * re-earn predicate (R-6), the slide bodies, and the texture law.
+ * and geometry, the handing-back gate (C-11), the slide bodies,
+ * and the texture law. (The R-6 FLAG_SECURE predicate test was
+ * removed with the restriction itself, on Sarthak's order,
+ * Nov 3, 2026: screenshots are allowed on every surface.)
  *
  * The census laws under test (INVENTORY-SR-1, firsthand):
  *  - C-22: the drawer stores finished tasks in his own words —
@@ -201,16 +202,6 @@ class DrawerMechanismsTest {
         assertEquals(1, waiting.waiting.size)
         assertFalse(HandingBackGate.platesRevealed(waiting, delivered = false))
         assertTrue(HandingBackGate.platesRevealed(waiting, delivered = true))
-    }
-
-    // ── R-6 · the FLAG_SECURE re-earn ───────────────────────────
-
-    @Test
-    fun secure_onlyWhileTheDrawerStandsOpen() {
-        // The successor of archiveSurfaceSecure's matrix: the
-        // archive surface secure, every working standing not.
-        assertTrue(drawerSurfaceSecure(drawerOpen = true))
-        assertFalse(drawerSurfaceSecure(drawerOpen = false))
     }
 
     // ── The slide bodies ────────────────────────────────────────
