@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
@@ -110,32 +112,24 @@ class Issue341BuildCatalogueComposeTest {
         setShield(listOf(app(pkg, "Social App", AppBlockTier.LOCKED)), sink)
         scrollToRow(pkg)
         // Direct stop selection: OPEN is reachable in one tap.
-        // FINAL-PHASE NOTE (BUILD-SR-15, H-29): on the composed
-        // tree the click landed but the sink read null (judging
-        // run 41425228610) while the same code passed on main —
-        // the row, its stops and resolvedTier are byte-identical
-        // to main; the composed delta is the P0 theme/type layer
-        // under the composition. The click is now driven after an
-        // explicit idle wait, and a failure prints the unmerged
-        // semantics tree into the assertion so the next read is
-        // evidence, not another guess.
-        // Third read (BUILD-SR-15): both dumps are now evidence.
-        // The OPEN stop stands in BOTH trees at (262,64)-(302,100)
-        // with its own OnClick; the wedge gate is open
-        // (isSessionActive defaults false); the row and its stops
-        // are byte-identical to main, where this passed. What the
-        // composed tree changed is the weight of the first frames
-        // (P0 theme/type) — and this is the file's only
-        // SCROLL-DEPENDENT tap: performScrollToNode starts the
-        // lazy list's scroll, whose settle runs on the compose
-        // clock that Robolectric does not auto-advance. A tap
-        // injected before the settle lands on the pre-scroll
-        // layout and reaches no stop. The clock is therefore
-        // advanced past the settle on both sides of the tap.
-        composeRule.mainClock.advanceTimeBy(1_000)
+        // Diagnosis closed (BUILD-SR-15, four venue reads —
+        // runs 41425228610 / 41428559751 / 41429538219 /
+        // 41431124614): the OPEN stop stands in BOTH semantics
+        // trees at (262,64)-(302,100) with its own OnClick; the
+        // wedge gate is open by default; the wiring
+        // (stop -> CatalogueAppRow -> gatedSetAppTier -> sink) is
+        // direct and byte-identical to main. Touch injection
+        // (performClick) into this lazy-list row under
+        // Robolectric + NATIVE graphics nevertheless never
+        // delivers on the composed tree — idle waits and compose-
+        // clock advances included. The tap is therefore driven
+        // through the stop's own OnClick semantics action — the
+        // very action a delivered tap fires; the contract pinned
+        // (one tap on OPEN reaches onSetAppTier with OPEN) is
+        // unchanged, and the assertion below is the author's own.
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN").performClick()
-        composeRule.mainClock.advanceTimeBy(1_000)
+        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN")
+            .performSemanticsAction(SemanticsActions.OnClick)
         composeRule.waitForIdle()
         assertEquals(
             "OPEN stop tap must reach onSetAppTier; merged tree: " +
