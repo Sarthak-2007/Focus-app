@@ -2,6 +2,7 @@ package com.example.data
 
 import android.content.Context
 import android.os.SystemClock
+import java.time.LocalTime
 import com.example.service.PermPrint
 import com.example.service.PermState
 import com.example.service.WatchItemId
@@ -31,6 +32,40 @@ class SetupStore(context: Context) {
 
     /** True once DONE has been pressed on the reception sheet. */
     fun isCompleted(): Boolean = prefs.getBoolean(SETUP_DONE_KEY, false)
+
+    // ---------------------------------------------------------------
+    // THE STANDING LIFTING HOUR (SETUP-FLOW, 2026-11-03) — the
+    // hour his sealed day lifts (ends), set by his own hand on
+    // the setup side's DAY panel. It lives here, beside the
+    // reception stamp, because it is a standing fact of HIS
+    // loadout, not of any one day: [StrongroomDayBirth] reads it
+    // as the birth's second lawful lifting source — the active
+    // session's window end first (a running day's own fact), this
+    // standing hour when no session stands. On a fresh install
+    // there is no session, so without this hour no day could
+    // ever be born and the doorway stood empty (build 5's
+    // photos: the door print and one drawer button, nothing
+    // else). The carry still invents nothing: unset reads null
+    // and the birth waits, exactly as it waits with no session.
+    // ---------------------------------------------------------------
+
+    /** His standing lifting hour; null while never set. */
+    fun liftingTime(): LocalTime? {
+        val hour = prefs.getInt(LIFTING_HOUR_KEY, -1)
+        if (hour !in 0..23) return null
+        val minute = prefs.getInt(LIFTING_MINUTE_KEY, 0)
+        return LocalTime.of(hour, minute.coerceIn(0, 59))
+    }
+
+    /** Set the standing lifting hour. One edit, commit() — the
+     *  birth reads it on the doorway's next fact load, and a
+     *  fact the app acts on is never left to an async flush. */
+    fun setLiftingTime(hour: Int, minute: Int) {
+        prefs.edit()
+            .putInt(LIFTING_HOUR_KEY, hour.coerceIn(0, 23))
+            .putInt(LIFTING_MINUTE_KEY, minute.coerceIn(0, 59))
+            .commit()
+    }
 
     /** Stamp the setup complete. Committed synchronously (G-02).
      *  Wave-2 cure (Pforte; Improver + Implementation-quality
@@ -190,6 +225,8 @@ class SetupStore(context: Context) {
     companion object {
         private const val PREFS_NAME = "monolith_setup"
         private const val SETUP_DONE_KEY = "setup_done"
+        private const val LIFTING_HOUR_KEY = "standing_lifting_hour"
+        private const val LIFTING_MINUTE_KEY = "standing_lifting_minute"
         private const val STAMPED_WALL_KEY = "setup_stamped_wall"
         private const val DOORS_AT_STAMP_MASK_KEY = "setup_doors_at_stamp_mask"
         private const val EVER_SET_MASK_KEY = "setup_ever_set_mask"
