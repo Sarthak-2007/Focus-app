@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -879,97 +880,60 @@ class ScreenshotHarnessTest {
             spentDay = false,
             firstSigning = true
         )
+        var face by androidx.compose.runtime.mutableStateOf(0)
         composeRule.setContent {
             MyApplicationTheme(darkTheme = false) {
-                com.example.ui.strongroom.SigningScreen(
-                    draft = draft,
-                    onDetent = {},
-                    onLatch = {},
-                    onLeave = {},
-                    onSigned = {}
-                )
+                when (face) {
+                    0 -> com.example.ui.strongroom.SigningScreen(
+                        draft = draft,
+                        onDetent = {},
+                        onLatch = {},
+                        onLeave = {},
+                        onSigned = {}
+                    )
+                    1 -> com.example.ui.strongroom.SealedFaceScreen(
+                        state = com.example.ui.strongroom.SealedFaceState(
+                            liftingHour = "20:00",
+                            sentence = "Finish the chapter, then stop."
+                        ),
+                        onKnockReach = {},
+                        onAntechamberRequest = {}
+                    )
+                    2 -> com.example.ui.strongroom.AntechamberScreen(
+                        initialState = antechamber,
+                        readOnlyLines = com.example.ui.strongroom.StrongroomFlowModel
+                            .antechamberReadOnlyLines(signingRecord),
+                        onCrankOutcome = {},
+                        onSignedOpen = {},
+                        onShowingOutcome = {},
+                        onTakeCall = {},
+                        onReturned = {},
+                        onLeave = {}
+                    )
+                    else -> com.example.ui.strongroom.LiftingScreen(
+                        plate = null,
+                        handingBack = com.example.domain.LiftingPlate.HandingBack.prepare(
+                            listOf(
+                                com.example.domain.LiftingPlate.WaitingPerson(
+                                    displayName = "+919876543210",
+                                    ownListRef = "+919876543210"
+                                )
+                            )
+                        ),
+                        onHandedBack = {}
+                    )
+                }
             }
         }
         settle(1200)
         captureTo(File(shotsDir, "20_strongroom_signing.png"))
-
-        composeRule.setContent {
-            MyApplicationTheme(darkTheme = false) {
-                com.example.ui.strongroom.SealedFaceScreen(
-                    state = com.example.ui.strongroom.SealedFaceState(
-                        liftingHour = "20:00",
-                        sentence = "Finish the chapter, then stop."
-                    ),
-                    onKnockReach = {},
-                    onAntechamberRequest = {}
-                )
-            }
-        }
+        composeRule.runOnUiThread { face = 1 }
         settle(1200)
         captureTo(File(shotsDir, "21_strongroom_sealed_face.png"))
-
-        val antechamber = com.example.ui.strongroom.StrongroomFlowModel.antechamberState(
-            signing = signingRecord,
-            purseRemainingMinutes = 29,
-            nameOf = { pkg ->
-                mapOf(
-                    "com.phone.app" to "Phone",
-                    "com.chat.app" to "Chat",
-                    "com.video.app" to "Video"
-                )[pkg] ?: pkg
-            },
-            cataloguePackages = listOf("com.phone.app", "com.chat.app", "com.video.app"),
-            heldArrivals = listOf(
-                com.example.data.StrongroomHeldArrivalEntity(
-                    id = 1,
-                    filingDateIso = "2026-11-02",
-                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CALL,
-                    line = "+919876543210",
-                    arrivedAtWallMillis = System.currentTimeMillis() - 3_600_000L
-                ),
-                com.example.data.StrongroomHeldArrivalEntity(
-                    id = 2,
-                    filingDateIso = "2026-11-02",
-                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CODE,
-                    line = "482916",
-                    arrivedAtWallMillis = System.currentTimeMillis() - 1_800_000L
-                )
-            )
-        )
-        composeRule.setContent {
-            MyApplicationTheme(darkTheme = false) {
-                com.example.ui.strongroom.AntechamberScreen(
-                    initialState = antechamber,
-                    readOnlyLines = com.example.ui.strongroom.StrongroomFlowModel
-                        .antechamberReadOnlyLines(signingRecord),
-                    onCrankOutcome = {},
-                    onSignedOpen = {},
-                    onShowingOutcome = {},
-                    onTakeCall = {},
-                    onReturned = {},
-                    onLeave = {}
-                )
-            }
-        }
+        composeRule.runOnUiThread { face = 2 }
         settle(1200)
         captureTo(File(shotsDir, "22_strongroom_antechamber.png"))
-
-        composeRule.setContent {
-            MyApplicationTheme(darkTheme = false) {
-                com.example.ui.strongroom.LiftingScreen(
-                    plate = null,
-                    handingBack = com.example.domain.LiftingPlate.HandingBack.prepare(
-                        listOf(
-                            com.example.domain.LiftingPlate.WaitingPerson(
-                                displayName = "+919876543210",
-                                ownListRef = "+919876543210"
-                            )
-                        )
-                    ),
-                    onHandedBack = {}
-                )
-            }
-        }
+        composeRule.runOnUiThread { face = 3 }
         settle(1200)
         captureTo(File(shotsDir, "23_strongroom_lifting.png"))
     }
