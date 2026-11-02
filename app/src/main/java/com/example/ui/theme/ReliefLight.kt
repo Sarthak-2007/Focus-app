@@ -25,6 +25,17 @@ package com.example.ui.theme
  * so the law is unit-testable off-device. UNPROVEN-ON-DEVICE
  * (Audit A G-7): the tuning is judged on the build, not claimed
  * proven on his OnePlus.
+ *
+ * STAMP (KEEPER-SR-5, register N-2, carried by name): the
+ * strengths are also UNPROVEN AS TUNED — no eye has judged them
+ * on a build — and they DIVERGE FROM THE FILED LAW they sit
+ * beside: P0's Relight.kt ports RELIGHT-S67-1's eighths, under
+ * which SEALED is the descended, poorest-lit state; under this
+ * table SEALED is the strongest. Both cannot be the kept
+ * mechanism's tuning. Ruling R2-6: P0's tuning is canonical and
+ * this table is DELETED at composition unless argued with
+ * evidence beforehand — this lane has none and consents
+ * (lettered to SUCCESSOR-21 + BUILD-SR-1, 2026-11-02).
  */
 enum class FaceLightState(val strength: Float) {
     SIGNING(0.70f),
