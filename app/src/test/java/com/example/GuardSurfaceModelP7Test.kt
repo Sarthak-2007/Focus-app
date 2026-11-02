@@ -1,0 +1,267 @@
+package com.example
+
+import com.example.ui.guard.GuardControl
+import com.example.ui.guard.GuardCopy
+import com.example.ui.guard.GuardIntent
+import com.example.ui.guard.GuardRoutineSnapshot
+import com.example.ui.guard.GuardSurface
+import com.example.ui.guard.GuardSurfaceSnapshot
+import java.time.LocalDate
+import java.time.ZoneId
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * P7 (BUILD-SR-5) — THE GUARD SURFACES' MODEL, pure JVM.
+ *
+ * His Oct 31 rulings by name (ledger D-1/D-2/D-3/D-4/D-9):
+ * the tests that matter most here are NEGATIVES — a control
+ * that must NOT exist in a state is asserted absent from the
+ * inventory, not disabled, not dimmed. Absence is the ruling's
+ * shape: beyond the hard stop (D-1), no off while sealed (D-2),
+ * no off inside a stretch at all (D-3), no witness/urge entry
+ * in the census, ever (D-3), no exit counter anywhere (D-4).
+ *
+ * G-a is carried UNRESOLVED: the raise asserts D-1's own road
+ * (next day-start) and the census asserts NO two-signature
+ * control exists for this seat to have pre-built.
+ */
+class GuardSurfaceModelP7Test {
+
+    private val zone: ZoneId = ZoneId.of("Asia/Kolkata")
+    private val now: Long =
+        LocalDate.of(2026, 11, 3).atTime(20, 0).atZone(zone).toInstant().toEpochMilli()
+    private val nextDayStart: Long =
+        LocalDate.of(2026, 11, 4).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+
+    private fun snapshot(
+        guardOn: Boolean = true,
+        allowanceMinutes: Int = 30,
+        pendingAllowanceMinutes: Int = -1,
+        pendingAllowanceFromMillis: Long = 0L,
+        pendingOffFromMillis: Long = 0L,
+        stretchEndMillis: Long = 0L,
+        sealedBlockActive: Boolean = false,
+        purseSpentToday: Boolean = false,
+        crankMinuteSpent: Boolean = false,
+        advanceChosenExits: List<String> = listOf("The pre-set PIN, to the antechamber"),
+        routines: List<GuardRoutineSnapshot> = emptyList()
+    ) = GuardSurfaceSnapshot(
+        guardOn = guardOn,
+        allowanceMinutes = allowanceMinutes,
+        pendingAllowanceMinutes = pendingAllowanceMinutes,
+        pendingAllowanceFromMillis = pendingAllowanceFromMillis,
+        pendingOffFromMillis = pendingOffFromMillis,
+        stretchEndMillis = stretchEndMillis,
+        nowMillis = now,
+        nextDayStartMillis = nextDayStart,
+        sealedBlockActive = sealedBlockActive,
+        purseSpentToday = purseSpentToday,
+        crankMinuteSpent = crankMinuteSpent,
+        advanceChosenExits = advanceChosenExits,
+        routines = routines
+    )
+
+    private fun surface(
+        snap: GuardSurfaceSnapshot = snapshot()
+    ) = GuardSurface.surfaceFor(snap, zone)
+
+    // ---------- D-1: frozen allowance ----------
+
+    @Test
+    fun tightenWheel_alwaysExists_evenSealedEvenInAStretch() {
+        assertTrue(surface().has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL))
+        assertTrue(
+            surface(snapshot(sealedBlockActive = true))
+                .has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL)
+        )
+        val stretchEnd =
+            LocalDate.of(2026, 11, 10).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+        assertTrue(
+            surface(snapshot(stretchEndMillis = stretchEnd))
+                .has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL)
+        )
+    }
+
+    @Test
+    fun raiseControl_saysItsTruthPlainly_nextDayStartNeverToday() {
+        val model = surface()
+        assertTrue(model.has(GuardControl.ALLOWANCE_RAISE_WHEEL))
+        assertTrue(model.has(GuardControl.ALLOWANCE_RAISE_CONFIRM))
+        assertEquals(GuardCopy.RAISE_LAW, model.raiseLine)
+        assertTrue(model.raiseLine!!.contains("never lands today"))
+        assertTrue(model.raiseLine!!.contains("03:30"))
+    }
+
+    @Test
+    fun onceSpent_looseningControlsAreAbsent_notGreyed() {
+        val model = surface(snapshot(purseSpentToday = true))
+        assertFalse(model.has(GuardControl.ALLOWANCE_RAISE_WHEEL))
+        assertFalse(model.has(GuardControl.ALLOWANCE_RAISE_CONFIRM))
+        assertNull(model.raiseLine)
+        // The hard-stop testimony stands where the control stood.
+        assertEquals(GuardCopy.HARD_STOP, model.hardStopLine)
+        // Tightening is not a loosening: it survives the hard stop.
+        assertTrue(model.has(GuardControl.ALLOWANCE_TIGHTEN_WHEEL))
+    }
+
+    @Test
+    fun pendingRaise_isToldWithItsDayStart() {
+        val model = surface(
+            snapshot(pendingAllowanceMinutes = 45, pendingAllowanceFromMillis = nextDayStart)
+        )
+        assertEquals(
+            "A raise to 45 minutes stands from Wednesday 4 November, 03:30.",
+            model.pendingRaiseLine
+        )
+    }
+
+    @Test
+    fun tightenDetents_fiveMinuteStops_andTheStandingFigureAlwaysReachable() {
+        assertEquals(listOf(0, 5, 10, 15, 20, 25, 30), GuardSurface.tightenDetents(30))
+        // A legacy allowance off the grid keeps its own stop.
+        assertEquals(listOf(0, 5, 10, 15, 20, 25, 30, 32), GuardSurface.tightenDetents(32))
+        assertEquals(listOf(0), GuardSurface.tightenDetents(0))
+    }
+
+    // ---------- D-2: slow off ----------
+
+    @Test
+    fun off_offeredOnCalmGround_andItsLawIsNextDayStart() {
+        val model = surface()
+        assertTrue(model.has(GuardControl.GUARD_REQUEST_OFF))
+        assertNull(model.pendingOffLine)
+    }
+
+    @Test
+    fun off_whileSealed_doesNotExist() {
+        val model = surface(snapshot(sealedBlockActive = true))
+        assertFalse(model.has(GuardControl.GUARD_REQUEST_OFF))
+    }
+
+    @Test
+    fun pendingOff_theOffPlateLeaves_andOnStandsToCancelIt() {
+        val model = surface(snapshot(pendingOffFromMillis = nextDayStart))
+        assertFalse(model.has(GuardControl.GUARD_REQUEST_OFF))
+        assertTrue(model.has(GuardControl.GUARD_TURN_ON))
+        assertEquals(
+            "Off stands from Wednesday 4 November, 03:30 — until then the Guard holds.",
+            model.pendingOffLine
+        )
+    }
+
+    @Test
+    fun guardOff_onIsTheOnlyStandingPlate() {
+        val model = surface(snapshot(guardOn = false))
+        assertTrue(model.has(GuardControl.GUARD_TURN_ON))
+        assertFalse(model.has(GuardControl.GUARD_REQUEST_OFF))
+        assertEquals(GuardCopy.STANDING_OFF, model.standingLine)
+    }
+
+    // ---------- D-3: a stretch has no off ----------
+
+    @Test
+    fun stretchSetup_existsOnlyOutsideAStretch() {
+        val calm = surface()
+        assertTrue(calm.has(GuardControl.STRETCH_END_STEPPER))
+        assertTrue(calm.has(GuardControl.STRETCH_BEGIN_CONFIRM))
+        assertNull(calm.stretchLine)
+    }
+
+    @Test
+    fun insideAStretch_noOffNoSetup_onlyTheEndDate() {
+        val end =
+            LocalDate.of(2026, 11, 10).atTime(3, 30).atZone(zone).toInstant().toEpochMilli()
+        val model = surface(snapshot(stretchEndMillis = end))
+        assertFalse(model.has(GuardControl.GUARD_REQUEST_OFF))
+        assertFalse(model.has(GuardControl.STRETCH_END_STEPPER))
+        assertFalse(model.has(GuardControl.STRETCH_BEGIN_CONFIRM))
+        assertEquals(
+            "This stretch ends Tuesday 10 November. That date is the exit. " +
+                "There is no off inside it.",
+            model.stretchLine
+        )
+    }
+
+    @Test
+    fun stretchEnd_isStruckAtItsDayStart() {
+        val end = GuardSurface.stretchEndMillis(LocalDate.of(2026, 11, 10), zone)
+        assertEquals(
+            LocalDate.of(2026, 11, 10).atTime(3, 30).atZone(zone).toInstant().toEpochMilli(),
+            end
+        )
+    }
+
+    @Test
+    fun census_carriesNoWitnessNoUrgeNoEarlyStretchEndNoValveSpend() {
+        val names = GuardControl.values().map { it.name }
+        assertTrue(names.none { it.contains("WITNESS") || it.contains("URGE") })
+        assertTrue(names.none { it.contains("END_STRETCH") || it.contains("CANCEL_STRETCH") })
+        assertTrue(names.none { it.contains("VALVE") || it.contains("CRANK") })
+        val intents = GuardIntent::class.java.declaredClasses.map { it.simpleName }
+        assertTrue(intents.none { it.contains("Witness") || it.contains("Urge") })
+        assertTrue(intents.none { it.contains("EndStretch") || it.contains("SpendValve") })
+    }
+
+    // ---------- D-4: exits, advance-chosen + the valve only ----------
+
+    @Test
+    fun exits_areNamesAndTheValveFact_neverACount() {
+        val model = surface(snapshot(crankMinuteSpent = true))
+        assertEquals(listOf("The pre-set PIN, to the antechamber"), model.exitNames)
+        assertEquals(GuardCopy.valveLine(true), model.valveLine)
+        assertTrue(model.valveLine.contains("spent"))
+        // Type-level: no field on the snapshot or the model can
+        // hold a stockpile — no count, no balance, no remaining.
+        val fields = (GuardSurfaceSnapshot::class.java.declaredFields +
+            com.example.ui.guard.GuardSurfaceModel::class.java.declaredFields)
+            .map { it.name.lowercase() }
+        assertTrue(
+            fields.none {
+                it.contains("exitcount") || it.contains("stockpile") ||
+                    it.contains("remainingexits") || it.contains("exitbalance")
+            }
+        )
+    }
+
+    // ---------- D-9: routines under the Guard ----------
+
+    @Test
+    fun routineOn_isInstant_routineOff_travelsTheSlowRoad() {
+        val off = GuardRoutineSnapshot(id = 1, name = "Morning block", enabled = false)
+        val on = GuardRoutineSnapshot(id = 2, name = "Evening block", enabled = true)
+        val model = surface(snapshot(routines = listOf(off, on)))
+        assertEquals(setOf(GuardControl.ROUTINE_TURN_ON), model.routineRows[0].controls)
+        assertEquals(setOf(GuardControl.ROUTINE_TURN_OFF), model.routineRows[1].controls)
+    }
+
+    @Test
+    fun routineEnforcing_itsOffDoesNotExist() {
+        val enforcing =
+            GuardRoutineSnapshot(id = 3, name = "Live window", enabled = true, enforcingNow = true)
+        val row = surface(snapshot(routines = listOf(enforcing))).routineRows.single()
+        assertTrue(row.controls.isEmpty())
+        assertEquals(GuardCopy.ROUTINE_ENFORCING_LINE, row.line)
+    }
+
+    @Test
+    fun routinePendingOff_noPlate_onlyItsLandingLine() {
+        val pending = GuardRoutineSnapshot(
+            id = 4, name = "Winding down", enabled = true, pendingOffFromMillis = nextDayStart
+        )
+        val row = surface(snapshot(routines = listOf(pending))).routineRows.single()
+        assertTrue(row.controls.isEmpty())
+        assertEquals("Off stands from Wednesday 4 November, 03:30.", row.line)
+    }
+
+    // ---------- G-a: carried unresolved, D-1 applied as filed ----------
+
+    @Test
+    fun census_carriesNoTwoSignatureControl_gAStaysRensToRule() {
+        val names = GuardControl.values().map { it.name }
+        assertTrue(names.none { it.contains("SIGNATURE") || it.contains("SECOND") })
+    }
+}
