@@ -73,10 +73,13 @@ class SigningFeelTest {
 
     @Test
     fun reversalOnJitterFiresNoGate() {
+        // Travel held inside one station span (10°..20°, no
+        // tooth inside it): 10° committed — under one station —
+        // then reversed. No crossing, and no gate.
         val feel = SigningFeel()
-        feel.onTravel(100.0)
-        feel.onTravel(110.0) // 10° committed — under one station
-        assertTrue(feel.onTravel(104.0).isEmpty())
+        feel.onTravel(10.0)
+        assertTrue(feel.onTravel(20.0).isEmpty())
+        assertTrue(feel.onTravel(14.0).isEmpty())
     }
 
     @Test
@@ -122,13 +125,27 @@ class SigningFeelTest {
     @Test
     fun departingASeatedDetentDoesNotRecountIt() {
         // Prime exactly ON detent 0, then travel a few degrees
-        // either way: no tooth is arrived at, so no notch —
-        // in the negative direction above all, where a naive
-        // bucket count would spend one at once.
+        // off it and part-way back: no tooth is arrived at, so
+        // no notch — in the negative direction above all,
+        // where a naive bucket count would spend one at once.
         val feel = SigningFeel()
         feel.onTravel(0.0)
         assertTrue(feel.onTravel(-5.0).isEmpty())
-        assertTrue(feel.onTravel(5.0).isEmpty())
+        assertTrue(feel.onTravel(-2.0).isEmpty())
+    }
+
+    @Test
+    fun returningOntoTheSeatedDetentReClicksIt() {
+        // The other half of the pawl's arithmetic: leave
+        // detent 0 downward, then come back onto it — the
+        // arrival is a crossing and clicks, exactly once.
+        val feel = SigningFeel()
+        feel.onTravel(0.0)
+        feel.onTravel(-5.0)
+        assertEquals(
+            listOf(HapticEvent.COMBINATION_STATION),
+            feel.onTravel(0.0)
+        )
     }
 
     @Test
