@@ -3,6 +3,8 @@ package com.example
 import com.example.domain.DeskClockRecord
 import com.example.ui.maximum.MaximumPresets
 import com.example.ui.motion.SpringState
+import com.example.ui.strongroom.WheelPhysics
+import com.example.ui.strongroom.WheelTurn
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -83,6 +85,32 @@ class MaximumAssemblyTest {
         val names = MaximumPresets.ExcludedByLaw.map { it.name }
         assertTrue(names.contains("drum-minute-end"))
         assertTrue(names.contains("ring-hour"))
+    }
+
+    @Test
+    fun `E-02 the wheel - resistance rises within the pass, release governed, seat heaviest`() {
+        // Rising resistance: the same hand travel crosses FEWER
+        // detents late in the pass than at its start (the wheel
+        // is pulling a mechanism, not spinning a dial).
+        val wheel = WheelTurn()
+        val early = wheel.dragBy(360f).size
+        val late = wheel.dragBy(360f).size
+        assertTrue("early=$early late=$late", late < early)
+        // Governed release: a violent flick earns no more than the
+        // capped travel (plus the seat's completing detent).
+        val flicked = WheelTurn()
+        flicked.release(10_000f)
+        assertTrue(
+            flicked.angleDegrees <= WheelPhysics.MAX_RELEASE_TRAVEL_DEG + WheelPhysics.DETENT_DEGREES
+        )
+        assertEquals(0f, flicked.pendingFraction(), 0.0001f)
+        // The seat is the heaviest single figure on the wheel.
+        assertTrue(WheelPhysics.SEAT_WEIGHT > 1.35f)
+        // Interruption: always exactly on a detent — no half-state.
+        val interrupted = WheelTurn()
+        interrupted.dragBy(50f)
+        interrupted.interrupt()
+        assertEquals(0f, interrupted.pendingFraction(), 0.0001f)
     }
 
     @Test

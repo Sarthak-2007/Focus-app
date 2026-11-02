@@ -65,14 +65,14 @@ object WheelPhysics {
      *  accumulated turn within a pass (the wheel pulls a
      *  mechanism, it does not spin a dial). */
     const val DRAG_RESPONSE_BASE = 0.82f
-    const val DRAG_RESPONSE_FLOOR = 0.55f
-    const val DRAG_RESPONSE_RISE_PER_REV = 0.10f
+    const val DRAG_RESPONSE_FLOOR = 0.45f
+    const val DRAG_RESPONSE_RISE_PER_REV = 0.18f
 
     /** Governed inertia: a released wheel carries at most this
      *  far, whatever the flick — free spin is impossible by
      *  construction (velocity is capped BEFORE travel is read). */
     const val MAX_RELEASE_TRAVEL_DEG = 54f
-    const val MAX_RELEASE_VELOCITY_DEG_PER_SEC = 540f
+    const val MAX_RELEASE_VELOCITY_DEG_PER_SEC = 360f
 
     /** Settle: a released wheel comes to rest ON a detent,
      *  always — the seat. It never rests between stations, so an
@@ -84,7 +84,36 @@ object WheelPhysics {
      *  one terminal seat, heavier than any station (the surface
      *  spends it through onLatch-class voices; the figure is
      *  named here so E-02's maximum pass tunes it in one place). */
-    const val SEAT_WEIGHT = 1.35f
+    const val SEAT_WEIGHT = 1.75f
+
+    /**
+     * E-02 AT MAXIMUM (BUILD-SR-18, Stage 11 — applied the act
+     * BUILD-SR-22's mechanism landed, PR #863, per the seam
+     * letter: this object alone, the mechanism unforked).
+     * What changed from the working form, and why:
+     *  - The resistance rise now BITES within the signing's own
+     *    travel: rise 0.10 → 0.18 per revolution, floor 0.55 →
+     *    0.45. At one revolution the wheel answers 0.64 of the
+     *    hand's travel; at two it is at its floor — the end of
+     *    the throw is FELT as the mechanism loading, not merely
+     *    reached (LEAD-STAGE-11 E-02: "continuous resistance
+     *    that rises toward the throw's end — the wheel is
+     *    pulling the door's mechanism, not spinning a dial").
+     *  - Release velocity cap 540 → 360°/s: one revolution per
+     *    second is what a heavy wheel under this resistance can
+     *    be made to do by hand; past it, extra flick is absorbed
+     *    by the cap, never obeyed (M-5's law for the wheel).
+     *    Governed travel stays 54° — a short carry, then the seat.
+     *  - SEAT_WEIGHT 1.35 → 1.75: the terminal seat is the
+     *    signing's heaviest single felt fact short of the swing's
+     *    clunks; 1.75 places it on FEEL-SR-1's ascending energy
+     *    ladder (1 : 1.41 : 2.26) between a station (1.0) and the
+     *    heaviest bolt (2.26) — BUILD-SR-18's derivation, named.
+     * Untouched by law: position-keyed detents (identical
+     * sequence at any velocity) · settle always exactly on a
+     * detent (no half-state) · no wrong-combination event exists.
+     * All figures UNPROVEN-ON-DEVICE (G-7).
+     */
 }
 
 /**
