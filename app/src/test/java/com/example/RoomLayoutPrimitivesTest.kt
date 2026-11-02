@@ -27,13 +27,21 @@ class RoomLayoutPrimitivesTest {
         val names = methodNames()
         listOf(
             "DoorwayLayout",
-            "SigningPlaceLayout",
             "FaceFieldLayout",
             "AntechamberLayout",
             "TraySideLayout",
             "RoomWithTrayLayout",
             "DrawerGrid",
         ).forEach { assertTrue("missing primitive: $it", it in names) }
+        // The seventh primitive, SigningPlaceLayout, lives in its own
+        // file at slot depth (DESIGNER-SR-2 adoption) — checked there.
+        val signingCls = Class.forName(
+            "com.example.ui.strongroom.layout.SigningPlaceLayoutKt",
+        )
+        assertTrue(
+            "missing primitive: SigningPlaceLayout",
+            signingCls.declaredMethods.any { it.name == "SigningPlaceLayout" },
+        )
     }
 
     // The antechamber primitive takes exactly three content slots
