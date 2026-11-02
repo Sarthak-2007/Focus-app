@@ -1,6 +1,5 @@
 package com.example.ui.strongroom
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.border
@@ -16,8 +15,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,12 +46,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.service.TactileSoundEngine
 import com.example.ui.maximum.MaximumPresets
-import com.example.ui.maximum.orbitAngleDeg
-import com.example.ui.maximum.orbitDeltaDeg
 import com.example.ui.motion.SpringState
-import kotlin.math.cos
 import kotlin.math.roundToInt
-import kotlin.math.sin
 import com.example.ui.theme.InkGold
 import com.example.ui.theme.InkLine
 import com.example.ui.theme.SigningBodyStyle
@@ -106,7 +104,12 @@ fun SigningScreen(
     var flow by remember(draft) { mutableStateOf(SigningState(draft)) }
     // The combination — surface-local, unwritten, wiped at the
     // signature's completion. Never state that leaves this hand.
-    var dials by remember(draft) { mutableStateOf(listOf(0, 0, 0)) }
+    // A-16: it is worked THROUGH THE GREAT WHEEL — the wheel's
+    // turn (GreatWheel.kt) is the combination's only mechanism;
+    // the dials below are its tumbler, read by eye from the turn.
+    val wheel = remember(draft) { WheelTurn() }
+    var wheelVersion by remember(draft) { mutableStateOf(0) }
+    val dials = wheel.dials()
 
     val ink = InkGold.reliefHighlight(RelightState.SIGNING)
     val quietInk = InkGold.copy(alpha = 0.75f)
@@ -159,18 +162,24 @@ fun SigningScreen(
             )
             SigningStep.COMBINATION -> CombinationStep(
                 flow = flow,
+                wheel = wheel,
+                wheelVersion = wheelVersion,
                 dials = dials,
                 ink = ink,
                 quietInk = quietInk,
-                onDialDigit = { index, digit ->
+                onWheelTurn = { crossed ->
                     if (!flow.signatureBegun) flow = flow.beginSignature()
-                    dials = dials.mapIndexed { i, d -> if (i == index) digit else d }
+                    crossed.forEach { _ -> onDetent() }
+                    wheelVersion++
                 },
                 onDialDetent = { onDetent() },
                 onSign = {
                     onLatch()
                     flow = flow.completeSignature()
-                    dials = listOf(0, 0, 0)
+                    // Wiped: the turn is forgotten whole — the
+                    // wheel stands at zero again, as if untouched.
+                    wheel.reset()
+                    wheelVersion++
                 }
             )
             SigningStep.READY -> ReadyStep(
@@ -478,11 +487,12 @@ private fun SentenceStep(
 @Composable
 private fun CombinationStep(
     flow: SigningState,
+    wheel: WheelTurn,
+    wheelVersion: Int,
     dials: List<Int>,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
-    onDialDigit: (Int, Int) -> Unit,
-    onDialDetent: () -> Unit,
+    onWheelTurn: (List<Long>) -> Unit,
     onSign: () -> Unit
 ) {
     // B-5: the clause, spoken whole at the signing — here, and
@@ -495,52 +505,103 @@ private fun CombinationStep(
     )
     Spacer(Modifier.height(8.dp))
     Text(
-        text = "Spin the dials to your combination — it is written nowhere.",
+        text = "Turn the great wheel to your combination — it is written nowhere.",
         style = SigningQuietStyle,
         color = quietInk
     )
-    Spacer(Modifier.height(20.dp))
-    // E-01 AT MAXIMUM (Stage 11 assembly, BUILD-SR-18): each digit
-    // is spun on the toolkit's governed rotary — the +/− steppers
-    // that stood here are retired. The thumb orbits the rim;
-    // station detents are keyed to travel position (identical
-    // sequence at any gesture velocity); velocity is governed at
-    // 240°/s and a release coasts at most 30° before the settle
-    // rests the dial EXACTLY on a station — a release can never
-    // rest between numbers. The digit is read from the station
-    // the dial rests under; the combination is still written
-    // nowhere (A-2): only the surface's dials hold it, wiped at
-    // the signature's completion as before. UNPROVEN-ON-DEVICE.
+    Spacer(Modifier.height(16.dp))
+    // THE WHEEL (A-16): the signer turns it; its turning works
+    // the combination's tumblers. Drag around its centre — the
+    // wheel answers under WheelPhysics (resistance rising,
+    // governed inertia, the seat at settle); every detent the
+    // travel crosses spends the surface's detent voice, keyed to
+    // position, so a slow turn and a fast turn speak the same
+    // sequence. wheelVersion is read so the drawing follows the
+    // mechanism's state.
+    @Suppress("UNUSED_EXPRESSION") wheelVersion
+    var lastAngle by remember { mutableStateOf<Float?>(null) }
+    var lastDelta by remember { mutableStateOf(0f) }
+    var lastMoveMs by remember { mutableStateOf(0L) }
+    fun angleOf(pos: androidx.compose.ui.geometry.Offset, size: androidx.compose.ui.unit.IntSize): Float {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        return Math.toDegrees(
+            kotlin.math.atan2((pos.y - cy).toDouble(), (pos.x - cx).toDouble())
+        ).toFloat()
+    }
+    fun wrappedDelta(from: Float, to: Float): Float {
+        var d = to - from
+        while (d > 180f) d -= 360f
+        while (d < -180f) d += 360f
+        return d
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("signing_wheel")
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { pos ->
+                        lastAngle = angleOf(pos, size)
+                        lastDelta = 0f
+                    },
+                    onDragEnd = {
+                        val now = System.currentTimeMillis()
+                        val dt = (now - lastMoveMs).coerceAtLeast(1L)
+                        val velocity = lastDelta / dt * 1000f
+                        onWheelTurn(wheel.release(velocity))
+                        lastAngle = null
+                    },
+                    onDragCancel = {
+                        wheel.interrupt()
+                        onWheelTurn(emptyList())
+                        lastAngle = null
+                    },
+                    onDrag = { change, _ ->
+                        val a = angleOf(change.position, size)
+                        val prev = lastAngle
+                        if (prev != null) {
+                            val d = wrappedDelta(prev, a)
+                            lastDelta = d
+                            lastMoveMs = System.currentTimeMillis()
+                            onWheelTurn(wheel.dragBy(d))
+                        }
+                        lastAngle = a
+                        change.consume()
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        GreatWheelCanvas(
+            angleDegrees = wheel.angleDegrees +
+                wheel.pendingFraction() * WheelPhysics.DETENT_DEGREES,
+            lightState = RelightState.SIGNING,
+            modifier = Modifier.size(232.dp)
+        )
+    }
+    Spacer(Modifier.height(14.dp))
+    // The tumbler, read by eye: three dials the wheel's turn
+    // carries (ones with the wheel, tens and hundreds by carry).
+    // They are a READOUT of the turn, never an input of their own.
     Row(
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         dials.forEachIndexed { index, digit ->
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.testTag("signing_dial_$index")
-            ) {
-                DigitSpinDial(
-                    digit = digit,
-                    ink = ink,
-                    quietInk = quietInk,
-                    tag = "signing_dial_${index}_spin",
-                    onDigit = { onDialDigit(index, it) },
-                    onDetent = onDialDetent
-                )
-                Text(
-                    text = digit.toString(),
-                    style = SigningDigitsStyle,
-                    color = ink,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .width(64.dp)
-                        .padding(vertical = 10.dp)
-                )
-            }
+            Text(
+                text = digit.toString(),
+                style = SigningDigitsStyle,
+                color = ink,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .width(64.dp)
+                    .padding(vertical = 6.dp)
+                    .testTag("signing_dial_$index")
+            )
         }
     }
-    Spacer(Modifier.height(24.dp))
+    Spacer(Modifier.height(18.dp))
     SigningContinue(
         label = "SIGN — SET THE DAY",
         ink = ink,
@@ -605,108 +666,6 @@ private fun ReadyStep(
     SigningContinue(label = "DONE", ink = ink, onClick = onDone, tag = "signing_done")
 }
 
-
-/**
- * E-01's per-digit hand (Stage 11 assembly, BUILD-SR-18): one
- * governed rotary per combination digit, built on the toolkit's
- * [MaximumPresets.spinRotary] — governed velocity, governed coast,
- * rest exactly on a station. Station crossings fire [onDetent]
- * (position-keyed: the same travel produces the same sequence at
- * any gesture speed). The digit is the station the dial rests
- * under; nothing here stores a combination (A-2).
- */
-@Composable
-private fun DigitSpinDial(
-    digit: Int,
-    ink: Color,
-    quietInk: Color,
-    tag: String,
-    onDigit: (Int) -> Unit,
-    onDetent: () -> Unit
-) {
-    val rotary = remember { MaximumPresets.spinRotary() }
-    var angleDeg by remember { mutableFloatStateOf(rotary.angleDeg) }
-    var lastMillis = remember { longArrayOf(0L) }
-    LaunchedEffect(digit) {
-        val resting = (rotary.stationUnder() / MaximumPresets.SPIN_STATION_SPACING_DEG)
-            .roundToInt().mod(10)
-        if (resting != digit && rotary.velocityDegPerSec == 0f) {
-            rotary.snapTo(digit * MaximumPresets.SPIN_STATION_SPACING_DEG)
-            angleDeg = rotary.angleDeg
-        }
-    }
-    Box(
-        modifier = Modifier
-            .size(96.dp)
-            .testTag(tag)
-            .pointerInput(rotary) {
-                detectDragGestures(
-                    onDragStart = { lastMillis[0] = 0L },
-                    onDrag = { change, _ ->
-                        val centre = size.width / 2f
-                        val now = change.uptimeMillis
-                        val dtMs = if (lastMillis[0] == 0L) 16L
-                        else (now - lastMillis[0]).coerceIn(8L, 50L)
-                        lastMillis[0] = now
-                        val previous = orbitAngleDeg(
-                            centre, centre, change.previousPosition.x, change.previousPosition.y
-                        )
-                        val current = orbitAngleDeg(
-                            centre, centre, change.position.x, change.position.y
-                        )
-                        val before = rotary.angleDeg
-                        rotary.dragBy(orbitDeltaDeg(previous, current), dtMs / 1000f)
-                        val crossed = kotlin.math.abs(
-                            (rotary.angleDeg / MaximumPresets.SPIN_STATION_SPACING_DEG).toInt() -
-                                (before / MaximumPresets.SPIN_STATION_SPACING_DEG).toInt()
-                        )
-                        repeat(crossed) { onDetent() }
-                        angleDeg = rotary.angleDeg
-                        val live = (rotary.stationUnder() / MaximumPresets.SPIN_STATION_SPACING_DEG)
-                            .roundToInt().mod(10)
-                        if (live != digit) onDigit(live)
-                        change.consume()
-                    },
-                    onDragEnd = {
-                        val release = rotary.release()
-                        angleDeg = rotary.angleDeg
-                        onDigit((release.station / MaximumPresets.SPIN_STATION_SPACING_DEG).roundToInt().mod(10))
-                    },
-                    onDragCancel = {
-                        val release = rotary.release()
-                        angleDeg = rotary.angleDeg
-                        onDigit((release.station / MaximumPresets.SPIN_STATION_SPACING_DEG).roundToInt().mod(10))
-                    }
-                )
-            }
-    ) {
-        Canvas(Modifier.size(96.dp)) {
-            val centre = Offset(size.width / 2f, size.height / 2f)
-            val radius = size.minDimension / 2f - 6f
-            drawCircle(color = StrongroomGround, radius = radius, center = centre)
-            drawCircle(color = ink, radius = radius - 3f, center = centre, style = Stroke(width = 2.5f))
-            for (i in 0 until 10) {
-                val a = Math.toRadians((i * MaximumPresets.SPIN_STATION_SPACING_DEG - 90f).toDouble())
-                val outer = Offset(
-                    centre.x + (radius - 7f) * cos(a).toFloat(),
-                    centre.y + (radius - 7f) * sin(a).toFloat()
-                )
-                val inner = Offset(
-                    centre.x + (radius - 15f) * cos(a).toFloat(),
-                    centre.y + (radius - 15f) * sin(a).toFloat()
-                )
-                drawLine(color = quietInk, start = inner, end = outer, strokeWidth = 2.5f)
-            }
-            val markerAngle = Math.toRadians((angleDeg % 360f - 90f).toDouble())
-            val marker = Offset(
-                centre.x + (radius - 11f) * cos(markerAngle).toFloat(),
-                centre.y + (radius - 11f) * sin(markerAngle).toFloat()
-            )
-            drawCircle(color = ink, radius = 5f, center = marker)
-            drawLine(color = ink, start = centre, end = marker, strokeWidth = 2.5f)
-        }
-    }
-}
 
 /**
  * A maximum drag strip for the signing's setters (Stage 11
