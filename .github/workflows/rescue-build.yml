@@ -234,7 +234,7 @@ jobs:
         with:
           name: monolith-debug
           path: app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 3
+          retention-days: 14
 
       # Issue #382: the screenshot gallery lives in its OWN job
       # (below), not in this one. First attempt put it here as a
