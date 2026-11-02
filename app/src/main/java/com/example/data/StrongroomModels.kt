@@ -255,7 +255,11 @@ fun StrongroomGuard.GuardState.toEntity(): StrongroomGuardEntity = StrongroomGua
  * [state] is the per-arrival choice's standing: WAITING (no
  * choice made — handed back at the lift), TAKEN (his TAKE act
  * discharged this line only), LEFT (his LEAVE act — the line
- * leaves the pile; his phone's own lists own it after the lift).
+ * leaves the pile; his phone's own lists own it after the lift),
+ * HANDED_BACK (the lift's own act, delivered by the wiring as
+ * the lift fires — PLACES: the person is returned to his
+ * phone's own list before the plate is read, and the row stands
+ * resolved; it is neither a TAKE he made nor a LEAVE he chose).
  * A reboot cannot empty this table (UX-SR-3 MC-3 / B-10's
  * restart law at this depth): the pile is re-derived from these
  * rows on every antechamber entry, so what waited still waits.
@@ -272,7 +276,7 @@ data class StrongroomHeldArrivalEntity(
     /** The number as it arrived (call) or the digits alone (code). */
     val line: String,
     val arrivedAtWallMillis: Long,
-    /** STATE_WAITING / STATE_TAKEN / STATE_LEFT. */
+    /** STATE_WAITING / STATE_TAKEN / STATE_LEFT / STATE_HANDED_BACK. */
     val state: String = STATE_WAITING
 ) {
     companion object {
@@ -281,6 +285,7 @@ data class StrongroomHeldArrivalEntity(
         const val STATE_WAITING = "WAITING"
         const val STATE_TAKEN = "TAKEN"
         const val STATE_LEFT = "LEFT"
+        const val STATE_HANDED_BACK = "HANDED_BACK"
     }
 }
 

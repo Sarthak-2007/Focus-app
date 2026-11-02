@@ -33,6 +33,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -86,6 +88,17 @@ import kotlin.math.sin
  * the completed signature and carries NO combination: his
  * combination is spun by his hand alone and written nowhere
  * (ledger A-2) — structurally, no value in this file can hold it.
+ *
+ * THE DIAL AND THE WHEEL (DESIGN-MOTION swap, on Sarthak's
+ * 2026-11-03 verdict — the print-as-face passed, "not toy", and
+ * his demand is a working, moving app): the two drawn mechanisms
+ * that stood in this column are DELETED. The dial that sets the
+ * lifting hour and the great wheel of the signature now live on
+ * [SigningPrintBench] — crafted mechanisms moving in the picked
+ * print's world, standing in this column where the great wheel
+ * stood, fed by this surface's own state and actions. Their
+ * mechanisms are unchanged ([SigningDial] · [CombinationSpin]);
+ * only their bodies moved, from drawings to the door's plate.
  *
  * TWO DERIVATIONS, charged to this slice, stated on its PR:
  *  (1) THE DOOR-WORD (the fourth printing, census C-12): the slot
@@ -175,9 +188,7 @@ fun Signing(state: SigningState, actions: SigningActions, modifier: Modifier = M
     ) {
         SpokenWords(state)
         Spacer(Modifier.height(22.dp))
-        TokenTray(state, actions)
-        Spacer(Modifier.height(26.dp))
-        SigningDialSurface(state, actions, lightState)
+        TokenTray(state, actions, lightState)
         Spacer(Modifier.height(26.dp))
         BreakRail(state, actions, lightState)
         Spacer(Modifier.height(26.dp))
@@ -185,7 +196,7 @@ fun Signing(state: SigningState, actions: SigningActions, modifier: Modifier = M
         Spacer(Modifier.height(26.dp))
         SentenceAndTaskLines(state, actions, lightState)
         Spacer(Modifier.height(30.dp))
-        GreatWheelSignature(state, actions, lightState)
+        SigningPrintBench(state, actions)
         Spacer(Modifier.height(30.dp))
         SigningSlipSurface(state, lightState)
         Spacer(Modifier.height(24.dp))
@@ -240,7 +251,11 @@ private fun SpokenWords(state: SigningState) {
 // ── The tray of tokens (brief C-08; census C-02's choosing) ─────
 
 @Composable
-private fun TokenTray(state: SigningState, actions: SigningActions) {
+private fun TokenTray(
+    state: SigningState,
+    actions: SigningActions,
+    lightState: StrongroomLightState
+) {
     val allowed = state.day.record.allowedPackages
     Row(
         modifier = Modifier
@@ -278,12 +293,37 @@ private fun TokenTray(state: SigningState, actions: SigningActions) {
                             width = if (isAllowed) 2.5.dp else 1.dp,
                             color = if (isAllowed) StrongroomLight.litPartner(
                                 StrongroomInks.Gold, StrongroomInks.Graphite,
-                                StrongroomLightState.SIGNING
+                                lightState
                             ) else StrongroomInks.Graphite,
                             shape = CircleShape
                         ),
                     contentAlignment = Alignment.Center
                 ) {
+                    // The minted edge: a lit crescent toward the
+                    // lamp and a shadow crescent away from it —
+                    // a struck token, not a flat disc.
+                    Canvas(Modifier.matchParentSize()) {
+                        val c = Offset(size.width / 2f, size.height / 2f)
+                        val r = size.minDimension / 2f - 2.dp.toPx()
+                        val base = if (isAllowed) StrongroomInks.Gold
+                        else StrongroomInks.Graphite
+                        val fld = if (isAllowed) StrongroomInks.Graphite
+                        else StrongroomInks.Violet
+                        drawArc(
+                            color = StrongroomLight.relief(base, fld, 0.85f, lightState),
+                            startAngle = 153f, sweepAngle = 120f, useCenter = false,
+                            topLeft = Offset(c.x - r, c.y - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                        drawArc(
+                            color = StrongroomLight.relief(base, fld, -0.85f, lightState),
+                            startAngle = -27f, sweepAngle = 120f, useCenter = false,
+                            topLeft = Offset(c.x - r, c.y - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                    }
                     Text(
                         text = token.label.take(1).uppercase(),
                         style = StrongroomType.Scr3,
@@ -297,183 +337,6 @@ private fun TokenTray(state: SigningState, actions: SigningActions) {
                     style = StrongroomType.Scr0,
                     color = if (isAllowed) StrongroomRoles.OnGround
                     else StrongroomLight.descend(StrongroomInks.Gold, 4)
-                )
-            }
-        }
-    }
-}
-
-// ── The Signing Dial — fresh in-app (brief C-05; ledger E-11) ───
-
-@Composable
-private fun SigningDialSurface(
-    state: SigningState,
-    actions: SigningActions,
-    lightState: StrongroomLightState
-) {
-    val record = state.day.record
-    var previewMinute by remember(record.liftingTime) {
-        mutableStateOf(SigningDial.minuteOfDay(record.liftingTime))
-    }
-    val pm = previewMinute >= SigningDial.CIRCLE_MINUTES ||
-        record.liftingTime.hour >= 12
-    var dragAngle by remember(record.liftingTime) {
-        mutableStateOf(SigningDial.angleFor(SigningDial.minuteOfDay(record.liftingTime)))
-    }
-    val vernier = SigningDial.vernierFor(previewMinute)
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-        Box(
-            modifier = Modifier
-                .size(272.dp)
-                .pointerInput(record.liftingTime) {
-                    var lastAngle: Double? = null
-                    var lastDetent: Int? = null
-                    detectDragGestures(
-                        onDragStart = { lastAngle = null; lastDetent = null },
-                        onDragEnd = {
-                            val (placed, _) = SigningDial.settle(
-                                SigningDial.minuteFor(dragAngle), pm
-                            )
-                            previewMinute = placed
-                            actions.onAmend(
-                                StrongroomComposition.SigningAmendment(
-                                    liftingTime = SigningDial.timeFor(placed)
-                                )
-                            )
-                        },
-                        onDragCancel = { lastAngle = null },
-                        onDrag = { change, _ ->
-                            val cx = size.width / 2.0
-                            val cy = size.height / 2.0
-                            val angle = Math.toDegrees(
-                                atan2(change.position.y - cy, change.position.x - cx)
-                            ) + 90.0
-                            val prev = lastAngle
-                            if (prev != null) {
-                                var delta = angle - prev
-                                if (delta > 180.0) delta -= 360.0
-                                if (delta < -180.0) delta += 360.0
-                                dragAngle += delta
-                            }
-                            lastAngle = angle
-                            previewMinute = SigningDial.minuteFor(dragAngle) +
-                                if (pm) SigningDial.CIRCLE_MINUTES else 0
-                            // The detent stones speak in feel as
-                            // the hand crosses them (FEEL-SR-3 C2.1,
-                            // wired by the SOUND seat): a quarter
-                            // stone, or the whole-hour stone one
-                            // size up — felt only, by filed law.
-                            val detent = SigningDial.minuteFor(dragAngle) / 15
-                            if (lastDetent != null && detent != lastDetent) {
-                                actions.onFeelEvent(
-                                    if ((detent * 15) % 60 == 0) {
-                                        HapticEvent.HOUR_DETENT_WHOLE
-                                    } else {
-                                        HapticEvent.HOUR_DETENT_QUARTER
-                                    }
-                                )
-                            }
-                            lastDetent = detent
-                            change.consume()
-                        }
-                    )
-                }
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val outer = size.minDimension / 2f
-                // The steel case and the enamelled ring.
-                drawCircle(color = StrongroomRoles.Metal, radius = outer)
-                drawCircle(
-                    color = StrongroomLight.stateSurface(
-                        StrongroomInks.Violet, lightState,
-                        com.example.ui.foundation.StrongroomLitSurface.FACE
-                    ),
-                    radius = outer - 10.dp.toPx()
-                )
-                // Detent stones: quarters small, whole hours firm —
-                // the hour train's topography, drawn (amplitudes
-                // 55 / 85 in the foundation's figures).
-                for (step in 0 until 48) {
-                    val minute = step * 15
-                    val whole = minute % 60 == 0
-                    val a = Math.toRadians(
-                        SigningDial.angleFor(minute) - 90.0
-                    ).toFloat()
-                    val r1 = outer - if (whole) 26.dp.toPx() else 19.dp.toPx()
-                    val r2 = outer - 12.dp.toPx()
-                    drawLine(
-                        color = if (whole) StrongroomInks.Gold
-                        else StrongroomLight.descend(StrongroomInks.Gold, 3),
-                        start = Offset(cx + r1 * cos(a), cy + r1 * sin(a)),
-                        end = Offset(cx + r2 * cos(a), cy + r2 * sin(a)),
-                        strokeWidth = if (whole) 3.dp.toPx() else 1.5.dp.toPx()
-                    )
-                }
-                // The hand, at the placed hour.
-                val ha = Math.toRadians(
-                    SigningDial.angleFor(previewMinute) - 90.0
-                ).toFloat()
-                drawLine(
-                    color = StrongroomInks.Gold,
-                    start = Offset(cx, cy),
-                    end = Offset(
-                        cx + (outer - 34.dp.toPx()) * cos(ha),
-                        cy + (outer - 34.dp.toPx()) * sin(ha)
-                    ),
-                    strokeWidth = 4.dp.toPx()
-                )
-                drawCircle(color = StrongroomInks.Gold, radius = 7.dp.toPx())
-                // THE VERNIER APERTURE at the index (top): a window
-                // in the ring where the scale passes enlarged under
-                // a hairline — the thumb works the ring's edge, the
-                // reading is taken here, where the thumb is not.
-                val winW = 92.dp.toPx()
-                val winH = 30.dp.toPx()
-                val winX = cx - winW / 2f
-                val winY = cy - outer + 2.dp.toPx()
-                drawRect(
-                    color = StrongroomInks.Graphite,
-                    topLeft = Offset(winX, winY),
-                    size = Size(winW, winH)
-                )
-                // Enlarged vernier ticks: the detent and its
-                // neighbours, spread across the window.
-                for (k in -3..3) {
-                    val x = cx + k * (winW / 8f)
-                    val tall = k == 0
-                    drawLine(
-                        color = if (tall) StrongroomInks.Gold
-                        else StrongroomLight.descend(StrongroomInks.Gold, 2),
-                        start = Offset(x, winY + winH - if (tall) 16.dp.toPx() else 10.dp.toPx()),
-                        end = Offset(x, winY + winH - 3.dp.toPx()),
-                        strokeWidth = if (tall) 2.5.dp.toPx() else 1.5.dp.toPx()
-                    )
-                }
-                // The hairline itself.
-                drawLine(
-                    color = StrongroomInks.Magenta,
-                    start = Offset(cx, winY + 2.dp.toPx()),
-                    end = Offset(cx, winY + winH - 2.dp.toPx()),
-                    strokeWidth = 1.5.dp.toPx()
-                )
-            }
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "%02d:%02d".format(
-                        (previewMinute / 60) % 24, previewMinute % 60
-                    ),
-                    style = StrongroomType.Anon4,
-                    color = StrongroomRoles.OnGround
-                )
-                Text(
-                    text = "+${vernier.vernierMinute}",
-                    style = StrongroomType.Anon0,
-                    color = StrongroomLight.descend(StrongroomInks.Gold, 2)
                 )
             }
         }
@@ -579,8 +442,18 @@ private fun BreakRail(
                     )
                 }
                 val px = size.width * preview / BreakChoice.MAX_MINUTES
+                // The rail's knob, as a struck brass stud: its
+                // shadow thrown away from the lamp, its face
+                // relieved toward it.
                 drawCircle(
-                    color = StrongroomInks.Gold,
+                    color = StrongroomLight.descend(StrongroomInks.Gold, 4),
+                    radius = 11.dp.toPx(),
+                    center = Offset(px + 1.5.dp.toPx(), midY + 2.dp.toPx())
+                )
+                drawCircle(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 0.5f, lightState
+                    ),
                     radius = 11.dp.toPx(),
                     center = Offset(px, midY)
                 )
@@ -605,6 +478,7 @@ private fun BreakRail(
                     modifier = Modifier
                         .padding(end = 10.dp)
                         .size(42.dp)
+                        .clip(CircleShape)
                         .background(StrongroomInks.Gold, CircleShape)
                         .clickable {
                             preview = BreakChoice.shortcut(preset)
@@ -618,6 +492,29 @@ private fun BreakRail(
                         },
                     contentAlignment = Alignment.Center
                 ) {
+                    // Struck brass grain, from the disc itself.
+                    Canvas(Modifier.matchParentSize()) {
+                        val cell = SigningTexture.Species.BRASS.cellPx.dp.toPx()
+                        var gy = 0
+                        var yy = 0f
+                        while (yy < size.height) {
+                            var gx = 0
+                            var xx = 0f
+                            while (xx < size.width) {
+                                drawRect(
+                                    color = SigningTexture.cellTone(
+                                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                                        SigningTexture.Species.BRASS, gx, gy,
+                                        seed = 31 + preset, state = lightState
+                                    ),
+                                    topLeft = Offset(xx, yy),
+                                    size = Size(cell + 1f, cell + 1f)
+                                )
+                                xx += cell; gx++
+                            }
+                            yy += cell; gy++
+                        }
+                    }
                     Text(
                         text = "$preset",
                         style = StrongroomType.Anon1,
@@ -713,12 +610,26 @@ private fun AllowancePawlSurface(
                     strokeWidth = 4.dp.toPx()
                 )
             }
-            // The pawl itself, seated at the preview's height.
+            // The pawl itself, seated at the preview's height:
+            // a brass knob — shadow thrown, face relieved, a
+            // graphite heart where the pin seats.
             val frac = 1f - (preview.coerceIn(0, 240) / 240f)
             val pawlY = frac * size.height
             drawCircle(
-                color = StrongroomInks.Gold,
+                color = StrongroomLight.descend(StrongroomInks.Gold, 4),
                 radius = 10.dp.toPx(),
+                center = Offset(size.width / 2f + 1.5.dp.toPx(), pawlY + 2.dp.toPx())
+            )
+            drawCircle(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.55f, lightState
+                ),
+                radius = 10.dp.toPx(),
+                center = Offset(size.width / 2f, pawlY)
+            )
+            drawCircle(
+                color = StrongroomRoles.OnLeaf,
+                radius = 3.5.dp.toPx(),
                 center = Offset(size.width / 2f, pawlY)
             )
         }
@@ -766,7 +677,32 @@ private fun SentenceAndTaskLines(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(3.dp))
             .background(paper, RoundedCornerShape(3.dp))
+            .drawBehind {
+                // Paper grain, from the paper itself — the sheet
+                // the sentence stands on is the slip's own stock.
+                val cell = SigningTexture.Species.PAPER.cellPx.dp.toPx()
+                var gy = 0
+                var yy = 0f
+                while (yy < size.height) {
+                    var gx = 0
+                    var xx = 0f
+                    while (xx < size.width) {
+                        drawRect(
+                            color = SigningTexture.cellTone(
+                                paper, StrongroomInks.Graphite,
+                                SigningTexture.Species.PAPER, gx, gy,
+                                seed = 61, state = lightState
+                            ),
+                            topLeft = Offset(xx, yy),
+                            size = Size(cell + 1f, cell + 1f)
+                        )
+                        xx += cell; gx++
+                    }
+                    yy += cell; gy++
+                }
+            }
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         // The task: the reason for the block, in his own words,
@@ -834,167 +770,6 @@ private fun SentenceAndTaskLines(
                 .height(1.5.dp)
                 .background(StrongroomInks.Graphite)
         )
-    }
-}
-
-// ── The Great Wheel + the signature (brief C-04; census C-02) ───
-
-@Composable
-private fun GreatWheelSignature(
-    state: SigningState,
-    actions: SigningActions,
-    lightState: StrongroomLightState
-) {
-    val spin = remember { CombinationSpin() }
-    val feel = remember { SigningFeel() }
-    var rotation by remember { mutableStateOf(0.0) }
-    var lastVelocity by remember { mutableStateOf(0.0) }
-    var seats by remember { mutableStateOf(0) }
-    LaunchedEffect(seats) {
-        if (spin.isComplete && !state.signed) actions.onSignature()
-    }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Box(
-            modifier = Modifier
-                .size(248.dp)
-                .pointerInput(Unit) {
-                    var lastAngle: Double? = null
-                    var lastMs: Long = 0L
-                    detectDragGestures(
-                        onDragStart = { lastAngle = null },
-                        onDragEnd = {
-                            if (spin.isComplete) {
-                                // A seat attempt against the
-                                // seated dial: its flat wall
-                                // (FEEL-SR-3 C1.3, via SigningFeel).
-                                feel.onAttemptAgainstSeatedDial()
-                                    .forEach(actions.onFeelEvent)
-                            } else {
-                                val clockwise = lastVelocity > 0.0
-                                if (spin.attemptSeat(rotation, lastVelocity, clockwise)) {
-                                    seats = spin.seatsTaken
-                                    feel.onSeatTaken(finalSeat = spin.isComplete)
-                                        .forEach(actions.onFeelEvent)
-                                }
-                            }
-                        },
-                        onDrag = { change, _ ->
-                            val cx = size.width / 2.0
-                            val cy = size.height / 2.0
-                            val angle = Math.toDegrees(
-                                atan2(change.position.y - cy, change.position.x - cx)
-                            )
-                            val prev = lastAngle
-                            if (prev != null) {
-                                var delta = angle - prev
-                                if (delta > 180.0) delta -= 360.0
-                                if (delta < -180.0) delta += 360.0
-                                // The governed ceiling: a dial that
-                                // cannot be flicked (240°/s, filed).
-                                val dt = ((change.uptimeMillis - lastMs)
-                                    .coerceAtLeast(1)) / 1000.0
-                                var velocity = delta / dt
-                                if (velocity > 240.0) velocity = 240.0
-                                if (velocity < -240.0) velocity = -240.0
-                                lastVelocity = velocity
-                                rotation += velocity * dt
-                                // The travel the mechanism accepted
-                                // is the travel the hand feels:
-                                // station notches and gates, read
-                                // off the governed rotation itself.
-                                feel.onTravel(rotation)
-                                    .forEach(actions.onFeelEvent)
-                            }
-                            lastAngle = angle
-                            lastMs = change.uptimeMillis
-                            change.consume()
-                        }
-                    )
-                }
-        ) {
-            // The wheel turns over with the seats: its drawn
-            // rotation is the spin's own turnover (120° per seat)
-            // plus the hand's live travel within the pass.
-            val drawn = (spin.wheelTurnoverDeg + rotation % 360.0).toFloat()
-            Canvas(Modifier.fillMaxSize().rotate(drawn)) {
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val outer = size.minDimension / 2f
-                drawCircle(
-                    color = StrongroomRoles.Metal,
-                    radius = outer - 4.dp.toPx(),
-                    style = Stroke(width = 13.dp.toPx())
-                )
-                drawCircle(
-                    color = StrongroomLight.relief(
-                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
-                    ),
-                    radius = outer - 4.dp.toPx(),
-                    style = Stroke(width = 3.dp.toPx())
-                )
-                for (spoke in 0 until 3) {
-                    val a = Math.toRadians(spoke * 120.0 - 90.0).toFloat()
-                    drawLine(
-                        color = StrongroomRoles.Metal,
-                        start = Offset(cx, cy),
-                        end = Offset(
-                            cx + (outer - 12.dp.toPx()) * cos(a),
-                            cy + (outer - 12.dp.toPx()) * sin(a)
-                        ),
-                        strokeWidth = 10.dp.toPx()
-                    )
-                }
-                drawCircle(color = StrongroomInks.Gold, radius = 15.dp.toPx())
-            }
-            // The station under the hand — one digit, read at the
-            // index; the combination itself is never shown whole,
-            // never stored, never written (A-2).
-            Box(
-                modifier = Modifier.align(Alignment.Center),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "${spin.stationAt(rotation)}",
-                    style = StrongroomType.Anon4,
-                    color = StrongroomRoles.OnGround
-                )
-            }
-            // The pass's direction, as a mark at the wheel's rim —
-            // a drawn fact, not a word.
-            val dirAngle = if (spin.passClockwise) -35f else 215f
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(
-                        x = (sin(Math.toRadians(dirAngle.toDouble())) * 108).dp,
-                        y = (108 - cos(Math.toRadians(dirAngle.toDouble())) * 108).dp
-                    )
-                    .size(9.dp)
-                    .background(
-                        if (seats >= 3) StrongroomInks.Graphite else StrongroomInks.Magenta,
-                        CircleShape
-                    )
-            )
-        }
-        // The seats taken, as three bolt heads filling — the
-        // signature's progress is furniture, not a counter.
-        Row(modifier = Modifier.padding(top = 12.dp)) {
-            for (i in 0 until 3) {
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 5.dp)
-                        .size(13.dp)
-                        .background(
-                            if (i < seats) StrongroomInks.Gold
-                            else StrongroomLight.descend(StrongroomInks.Graphite, 1),
-                            CircleShape
-                        )
-                )
-            }
-        }
     }
 }
 

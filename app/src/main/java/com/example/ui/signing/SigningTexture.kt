@@ -32,6 +32,12 @@ object SigningTexture {
         /** Machined steel: coarser, deeper. */
         STEEL(cellPx = 11, reliefEighthsCap = 3),
 
+        /** The dial's enamelled face: the finest grain on the
+         *  table — at reading distance it must read as material,
+         *  never as blocks (the picked print's halftone fineness
+         *  is the bar). */
+        ENAMEL(cellPx = 4, reliefEighthsCap = 3),
+
         /** The slip's paper: the finest grain on the table, one
          *  eighth at most — paper does not relieve, it fibres. */
         PAPER(cellPx = 5, reliefEighthsCap = 1)

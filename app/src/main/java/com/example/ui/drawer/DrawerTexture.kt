@@ -20,10 +20,12 @@ import com.example.ui.foundation.StrongroomLightState
  * colour.
  *
  * Species differ the way the materials differ:
- *  - WOOD: long streaks — the grain runs ALONG the drawer, so
- *    neighbouring cells across the run share their figure far
- *    more than cells down it (the hash is stretched 6:1 along
- *    x). Coarse cells, shallow relief: stained wood drinks light.
+ *  - WOOD: long thin streaks — the grain runs ALONG the drawer,
+ *    so neighbouring cells across the run share their figure far
+ *    more than cells down it (the hash is stretched 30:1 along
+ *    x). Fine cells, shallow relief: stained wood drinks
+ *    light. (The earlier coarse 13dp / 6:1 form read on a
+ *    real phone as violet bars — see the species note.)
  *  - BRASS: fine cells, shallow relief — struck smooth (the
  *    doorway's brass law, carried).
  *  - STEEL: coarser cells, deeper relief — machined marks cut
@@ -39,7 +41,17 @@ import com.example.ui.foundation.StrongroomLightState
 object DrawerTexture {
 
     enum class Species(val cellPx: Int, val reliefEighthsCap: Int) {
-        WOOD(cellPx = 13, reliefEighthsCap = 2),
+        // WOOD cured on device evidence (DEVICE-TRUTH, 2026-11-03):
+        // at 13dp cells stretched 6:1, the grain stood on Sarthak's
+        // phone (OnePlus 13, 1440x3168) as a mosaic of hard-edged
+        // violet bars filling the empty drawer — each hash group
+        // was a 78x13dp billboard flipping between graphite and
+        // its violet lit partner. Timber grain is fine and thin:
+        // 3dp cells on a 30:1 run — long faint lines at the same
+        // 2-eighth cap, never blocks. (The cap is not the lever:
+        // at a 1-eighth cap the quantiser's truncation would
+        // flat-line the grain to nothing.)
+        WOOD(cellPx = 3, reliefEighthsCap = 2),
         BRASS(cellPx = 6, reliefEighthsCap = 2),
         STEEL(cellPx = 11, reliefEighthsCap = 3)
     }
@@ -48,10 +60,10 @@ object DrawerTexture {
      *  integer hash of the cell coordinates and the surface's seed
      *  (the doorway texture's hash, carried — one grain family for
      *  the room's furniture). WOOD stretches its coordinates along
-     *  the run before hashing, so its streaks lie long. */
+     *  the run before hashing, so its streaks lie long and thin. */
     fun grainAt(species: Species, cellX: Int, cellY: Int, seed: Int): Float {
-        val hx = if (species == Species.WOOD) cellX / 6 else cellX
-        val hy = if (species == Species.WOOD) cellY * 2 else cellY
+        val hx = if (species == Species.WOOD) cellX / 30 else cellX
+        val hy = if (species == Species.WOOD) cellY else cellY
         var h = (hx * 0x1E35A7BD) xor (hy * 0x27D4EB2F) xor (seed * 0x165667B1)
         h = h xor (h ushr 15)
         h *= 0x85EBCA6B.toInt()

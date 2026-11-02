@@ -13,6 +13,9 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -58,6 +61,11 @@ import com.example.ui.signing.SigningToken
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
+import com.example.ui.signing.PrintBenchPose
+import com.example.ui.signing.SigningPrintBench
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -314,6 +322,61 @@ class ScreenshotHarnessTest {
             "shot must be a populated surface (off-field coverage: " +
                 "${100 * offField / samples.coerceAtLeast(1)}%)",
             samples > 0 && offField.toDouble() / samples > 0.10
+        )
+    }
+
+    /** The lawful-sparse gate (LEAD-SEALED live leg, R-10's
+     *  direction): a face whose design IS field and furniture —
+     *  the shut drawer front under the table, the open drawer's
+     *  room, the handing-back threshold — compresses under the
+     *  standard byte floor and populates under the standard
+     *  coverage tenth, and failed both while rendering truly
+     *  (venue evidence: drawer_frontShut and
+     *  drawer_thresholdHandingBack at the 5,000-byte assert,
+     *  drawer_openRich at the coverage assert, on every main
+     *  run — which starved the venue of EVERY face's screens).
+     *  The sparse gate keeps the honesty checks that still bite
+     *  on a flat design — the shot exists, and it carries real
+     *  colour variance (a blank field yields a handful of
+     *  tones) and some furniture off the field — and prints its
+     *  measured numbers to the run log, so the record shows
+     *  what the render actually holds. */
+    private fun writeShotSparse(name: String, bitmap: Bitmap) {
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        val fieldArgb = StrongroomInks.Graphite.toArgb()
+        val colors = HashSet<Int>()
+        var samples = 0
+        var offField = 0
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                val px = bitmap.getPixel(x, y)
+                colors.add(px)
+                samples++
+                if (px != fieldArgb) offField++
+                y += 7
+            }
+            x += 7
+        }
+        val coverage = if (samples > 0) offField.toDouble() / samples else 0.0
+        println(
+            "SPARSE-SHOT $name bytes=${file.length()} colours=${colors.size} " +
+                "coverage=${(1000 * coverage).toInt() / 10.0}%"
+        )
+        assertTrue(
+            "sparse shot must carry real colour variance " +
+                "(distinct sampled colours: ${colors.size})",
+            colors.size > 25
+        )
+        assertTrue(
+            "sparse shot must carry its furniture (off-field coverage: " +
+                "${(1000 * coverage).toInt() / 10.0}%)",
+            coverage > 0.02
         )
     }
 
@@ -693,18 +756,22 @@ class ScreenshotHarnessTest {
         )
     )
 
-    private fun shootDrawer(name: String, content: @androidx.compose.runtime.Composable () -> Unit) {
+    private fun shootDrawer(
+        name: String,
+        sparse: Boolean = false,
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ) {
         val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
                 Box(Modifier.size(412.dp, 915.dp)) { content() }
             }
         }
-        writeShot(name, bitmap)
+        if (sparse) writeShotSparse(name, bitmap) else writeShot(name, bitmap)
     }
 
     @Test
     fun drawer_frontShut() {
-        shootDrawer("drawer-front.png") {
+        shootDrawer("drawer-front.png", sparse = true) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -718,7 +785,7 @@ class ScreenshotHarnessTest {
 
     @Test
     fun drawer_openRich() {
-        shootDrawer("drawer-open-rich.png") {
+        shootDrawer("drawer-open-rich.png", sparse = true) {
             Drawer(
                 state = DrawerState(
                     contents = drawerContents(),
@@ -730,9 +797,166 @@ class ScreenshotHarnessTest {
         }
     }
 
+    // ── DEVICE-TRUTH: THE EMPTY DRAWER AT HIS PHONE'S SPEC ────
+    // The state Sarthak's phone actually carries (build 4 photo,
+    // 2026-11-03 04:13 IST): a migrated install whose Strongroom
+    // drawer is EMPTY — no struck plates, no stored tasks — opened
+    // full-screen. The harness never shot it: every drawer fixture
+    // is seeded rich, every shot is composed in DAY light (where
+    // the wood grain's lit partner vanishes and the body renders
+    // flat by construction), and the frame is 412x915dp. On the
+    // phone the doorway place lives in SIGNING light at
+    // 1440x3168 / density 3.1875 (OnePlus 13, 510dpi class), and
+    // there the old WOOD grain (13dp cells, 6:1 stretch) stood as
+    // hard-edged violet bars wall-to-wall. This shot renders that
+    // exact state at that exact spec in the production light, so
+    // the bars can never hide behind the harness again. The gate
+    // is the sparse gate (non-blank, real variance); the render
+    // itself is the witness — it ships in the screens artifact.
+    @Test
+    fun drawer_openEmpty_deviceSpec() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Drawer(
+                    state = DrawerState(
+                        contents = DrawerContents.Empty,
+                        handingBack = LiftingPlate.HandingBack(emptyList()),
+                        handingBackDelivered = true
+                    ),
+                    actions = DrawerActions()
+                )
+            }
+        }
+        writeShotSparse("drawer-open-empty-device.png", bitmap)
+    }
+
+    /** The capture at a real device's spec: the bitmap IS the
+     *  device's pixel grid (1440x3168) and the composition runs
+     *  under the device's own density (510 / 160 = 3.1875), so
+     *  every dp lands where his phone puts it. Same hand-drawn
+     *  discipline as [drawShot] — measured, laid out, drawn. */
+    private fun drawShotDevice(
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ): Bitmap {
+        val activity = composeRule.activity
+        val view = androidx.compose.ui.platform.ComposeView(activity)
+        val w = 1440
+        val h = 3168
+        composeRule.runOnUiThread {
+            view.setContent {
+                CompositionLocalProvider(
+                    LocalDensity provides Density(3.1875f)
+                ) { content() }
+            }
+            activity.setContentView(view)
+        }
+        composeRule.waitForIdle()
+        composeRule.runOnUiThread {
+            view.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    w, android.view.View.MeasureSpec.EXACTLY
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    h, android.view.View.MeasureSpec.EXACTLY
+                )
+            )
+            view.layout(0, 0, w, h)
+        }
+        composeRule.waitForIdle()
+        val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+        composeRule.runOnUiThread {
+            view.layout(0, 0, w, h)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bmp))
+            holder.set(bmp)
+        }
+        return holder.get()
+    }
+
+    // ── THE SIGNING PRINT BENCH (DESIGN-MOTION) ────────────────
+    // The moving-parts-on-a-photograph prototype: the picked
+    // print as the still world, the crafted wheel and dial
+    // seated on it in shadow and grain. Two stills — the bench
+    // AT REST (wheel at 0°, the dial hand seated on its detent,
+    // the record's 20:00 read as the face's 8) and MID-TURN
+    // (the wheel at 41° with its ghost trail standing, the dial
+    // hand at 10:43 — between the 10:30 and 10:45 detents, the
+    // spring not yet caught — one seat standing taken).
+
+    private fun benchState(): SigningState = SigningState(
+        day = StrongroomComposition.ComposedDay(
+            filingDateIso = "2026-08-31",
+            shape = StrongroomComposition.DayShape.ORDINARY,
+            record = signing(),
+            amendedBySigning = false
+        ),
+        tokens = labels.map { SigningToken(it.key, it.value) },
+        guard = StrongroomGuard.GuardState(allowanceMinutes = 30)
+    )
+
+    private fun benchActions() = SigningActions(
+        onAmend = {},
+        onAllowanceMove = {},
+        onSignature = {}
+    )
+
+    private fun shootBench(name: String, pose: PrintBenchPose) {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    SigningPrintBench(
+                        state = benchState(),
+                        actions = benchActions(),
+                        pose = pose
+                    )
+                }
+            }
+        }
+        writeShot(name, bitmap)
+    }
+
+    @Test
+    fun signing_printBench_atRest() {
+        shootBench("signing-print-bench-rest.png", PrintBenchPose())
+    }
+
+    @Test
+    fun signing_printBench_midTurn() {
+        shootBench(
+            "signing-print-bench-midturn.png",
+            PrintBenchPose(
+                wheelDeg = 41f,
+                wheelGhostDeg = 9f,
+                dialHandMinute = 643,
+                seatsTaken = 1
+            )
+        )
+    }
+
+    @Test
+    fun signing_printBench_midGesture() {
+        // UNDER DRAG, as far as a still can swear to it: the
+        // wheel deep in its second pass at 118°, the ghost
+        // trail widened to 14° (a faster hand leaves a longer
+        // trail), the dial hand at 10:17 — two minutes off the
+        // 10:15 detent, the spring in flight — two seats
+        // standing. The harness draws settled compositions, so
+        // no still can show the drag itself; this is the drag's
+        // own frame, named as such.
+        shootBench(
+            "signing-print-bench-midgesture.png",
+            PrintBenchPose(
+                wheelDeg = 118f,
+                wheelGhostDeg = 14f,
+                dialHandMinute = 617,
+                seatsTaken = 2
+            )
+        )
+    }
+
     @Test
     fun drawer_thresholdHandingBack() {
-        shootDrawer("drawer-threshold.png") {
+        shootDrawer("drawer-threshold.png", sparse = true) {
             Drawer(
                 state = DrawerState(
                     contents = drawerContents(),
@@ -1021,6 +1245,67 @@ class ScreenshotHarnessTest {
         shootSealedFace("sealed-face-kept-places.png", state)
     }
 
+    /** THE KNOCK MOMENT (LEAD-SEALED live leg): the standing
+     *  face STRUCK — a tap dispatched at its centre under a
+     *  frozen test clock, the clock then advanced into the
+     *  blow, so the leaf is caught mid-press (the knock
+     *  displacement near its full travel, the shadow gap open
+     *  at the leaf's top and left edges), before the settle
+     *  takes it home. The face's one living moment, held in a
+     *  still: proof the face answers a strike as a mechanism,
+     *  not a poster. */
+    @Test
+    fun sealedFace_knockMoment() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val bitmap = drawShot(
+                interact = {
+                    // The strike as real motion events on the
+                    // decor view, at the laid-out face's own
+                    // centre (drawShot has already laid the view
+                    // out at the shot's size): down and up 30 ms
+                    // apart — a tap, not a press — then the test
+                    // clock advanced into the blow.
+                    val activity = composeRule.activity
+                    val decor = activity.window.decorView
+                    val density = activity.resources.displayMetrics.density
+                    val cx = 206 * density
+                    val cy = 457 * density
+                    val now = android.os.SystemClock.uptimeMillis()
+                    composeRule.runOnUiThread {
+                        val down = android.view.MotionEvent.obtain(
+                            now, now, android.view.MotionEvent.ACTION_DOWN, cx, cy, 0
+                        )
+                        val up = android.view.MotionEvent.obtain(
+                            now, now + 30, android.view.MotionEvent.ACTION_UP, cx, cy, 0
+                        )
+                        decor.dispatchTouchEvent(down)
+                        decor.dispatchTouchEvent(up)
+                        down.recycle()
+                        up.recycle()
+                    }
+                    composeRule.mainClock.advanceTimeBy(48)
+                }
+            ) {
+                StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                    Box(Modifier.size(412.dp, 915.dp)) {
+                        SealedFace(
+                            state = state,
+                            actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {})
+                        )
+                    }
+                }
+            }
+            writeShot("sealed-face-knock.png", bitmap)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
     // ── THE DOORWAY, POPULATED · THE SIGNING (METHODS-SEAT,
     // 2026-11-03) — the two standings the harness still lacked:
     // the doorway with its day standing in it (TEST-SEAT's shot
@@ -1188,5 +1473,57 @@ class ScreenshotHarnessTest {
             }
         }
         writeShot("signing.png", bitmap)
+    }
+
+    // ── The signing table in its own evening light (LEAD-SIGNING) ──
+    // The standing shots above read the table under DAY light; the
+    // signing is an EVENING act, and the table's dressed metal —
+    // minted token edges, struck-brass knobs and discs, the
+    // sentence sheet's paper grain — is tuned to the SIGNING
+    // light. Two faces: the table as he meets it, and its foot
+    // reached by his own scroll (the sheet and the slip).
+
+    private fun eveningSigningState(): SigningState =
+        SigningState(
+            day = composedDay(),
+            tokens = labels.map { (pkg, label) -> SigningToken(pkg, label) },
+            guard = StrongroomGuard.GuardState(allowanceMinutes = 30)
+        )
+
+    private fun eveningSigningActions(): SigningActions =
+        SigningActions(onAmend = {}, onAllowanceMove = {}, onSignature = {})
+
+    @Test
+    fun signing_tableTop_evening() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = eveningSigningState(),
+                        actions = eveningSigningActions()
+                    )
+                }
+            }
+        }
+        writeShot("signing-table-evening.png", bitmap)
+    }
+
+    @Test
+    fun signing_tableFoot_evening() {
+        val bitmap = drawShot(
+            interact = {
+                repeat(3) { composeRule.onRoot().performTouchInput { swipeUp() } }
+            }
+        ) {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = eveningSigningState(),
+                        actions = eveningSigningActions()
+                    )
+                }
+            }
+        }
+        writeShot("signing-table-lower.png", bitmap)
     }
 }
