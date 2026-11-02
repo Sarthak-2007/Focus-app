@@ -5,13 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodes
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
@@ -35,6 +30,8 @@ import com.example.ui.`break`.Break
 import com.example.ui.`break`.BreakActions
 import com.example.ui.`break`.BreakClock
 import com.example.ui.`break`.BreakState
+import androidx.compose.ui.graphics.toArgb
+import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
 import org.junit.Assert.assertTrue
@@ -154,40 +151,132 @@ class ScreenshotHarnessTest {
     )
 
     private fun shoot(name: String, state: AntechamberState, openPile: Boolean) {
-        composeRule.setContent {
+        val bitmap = drawShot(
+            interact = {
+                if (openPile) {
+                    // The pile's second step, by the pile corner's
+                    // own click, as his hand reaches it.
+                    clickLowestClickable("the room must carry clickables")
+                }
+            }
+        ) {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
-                Box(Modifier.size(412.dp, 915.dp).testTag("shot")) {
+                Box(Modifier.size(412.dp, 915.dp)) {
                     Antechamber(state = state, actions = actions())
                 }
             }
         }
-        composeRule.waitForIdle()
-        if (openPile) {
-            // The pile's second step, by the pile corner's own
-            // click — the lowest clickable in the room's order.
-            val clickables = composeRule.onAllNodes(hasClickAction())
-            val nodes = clickables.fetchSemanticsNodes()
-            assertTrue("the room must carry clickables", nodes.isNotEmpty())
-            val lowest = nodes.indices.maxByOrNull { nodes[it].boundsInRoot.top }!!
-            clickables[lowest].performClick()
-            composeRule.waitForIdle()
+        writeShot(name, bitmap)
+    }
+
+
+
+    /** THE CAPTURE, deterministic (BUILD-SR-38's cure of the
+     *  harness it revived): the content is composed in a
+     *  ComposeView standing as the activity's content, settled,
+     *  optionally interacted with, then MEASURED, LAID OUT, and
+     *  DRAWN BY HAND into the bitmap at the shot's own size
+     *  (412 x 915 dp). The first capture route — captureToImage on
+     *  the semantics node — returned the Robolectric window's
+     *  last-drawn surface (320 x 470), STALE across states: this
+     *  slice's room, pile, and revealed shots came back
+     *  byte-identical, and BUILD-SR-39's running / re-driving
+     *  shots with them. A stale shot is a false witness; this draw
+     *  cannot be one — the pixels are rendered from the
+     *  composition as it stands at the draw. All faces in this
+     *  harness shoot through here. */
+    private fun drawShot(
+        interact: () -> Unit = {},
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ): Bitmap {
+        val activity = composeRule.activity
+        val view = androidx.compose.ui.platform.ComposeView(activity)
+        composeRule.runOnUiThread {
+            view.setContent(content)
+            activity.setContentView(view)
         }
-        val bitmap = composeRule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+        composeRule.waitForIdle()
+        val density = activity.resources.displayMetrics.density
+        val w = (412 * density).toInt()
+        val h = (915 * density).toInt()
+        // LAY OUT AT THE SHOT'S OWN SIZE BEFORE ANY INTERACTION
+        // (cure 2c, found on this slice's pile shots): under the
+        // Robolectric window's small default layout, a scrollable
+        // room's lower nodes report clamped bounds, and the
+        // "lowest clickable" pick landed on the wrong node — the
+        // pile's second step never opened and its shots repeated
+        // the room. At the true size the geometry is honest, the
+        // corner is the corner, and the click is his hand's.
+        composeRule.runOnUiThread {
+            view.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    w, android.view.View.MeasureSpec.EXACTLY
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    h, android.view.View.MeasureSpec.EXACTLY
+                )
+            )
+            view.layout(0, 0, w, h)
+        }
+        interact()
+        composeRule.waitForIdle()
+        val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+        composeRule.runOnUiThread {
+            view.layout(0, 0, w, h)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bmp))
+            holder.set(bmp)
+        }
+        return holder.get()
+    }
+
+    /** A second step, by its corner's own click — the lowest
+     *  clickable in the surface's order. */
+    private fun clickLowestClickable(what: String) {
+        val clickables = composeRule.onAllNodes(hasClickAction())
+        val nodes = clickables.fetchSemanticsNodes()
+        assertTrue(what, nodes.isNotEmpty())
+        val lowest = nodes.indices.maxByOrNull { nodes[it].boundsInRoot.top }!!
+        clickables[lowest].performClick()
+    }
+
+    /** Write the shot and hold it to the harness's gate — the
+     *  gate measures what the visual bar actually cares about
+     *  (BUILD-SR-38, on landed evidence): the shot must exist and
+     *  be uncorrupted (a 5,000-byte floor — a truly blank 412x915
+     *  field compresses under it); it must carry real colour
+     *  VARIANCE (> 40 distinct sampled colours — the flat-banded
+     *  first shutter failed here in spirit: a handful of tones is
+     *  a placeholder, however large its file); and the surface
+     *  must be POPULATED (> 10% of sampled pixels off the field
+     *  colour — a lawful but field-heavy step, like the held
+     *  pile's second step at ~30% coverage, passes on its
+     *  furniture; an empty room at ~0% fails). The earlier
+     *  byte-size-only form (15,000) is retired: it passed stale
+     *  captures and failed a lawful sparse step — it measured
+     *  the file, not the surface. */
+    private fun writeShot(name: String, bitmap: Bitmap) {
         val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
         dir.mkdirs()
         val file = File(dir, name)
         FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
         assertTrue(
-            "shot must be a rich render, not a blank field (${file.length()} bytes)",
-            file.length() > 15_000
+            "shot must be an uncorrupted render (${file.length()} bytes)",
+            file.length() > 5_000
         )
+        val fieldArgb = StrongroomInks.Graphite.toArgb()
         val colors = HashSet<Int>()
+        var samples = 0
+        var offField = 0
         var x = 0
         while (x < bitmap.width) {
             var y = 0
             while (y < bitmap.height) {
-                colors.add(bitmap.getPixel(x, y))
+                val px = bitmap.getPixel(x, y)
+                colors.add(px)
+                samples++
+                if (px != fieldArgb) offField++
                 y += 7
             }
             x += 7
@@ -195,6 +284,11 @@ class ScreenshotHarnessTest {
         assertTrue(
             "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
             colors.size > 40
+        )
+        assertTrue(
+            "shot must be a populated surface (off-field coverage: " +
+                "${100 * offField / samples.coerceAtLeast(1)}%)",
+            samples > 0 && offField.toDouble() / samples > 0.10
         )
     }
 
@@ -273,46 +367,18 @@ class ScreenshotHarnessTest {
     private fun shootBreak(name: String, remainingMs: Long, openPile: Boolean) {
         val state = breakState(remainingMs)
         val now = state.clock.totalMillis - remainingMs
-        composeRule.setContent {
+        val bitmap = drawShot(
+            interact = {
+                if (openPile) clickLowestClickable("the break must carry clickables")
+            }
+        ) {
             StrongroomTheme(lightState = StrongroomLightState.SEALED) {
-                Box(Modifier.size(412.dp, 915.dp).testTag("shot")) {
+                Box(Modifier.size(412.dp, 915.dp)) {
                     Break(state = state, actions = breakActions(), nowElapsedMillis = now)
                 }
             }
         }
-        composeRule.waitForIdle()
-        if (openPile) {
-            val clickables = composeRule.onAllNodes(hasClickAction())
-            val nodes = clickables.fetchSemanticsNodes()
-            assertTrue("the break must carry clickables", nodes.isNotEmpty())
-            val lowest = nodes.indices.maxByOrNull { nodes[it].boundsInRoot.top }!!
-            clickables[lowest].performClick()
-            composeRule.waitForIdle()
-        }
-        val bitmap = composeRule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
-        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
-        dir.mkdirs()
-        val file = File(dir, name)
-        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
-        assertTrue(
-            "shot must be a rich render, not a blank field (${file.length()} bytes)",
-            file.length() > 15_000
-        )
-        val colors = HashSet<Int>()
-        var x = 0
-        while (x < bitmap.width) {
-            var y = 0
-            while (y < bitmap.height) {
-                colors.add(bitmap.getPixel(x, y))
-                y += 7
-            }
-            x += 7
-        }
-        assertTrue(
-            "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
-            colors.size > 40
-        )
+        writeShot(name, bitmap)
     }
 
     @Test
@@ -422,36 +488,12 @@ class ScreenshotHarnessTest {
     )
 
     private fun shootDrawer(name: String, content: @androidx.compose.runtime.Composable () -> Unit) {
-        composeRule.setContent {
+        val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
-                Box(Modifier.size(412.dp, 915.dp).testTag("shot")) { content() }
+                Box(Modifier.size(412.dp, 915.dp)) { content() }
             }
         }
-        composeRule.waitForIdle()
-        val bitmap = composeRule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
-        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
-        dir.mkdirs()
-        val file = File(dir, name)
-        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
-        assertTrue(
-            "shot must be a rich render, not a blank field (${file.length()} bytes)",
-            file.length() > 15_000
-        )
-        val colors = HashSet<Int>()
-        var x = 0
-        while (x < bitmap.width) {
-            var y = 0
-            while (y < bitmap.height) {
-                colors.add(bitmap.getPixel(x, y))
-                y += 7
-            }
-            x += 7
-        }
-        assertTrue(
-            "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
-            colors.size > 40
-        )
+        writeShot(name, bitmap)
     }
 
     @Test
