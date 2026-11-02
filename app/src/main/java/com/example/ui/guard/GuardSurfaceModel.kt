@@ -63,7 +63,7 @@ data class GuardRoutineSnapshot(
     val id: Int,
     val name: String,
     val enabled: Boolean,
-    val enforcingNow: Boolean,
+    val enforcingNow: Boolean = false,
     val pendingOffFromMillis: Long = 0L
 )
 
