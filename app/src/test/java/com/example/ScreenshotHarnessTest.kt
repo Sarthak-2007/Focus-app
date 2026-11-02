@@ -591,27 +591,31 @@ class ScreenshotHarnessTest {
 
     @Test
     fun signing_tableTop() {
-        drawShot("signing-table.png") {
+        val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
                 Signing(state = signingState(), actions = signingActions())
             }
         }
+        writeShot("signing-table.png", bitmap)
     }
 
     @Test
     fun signing_tableFoot() {
-        drawShot("signing-table-lower.png", interact = {
-            repeat(3) { composeRule.onRoot().performTouchInput { swipeUp() } }
-        }) {
+        val bitmap = drawShot(
+            interact = {
+                repeat(3) { composeRule.onRoot().performTouchInput { swipeUp() } }
+            }
+        ) {
             StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
                 Signing(state = signingState(), actions = signingActions())
             }
         }
+        writeShot("signing-table-lower.png", bitmap)
     }
 
     @Test
     fun signing_dialAlone() {
-        drawShot("signing-dial.png") {
+        val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
                 Box(
                     modifier = Modifier
@@ -620,12 +624,13 @@ class ScreenshotHarnessTest {
                     contentAlignment = Alignment.Center
                 ) {
                     SigningDialSurface(
-                        liftingTime = LocalTime.of(20, 0),
-                        onSet = {},
+                        state = signingState(),
+                        actions = signingActions(),
                         lightState = StrongroomLightState.SIGNING
                     )
                 }
             }
         }
+        writeShot("signing-dial.png", bitmap)
     }
 }
