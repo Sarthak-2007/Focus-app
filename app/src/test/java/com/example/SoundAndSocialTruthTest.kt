@@ -421,14 +421,16 @@ class SoundAndSocialTruthTest {
             .build()
         try {
             val repository = MonolithRepository(context, db.monolithDao())
+            // PARCEL 2 (DIAG-S12-FLAKE-2 §5, step 1): plant the
+            // stored fact OFF before the VM exists — the
+            // discharge the chain case above already uses against
+            // this same writer — so the settle gate can await the
+            // init assignment's own footprint (!published)
+            // instead of the born-equal pair its old form falsely
+            // proved on (see the helper). The gate restores the
+            // ON premise through the toggle before returning.
+            runBlocking { repository.setBrowserBlockerEnabled(false) }
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
-            // The seed-settle gate (DIAG-D3 §c2(iii)) replaces the
-            // old one-shot equality poll: born-equal (published
-            // true, stored default true) satisfied that poll
-            // before the VM's init seed assignment had even run,
-            // and the assignment — which lands only after the
-            // whole seed pass — could then clobber the published
-            // print mid-chain and eat a toggle (see the helper).
             awaitPublishedFactSettled(vm, repository, db.monolithDao())
             setParkContent(vm)
 
@@ -436,11 +438,25 @@ class SoundAndSocialTruthTest {
             settlePark()
 
             tapParkSled()
+            // PARCEL 2, step 3: the print-flip gate, split off
+            // ahead of the stored-fact gate. The print flip is
+            // the tap's synchronous consequence; if a tap is ever
+            // silently swallowed (the diagnosis's one unexcluded
+            // alternative — SledSwitchView's gateCheck returning
+            // without toggling), THIS gate takes the timeout and
+            // names the tap as the lost event, instead of a
+            // downstream state gate.
+            awaitTrue("the first tap flipped the published print OFF") {
+                !vm.browserUrlBlockerEnabled.value
+            }
             awaitTrue("touching the rendered sled writes the stored fact OFF") {
                 !runBlocking { repository.isBrowserBlockerEnabled() }
             }
 
             tapParkSled()
+            awaitTrue("the second tap flipped the published print ON") {
+                vm.browserUrlBlockerEnabled.value
+            }
             awaitTrue("and a second touch writes it back ON") {
                 runBlocking { repository.isBrowserBlockerEnabled() }
             }
@@ -460,6 +476,17 @@ class SoundAndSocialTruthTest {
             .build()
         try {
             val repository = MonolithRepository(context, db.monolithDao())
+            // PARCEL 2 (DIAG-S12-FLAKE-2 §5, step 1): plant the
+            // stored fact OFF before the VM exists, so the settle
+            // gate below awaits the init assignment's own
+            // footprint (!published) — a value only the
+            // assignment's execution can produce — instead of the
+            // born-equal pair its old form falsely proved on. The
+            // gate restores the ON premise through the toggle
+            // before returning, so the sweep gate's derivation is
+            // raised to RUNNING by this case's own toggle, not by
+            // an assignment that may still be in flight.
+            runBlocking { repository.setBrowserBlockerEnabled(false) }
             val vm = MonolithViewModel(context, repository, TactileSoundEngine(context))
 
             // PARCEL (DIAG-S12-NEWFLAKE §2.2, step 1): the settle
@@ -509,6 +536,17 @@ class SoundAndSocialTruthTest {
 
             tapParkSled()
 
+            // PARCEL 2, step 3: the print-flip gate, split off
+            // ahead of the derived-OFF gate (whose awaited
+            // condition below is byte-untouched). The print flip
+            // is the tap's synchronous consequence; if the tap is
+            // ever silently swallowed (gateCheck — the
+            // diagnosis's one unexcluded alternative for this
+            // gate), THIS gate takes the timeout and names the
+            // tap as the lost event.
+            awaitTrue("the tap flipped the published print OFF") {
+                !vm.browserUrlBlockerEnabled.value
+            }
             awaitTrue("the derived board word moves to OFF") {
                 WatchStore.snapshots.value
                     .measurement(WatchItemId.SOCIAL_SITES)
@@ -675,32 +713,62 @@ class SoundAndSocialTruthTest {
         }
     }
 
-    /** DIAG-D3 §c2(iii) — the seed-settle gate, landed for the
-     *  two rendered social cases. The VM's init launch assigns
-     *  the published browser-blocker print only AFTER the whole
-     *  seed pass (ensureSeededAndSyncPackages) returns, and the
-     *  flow is born `true` — the stored fact's own fresh-install
-     *  value — so a one-shot "published == stored" poll passes
-     *  before the assignment even exists. When the assignment
-     *  then lands mid-chain (after a first tap flipped the print
-     *  and launched its write), it re-reads the store — possibly
-     *  before that write lands — and clobbers the print back;
-     *  the next tap, which negates the PRINT, writes the same
-     *  value again and the chain's await times out (census #4:
-     *  "and a second touch writes it back ON" — the class's
-     *  rotating failure, run to run). The gate waits for proof
-     *  the assignment has landed: the seed pass's own products
-     *  are visible (profiles are seeded inside the same pass)
-     *  AND the published/stored pair reads equal across two
-     *  consecutive driven polls. After it, the only writer of
-     *  the print in these cases is the toggle itself.
+    /** The seed-settle gate for the two rendered social cases,
+     *  re-proved by PARCEL 2 (DIAG-S12-FLAKE-2 §5, on the pair
+     *  failure of census run 41364375296).
      *
-     *  The landed-proof reads the profiles TABLE, never the VM's
-     *  profiles flow: that flow is collection-driven and stays
-     *  dark until a composition collects it, so a flow-based gate
-     *  starves pre-composition — PR #697's first run died in this
-     *  gate at 30 s in both cases on exactly that. The seed pass
-     *  writes the table directly; the table is the product. */
+     *  HISTORY, kept because the old text claimed a proof it did
+     *  not have: the DIAG-D3 §c2(iii) form of this gate waited
+     *  for the seed pass's products (profiles seeded) AND a
+     *  published/stored pair reading equal across two consecutive
+     *  polls, and concluded "after it, the only writer of the
+     *  print in these cases is the toggle itself." That was a
+     *  false proof. The print is born `true`
+     *  (MonolithViewModel.kt:809) and the stored fact's
+     *  fresh-install value is also `true`, so the pair is born
+     *  equal: the equality held continuously from the VM's birth
+     *  and carried zero information about whether the init
+     *  assignment (MonolithViewModel.kt:2302 — executed only
+     *  after ensureSeededAndSyncPackages returns whole, plus
+     *  five further init steps) had run. Whenever the init
+     *  launch's tail outlasted the gate's two polls — exactly
+     *  what full-suite load stretches — the assignment landed
+     *  mid-chain, re-read the store before a tap's write landed,
+     *  and clobbered the print back ON: the rotator's second
+     *  touch then re-wrote OFF (its census-#4 mode, at :444) and
+     *  F-01's combine collector re-derived RUNNING over the tap
+     *  (at :512).
+     *
+     *  THE PARCEL-2 PROOF is the assignment's own footprint —
+     *  the discharge SocialToggleChainWritesTheFactTheBlockerReads
+     *  already uses against this same writer: each case plants
+     *  the stored fact OFF before the VM exists, so inside this
+     *  gate the print's only possible writers are the init
+     *  assignment and the toggle, and no toggle has run yet.
+     *  Awaiting !published is therefore satisfiable ONLY by the
+     *  assignment's own execution: born-equal can no longer
+     *  certify anything, because the awaited value differs from
+     *  the born value. The false proof is impossible by
+     *  construction, not merely less likely.
+     *
+     *  RESTORE: with the assignment provably spent, the gate
+     *  restores the cases' ON premise through the toggle itself
+     *  (the tests' own act, not a fixture write) and awaits the
+     *  print and the stored fact ON together — a pair check that
+     *  is now meaningful, because the only remaining writer is
+     *  the toggle. Each case then proceeds with the assignment
+     *  dead.
+     *
+     *  The profiles pre-wait in the body is kept as a cheap
+     *  pre-wait only: profiles are seeded inside the same pass
+     *  the assignment follows, so awaiting them also drives the
+     *  init launch forward — but it is NOT proof of anything and
+     *  is never cited as such. (It reads the profiles TABLE,
+     *  never the VM's profiles flow: that flow is
+     *  collection-driven and stays dark until a composition
+     *  collects it — PR #697's first run starved in this gate on
+     *  exactly that. The seed pass writes the table directly;
+     *  the table is the product.) */
     private fun awaitPublishedFactSettled(
         vm: MonolithViewModel,
         repository: MonolithRepository,
@@ -709,26 +777,24 @@ class SoundAndSocialTruthTest {
         awaitTrue("the VM's init seed pass has landed (profiles seeded)") {
             runBlocking { dao.getAllProfilesSnapshot() }.isNotEmpty()
         }
-        val deadline = System.currentTimeMillis() + 30_000L
-        var lastPair: Pair<Boolean, Boolean>? = null
-        while (System.currentTimeMillis() < deadline) {
-            val pair = vm.browserUrlBlockerEnabled.value to
-                runBlocking { repository.isBrowserBlockerEnabled() }
-            if (pair.first == pair.second && pair == lastPair) return
-            lastPair = pair
-            ShadowLooper.idleMainLooper()
-            if (parkComposed) {
-                try {
-                    composeRule.waitForIdle()
-                } catch (t: Throwable) {
-                    // See awaitTrue.
-                }
-            }
-            Thread.sleep(25L)
+        // PARCEL 2, phase 2 (replaces the born-equal pair proof
+        // whose history the doc above keeps): the case planted
+        // the stored fact OFF before the VM existed and the print
+        // is born true, so only the init assignment's own
+        // execution can move the print to OFF. Await exactly that
+        // footprint.
+        awaitTrue("the init assignment has landed (the print follows the planted fact OFF)") {
+            !vm.browserUrlBlockerEnabled.value
         }
-        throw AssertionError(
-            "Timed out waiting for: the published fact to settle on the stored fact"
-        )
+        // Restore the ON premise through the toggle itself, and
+        // await print and stored fact ON together before
+        // returning: from here the only writer of the print in
+        // these cases is the toggle.
+        vm.toggleBrowserUrlBlocker()
+        awaitTrue("the toggle restores the ON premise (print and stored fact ON)") {
+            vm.browserUrlBlockerEnabled.value &&
+                runBlocking { repository.isBrowserBlockerEnabled() }
+        }
     }
 
     /** Poll-with-looper-idle until [condition] holds (the
