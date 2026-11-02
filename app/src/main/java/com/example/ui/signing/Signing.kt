@@ -33,12 +33,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
@@ -58,6 +62,7 @@ import com.example.ui.foundation.StrongroomType
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * C-02 · THE SIGNING — a HERO. The evening's act at the open door,
@@ -169,7 +174,7 @@ fun Signing(state: SigningState, actions: SigningActions, modifier: Modifier = M
     ) {
         SpokenWords(state)
         Spacer(Modifier.height(22.dp))
-        TokenTray(state, actions)
+        TokenTray(state, actions, lightState)
         Spacer(Modifier.height(26.dp))
         SigningDialSurface(state, actions, lightState)
         Spacer(Modifier.height(26.dp))
@@ -234,7 +239,11 @@ private fun SpokenWords(state: SigningState) {
 // ── The tray of tokens (brief C-08; census C-02's choosing) ─────
 
 @Composable
-private fun TokenTray(state: SigningState, actions: SigningActions) {
+private fun TokenTray(
+    state: SigningState,
+    actions: SigningActions,
+    lightState: StrongroomLightState
+) {
     val allowed = state.day.record.allowedPackages
     Row(
         modifier = Modifier
@@ -272,12 +281,37 @@ private fun TokenTray(state: SigningState, actions: SigningActions) {
                             width = if (isAllowed) 2.5.dp else 1.dp,
                             color = if (isAllowed) StrongroomLight.litPartner(
                                 StrongroomInks.Gold, StrongroomInks.Graphite,
-                                StrongroomLightState.SIGNING
+                                lightState
                             ) else StrongroomInks.Graphite,
                             shape = CircleShape
                         ),
                     contentAlignment = Alignment.Center
                 ) {
+                    // The minted edge: a lit crescent toward the
+                    // lamp and a shadow crescent away from it —
+                    // a struck token, not a flat disc.
+                    Canvas(Modifier.matchParentSize()) {
+                        val c = Offset(size.width / 2f, size.height / 2f)
+                        val r = size.minDimension / 2f - 2.dp.toPx()
+                        val base = if (isAllowed) StrongroomInks.Gold
+                        else StrongroomInks.Graphite
+                        val fld = if (isAllowed) StrongroomInks.Graphite
+                        else StrongroomInks.Violet
+                        drawArc(
+                            color = StrongroomLight.relief(base, fld, 0.85f, lightState),
+                            startAngle = 153f, sweepAngle = 120f, useCenter = false,
+                            topLeft = Offset(c.x - r, c.y - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                        drawArc(
+                            color = StrongroomLight.relief(base, fld, -0.85f, lightState),
+                            startAngle = -27f, sweepAngle = 120f, useCenter = false,
+                            topLeft = Offset(c.x - r, c.y - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                    }
                     Text(
                         text = token.label.take(1).uppercase(),
                         style = StrongroomType.Scr3,
@@ -297,10 +331,137 @@ private fun TokenTray(state: SigningState, actions: SigningActions) {
     }
 }
 
+// ── Crafted metal: the drawing helpers ─────────────────────────
+// The dial and the wheel are drawn as MACHINED objects, not flat
+// shapes: every ring is relieved segment by segment from the
+// surface's own light (RELIGHT — relief light derived from the
+// surface's own luminance, the mechanism Sarthak's eye kept),
+// every bolt head carries its lit lip and its slot, every enamel
+// field carries fine grain. The lamp is the state's own, read
+// from StrongroomLight's law — no call site invents a light.
+
+/** The RELIGHT gradient (−1..1) of a direction on the canvas:
+ *  the direction's projection onto the state's light direction. */
+private fun lightGradient(angleRad: Double, state: StrongroomLightState): Float {
+    val p = StrongroomLight.paramsFor(state)
+    val len = sqrt(
+        (p.lightDirectionX * p.lightDirectionX +
+            p.lightDirectionY * p.lightDirectionY).toDouble()
+    )
+    if (len == 0.0) return 0f
+    return (cos(angleRad) * p.lightDirectionX / len +
+        sin(angleRad) * p.lightDirectionY / len).toFloat()
+}
+
+/** A machined ring, relieved segment by segment: each segment's
+ *  tone is the base ink's RELIGHT relief at that segment's own
+ *  facing — light travels around the ring the way it travels
+ *  around the picked print's door rings. */
+private fun DrawScope.reliefRing(
+    center: Offset,
+    radius: Float,
+    width: Float,
+    base: Color,
+    field: Color,
+    state: StrongroomLightState,
+    segments: Int = 72
+) {
+    val sweep = 360f / segments
+    for (i in 0 until segments) {
+        val start = i * sweep
+        val mid = Math.toRadians((start + sweep / 2.0).toDouble())
+        drawArc(
+            color = StrongroomLight.relief(base, field, lightGradient(mid, state), state),
+            startAngle = start,
+            sweepAngle = sweep + 0.8f,
+            useCenter = false,
+            topLeft = Offset(center.x - radius, center.y - radius),
+            size = Size(radius * 2f, radius * 2f),
+            style = Stroke(width = width)
+        )
+    }
+}
+
+/** One bolt head, as the print's rings carry them: a body toned
+ *  from its own place on the ring, a lit lip toward the lamp, a
+ *  slot cut across it. [slotAngleRad] turns the slot — no two
+ *  bolts on a real door share a slot angle. */
+private fun DrawScope.boltHead(
+    center: Offset,
+    radius: Float,
+    gradient: Float,
+    slotAngleRad: Double,
+    field: Color,
+    state: StrongroomLightState
+) {
+    drawCircle(
+        color = StrongroomLight.relief(StrongroomInks.Graphite, field, gradient, state),
+        radius = radius, center = center
+    )
+    val p = StrongroomLight.paramsFor(state)
+    val len = sqrt(
+        (p.lightDirectionX * p.lightDirectionX +
+            p.lightDirectionY * p.lightDirectionY).toDouble()
+    )
+    if (len > 0.0) {
+        val lx = (p.lightDirectionX / len).toFloat()
+        val ly = (p.lightDirectionY / len).toFloat()
+        drawCircle(
+            color = StrongroomLight.relief(StrongroomInks.Graphite, field, 1f, state),
+            radius = radius * 0.42f,
+            center = center + Offset(lx * radius * 0.4f, ly * radius * 0.4f)
+        )
+    }
+    val sx = cos(slotAngleRad).toFloat()
+    val sy = sin(slotAngleRad).toFloat()
+    drawLine(
+        color = StrongroomLight.blendEighth(StrongroomInks.Violet, StrongroomInks.Graphite, 5),
+        start = center - Offset(sx * radius * 0.62f, sy * radius * 0.62f),
+        end = center + Offset(sx * radius * 0.62f, sy * radius * 0.62f),
+        strokeWidth = radius * 0.45f
+    )
+}
+
+/** Fine grain over a disc (or annulus): per-cell tones from the
+ *  surface ink itself, through [SigningTexture] — the print's
+ *  halftone fineness; never blocks, never a flat fill. */
+private fun DrawScope.grainDisc(
+    center: Offset,
+    radius: Float,
+    innerRadius: Float,
+    ink: Color,
+    field: Color,
+    species: SigningTexture.Species,
+    seed: Int,
+    state: StrongroomLightState
+) {
+    val cell = species.cellPx.dp.toPx()
+    var row = 0
+    var gy = center.y - radius
+    while (gy < center.y + radius) {
+        var col = 0
+        var gx = center.x - radius
+        while (gx < center.x + radius) {
+            val dx = gx + cell / 2f - center.x
+            val dy = gy + cell / 2f - center.y
+            val d = sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+            if (d in innerRadius..radius) {
+                drawRect(
+                    color = SigningTexture.cellTone(ink, field, species, col, row, seed, state),
+                    topLeft = Offset(gx, gy),
+                    size = Size(cell + 1f, cell + 1f)
+                )
+            }
+            gx += cell; col++
+        }
+        gy += cell; row++
+    }
+}
+
 // ── The Signing Dial — fresh in-app (brief C-05; ledger E-11) ───
 
 @Composable
-private fun SigningDialSurface(
+internal fun SigningDialSurface(
     state: SigningState,
     actions: SigningActions,
     lightState: StrongroomLightState
@@ -359,27 +520,83 @@ private fun SigningDialSurface(
             Canvas(Modifier.fillMaxSize()) {
                 val cx = size.width / 2f
                 val cy = size.height / 2f
+                val center = Offset(cx, cy)
                 val outer = size.minDimension / 2f
-                // The steel case and the enamelled ring.
-                drawCircle(color = StrongroomRoles.Metal, radius = outer)
-                drawCircle(
-                    color = StrongroomLight.stateSurface(
-                        StrongroomInks.Violet, lightState,
-                        com.example.ui.foundation.StrongroomLitSurface.FACE
-                    ),
-                    radius = outer - 10.dp.toPx()
+                val enamel = StrongroomLight.stateSurface(
+                    StrongroomInks.Violet, lightState,
+                    com.example.ui.foundation.StrongroomLitSurface.FACE
                 )
+                // The shadow's fall, from the state's own lamp:
+                // every cut on this face throws its shadow this way.
+                val lp = StrongroomLight.paramsFor(lightState)
+                val llen = sqrt(
+                    (lp.lightDirectionX * lp.lightDirectionX +
+                        lp.lightDirectionY * lp.lightDirectionY).toDouble()
+                )
+                val shx = if (llen > 0.0) {
+                    (-lp.lightDirectionX / llen * 1.2.dp.toPx()).toFloat()
+                } else 0f
+                val shy = if (llen > 0.0) {
+                    (-lp.lightDirectionY / llen * 1.2.dp.toPx()).toFloat()
+                } else 0f
+                // THE ENAMEL FACE, grained: the dial's deep-violet
+                // enamel carries fine grain from its own ink — the
+                // print's halftone fineness; never a flat fill,
+                // never blocks.
+                drawCircle(color = enamel, radius = outer - 20.dp.toPx(), center = center)
+                grainDisc(
+                    center = center, radius = outer - 20.dp.toPx(), innerRadius = 0f,
+                    ink = enamel, field = StrongroomInks.Graphite,
+                    species = SigningTexture.Species.ENAMEL, seed = 53,
+                    state = lightState
+                )
+                // THE STEEL CASE: a wide machined flange, relieved
+                // segment by segment — the light travels around
+                // the ring as it travels around the print's door
+                // rings, catching the upper-left, dying lower-right.
+                reliefRing(
+                    center = center, radius = outer - 10.dp.toPx(),
+                    width = 20.dp.toPx(), base = StrongroomInks.Graphite,
+                    field = StrongroomInks.Violet, state = lightState
+                )
+                // A gold pinstripe seated in the flange, by hand.
+                reliefRing(
+                    center = center, radius = outer - 18.5.dp.toPx(),
+                    width = 2.dp.toPx(), base = StrongroomInks.Gold,
+                    field = StrongroomInks.Graphite, state = lightState
+                )
+                // Twelve bolt heads on the flange, as the print's
+                // door ring carries them — each lit from its own
+                // place, each slot turned differently.
+                for (i in 0 until 12) {
+                    val a = Math.toRadians(i * 30.0 - 90.0)
+                    val bx = cx + (outer - 10.dp.toPx()) * cos(a).toFloat()
+                    val by = cy + (outer - 10.dp.toPx()) * sin(a).toFloat()
+                    boltHead(
+                        center = Offset(bx, by), radius = 4.2.dp.toPx(),
+                        gradient = lightGradient(a, lightState),
+                        slotAngleRad = a + i * 0.83,
+                        field = StrongroomInks.Violet, state = lightState
+                    )
+                }
                 // Detent stones: quarters small, whole hours firm —
-                // the hour train's topography, drawn (amplitudes
-                // 55 / 85 in the foundation's figures).
+                // the hour train's topography, cut into the enamel:
+                // each stone's shadow cut is drawn first, thrown
+                // away from the lamp, then its gold face.
                 for (step in 0 until 48) {
                     val minute = step * 15
                     val whole = minute % 60 == 0
                     val a = Math.toRadians(
                         SigningDial.angleFor(minute) - 90.0
                     ).toFloat()
-                    val r1 = outer - if (whole) 26.dp.toPx() else 19.dp.toPx()
-                    val r2 = outer - 12.dp.toPx()
+                    val r1 = outer - if (whole) 40.dp.toPx() else 33.dp.toPx()
+                    val r2 = outer - 26.dp.toPx()
+                    drawLine(
+                        color = StrongroomLight.shadowPartner(StrongroomInks.Gold),
+                        start = Offset(cx + r1 * cos(a) + shx, cy + r1 * sin(a) + shy),
+                        end = Offset(cx + r2 * cos(a) + shx, cy + r2 * sin(a) + shy),
+                        strokeWidth = if (whole) 3.dp.toPx() else 1.5.dp.toPx()
+                    )
                     drawLine(
                         color = if (whole) StrongroomInks.Gold
                         else StrongroomLight.descend(StrongroomInks.Gold, 3),
@@ -388,32 +605,99 @@ private fun SigningDialSurface(
                         strokeWidth = if (whole) 3.dp.toPx() else 1.5.dp.toPx()
                     )
                 }
-                // The hand, at the placed hour.
+                // The scale's inner groove: a machined gold line
+                // closing the detent band.
+                reliefRing(
+                    center = center, radius = outer - 43.dp.toPx(),
+                    width = 1.5.dp.toPx(), base = StrongroomInks.Gold,
+                    field = StrongroomInks.Graphite, state = lightState
+                )
+                // The hand, crafted: a tapered gold hand with a
+                // counterweight tail — its shadow thrown first,
+                // then its relieved face.
                 val ha = Math.toRadians(
                     SigningDial.angleFor(previewMinute) - 90.0
                 ).toFloat()
-                drawLine(
-                    color = StrongroomInks.Gold,
-                    start = Offset(cx, cy),
-                    end = Offset(
-                        cx + (outer - 34.dp.toPx()) * cos(ha),
-                        cy + (outer - 34.dp.toPx()) * sin(ha)
-                    ),
-                    strokeWidth = 4.dp.toPx()
+                val hdx = cos(ha)
+                val hdy = sin(ha)
+                val tip = Offset(
+                    cx + (outer - 30.dp.toPx()) * hdx,
+                    cy + (outer - 30.dp.toPx()) * hdy
                 )
-                drawCircle(color = StrongroomInks.Gold, radius = 7.dp.toPx())
+                val tailC = Offset(cx - 15.dp.toPx() * hdx, cy - 15.dp.toPx() * hdy)
+                val perp = Offset(-hdy, hdx)
+                fun handPath(ox: Float, oy: Float): Path = Path().apply {
+                    moveTo(
+                        tailC.x + ox + perp.x * 4.5.dp.toPx(),
+                        tailC.y + oy + perp.y * 4.5.dp.toPx()
+                    )
+                    lineTo(tip.x + ox, tip.y + oy)
+                    lineTo(
+                        tailC.x + ox - perp.x * 4.5.dp.toPx(),
+                        tailC.y + oy - perp.y * 4.5.dp.toPx()
+                    )
+                    close()
+                }
+                drawPath(path = handPath(shx, shy), color = StrongroomInks.Graphite)
+                drawPath(
+                    path = handPath(0f, 0f),
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                        lightGradient(ha.toDouble(), lightState), lightState
+                    )
+                )
+                drawCircle(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                        lightGradient(ha.toDouble() + Math.PI, lightState), lightState
+                    ),
+                    radius = 5.dp.toPx(), center = tailC
+                )
+                // The hub: a machined graphite collar, relieved,
+                // with a gold heart.
+                reliefRing(
+                    center = center, radius = 9.dp.toPx(),
+                    width = 5.dp.toPx(), base = StrongroomInks.Graphite,
+                    field = StrongroomInks.Violet, state = lightState
+                )
+                drawCircle(color = StrongroomInks.Gold, radius = 4.dp.toPx(), center = center)
                 // THE VERNIER APERTURE at the index (top): a window
-                // in the ring where the scale passes enlarged under
-                // a hairline — the thumb works the ring's edge, the
-                // reading is taken here, where the thumb is not.
+                // recessed into the flange, where the scale passes
+                // enlarged under a hairline — the thumb works the
+                // ring's edge, the reading is taken here, where the
+                // thumb is not. The recess reads by its shadowed
+                // head and its lit sill.
                 val winW = 92.dp.toPx()
                 val winH = 30.dp.toPx()
                 val winX = cx - winW / 2f
                 val winY = cy - outer + 2.dp.toPx()
                 drawRect(
-                    color = StrongroomInks.Graphite,
+                    color = StrongroomLight.blendEighth(
+                        StrongroomInks.Violet, StrongroomInks.Graphite, 6
+                    ),
                     topLeft = Offset(winX, winY),
                     size = Size(winW, winH)
+                )
+                drawRect(
+                    color = StrongroomInks.Graphite,
+                    topLeft = Offset(winX, winY),
+                    size = Size(winW, 5.dp.toPx())
+                )
+                drawLine(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 0.5f, lightState
+                    ),
+                    start = Offset(winX, winY + winH - 1.dp.toPx()),
+                    end = Offset(winX + winW, winY + winH - 1.dp.toPx()),
+                    strokeWidth = 1.5.dp.toPx()
+                )
+                drawRect(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.6f, lightState
+                    ),
+                    topLeft = Offset(winX, winY),
+                    size = Size(winW, winH),
+                    style = Stroke(width = 1.5.dp.toPx())
                 )
                 // Enlarged vernier ticks: the detent and its
                 // neighbours, spread across the window.
@@ -526,8 +810,18 @@ private fun BreakRail(
                     )
                 }
                 val px = size.width * preview / BreakChoice.MAX_MINUTES
+                // The rail's knob, as a struck brass stud: its
+                // shadow thrown away from the lamp, its face
+                // relieved toward it.
                 drawCircle(
-                    color = StrongroomInks.Gold,
+                    color = StrongroomLight.descend(StrongroomInks.Gold, 4),
+                    radius = 11.dp.toPx(),
+                    center = Offset(px + 1.5.dp.toPx(), midY + 2.dp.toPx())
+                )
+                drawCircle(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 0.5f, lightState
+                    ),
                     radius = 11.dp.toPx(),
                     center = Offset(px, midY)
                 )
@@ -552,6 +846,7 @@ private fun BreakRail(
                     modifier = Modifier
                         .padding(end = 10.dp)
                         .size(42.dp)
+                        .clip(CircleShape)
                         .background(StrongroomInks.Gold, CircleShape)
                         .clickable {
                             preview = BreakChoice.shortcut(preset)
@@ -563,6 +858,29 @@ private fun BreakRail(
                         },
                     contentAlignment = Alignment.Center
                 ) {
+                    // Struck brass grain, from the disc itself.
+                    Canvas(Modifier.matchParentSize()) {
+                        val cell = SigningTexture.Species.BRASS.cellPx.dp.toPx()
+                        var gy = 0
+                        var yy = 0f
+                        while (yy < size.height) {
+                            var gx = 0
+                            var xx = 0f
+                            while (xx < size.width) {
+                                drawRect(
+                                    color = SigningTexture.cellTone(
+                                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                                        SigningTexture.Species.BRASS, gx, gy,
+                                        seed = 31 + preset, state = lightState
+                                    ),
+                                    topLeft = Offset(xx, yy),
+                                    size = Size(cell + 1f, cell + 1f)
+                                )
+                                xx += cell; gx++
+                            }
+                            yy += cell; gy++
+                        }
+                    }
                     Text(
                         text = "$preset",
                         style = StrongroomType.Anon1,
@@ -639,12 +957,26 @@ private fun AllowancePawlSurface(
                     strokeWidth = 4.dp.toPx()
                 )
             }
-            // The pawl itself, seated at the preview's height.
+            // The pawl itself, seated at the preview's height:
+            // a brass knob — shadow thrown, face relieved, a
+            // graphite heart where the pin seats.
             val frac = 1f - (preview.coerceIn(0, 240) / 240f)
             val pawlY = frac * size.height
             drawCircle(
-                color = StrongroomInks.Gold,
+                color = StrongroomLight.descend(StrongroomInks.Gold, 4),
                 radius = 10.dp.toPx(),
+                center = Offset(size.width / 2f + 1.5.dp.toPx(), pawlY + 2.dp.toPx())
+            )
+            drawCircle(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.55f, lightState
+                ),
+                radius = 10.dp.toPx(),
+                center = Offset(size.width / 2f, pawlY)
+            )
+            drawCircle(
+                color = StrongroomRoles.OnLeaf,
+                radius = 3.5.dp.toPx(),
                 center = Offset(size.width / 2f, pawlY)
             )
         }
@@ -692,7 +1024,32 @@ private fun SentenceAndTaskLines(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(3.dp))
             .background(paper, RoundedCornerShape(3.dp))
+            .drawBehind {
+                // Paper grain, from the paper itself — the sheet
+                // the sentence stands on is the slip's own stock.
+                val cell = SigningTexture.Species.PAPER.cellPx.dp.toPx()
+                var gy = 0
+                var yy = 0f
+                while (yy < size.height) {
+                    var gx = 0
+                    var xx = 0f
+                    while (xx < size.width) {
+                        drawRect(
+                            color = SigningTexture.cellTone(
+                                paper, StrongroomInks.Graphite,
+                                SigningTexture.Species.PAPER, gx, gy,
+                                seed = 61, state = lightState
+                            ),
+                            topLeft = Offset(xx, yy),
+                            size = Size(cell + 1f, cell + 1f)
+                        )
+                        xx += cell; gx++
+                    }
+                    yy += cell; gy++
+                }
+            }
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         // The task: the reason for the block, in his own words,
@@ -766,7 +1123,7 @@ private fun SentenceAndTaskLines(
 // ── The Great Wheel + the signature (brief C-04; census C-02) ───
 
 @Composable
-private fun GreatWheelSignature(
+internal fun GreatWheelSignature(
     state: SigningState,
     actions: SigningActions,
     lightState: StrongroomLightState
@@ -831,32 +1188,102 @@ private fun GreatWheelSignature(
             Canvas(Modifier.fillMaxSize().rotate(drawn)) {
                 val cx = size.width / 2f
                 val cy = size.height / 2f
+                val center = Offset(cx, cy)
                 val outer = size.minDimension / 2f
-                drawCircle(
-                    color = StrongroomRoles.Metal,
-                    radius = outer - 4.dp.toPx(),
-                    style = Stroke(width = 13.dp.toPx())
+                // THE RIM: machined steel, relieved segment by
+                // segment — the light travels around it as it
+                // travels around the print's rings, catching the
+                // upper-left, dying into graphite lower-right.
+                reliefRing(
+                    center = center, radius = outer - 9.dp.toPx(),
+                    width = 18.dp.toPx(), base = StrongroomInks.Graphite,
+                    field = StrongroomInks.Violet, state = lightState,
+                    segments = 96
+                )
+                // A gold pinstripe inlaid in the rim's face.
+                reliefRing(
+                    center = center, radius = outer - 9.dp.toPx(),
+                    width = 2.dp.toPx(), base = StrongroomInks.Gold,
+                    field = StrongroomInks.Graphite, state = lightState,
+                    segments = 96
+                )
+                // Twelve bolt heads on the rim, as the print's
+                // wheel ring carries them — each lit from its own
+                // place, each slot turned differently.
+                for (i in 0 until 12) {
+                    val a = Math.toRadians(i * 30.0 - 90.0)
+                    val bx = cx + (outer - 9.dp.toPx()) * cos(a).toFloat()
+                    val by = cy + (outer - 9.dp.toPx()) * sin(a).toFloat()
+                    boltHead(
+                        center = Offset(bx, by), radius = 4.dp.toPx(),
+                        gradient = lightGradient(a, lightState),
+                        slotAngleRad = a + i * 0.83,
+                        field = StrongroomInks.Violet, state = lightState
+                    )
+                }
+                // The spokes: tapered bars of steel, relieved by
+                // their own facing, the lit edge drawn on the
+                // lamp's side.
+                for (spoke in 0 until 3) {
+                    val a = Math.toRadians(spoke * 120.0 - 90.0).toFloat()
+                    val dx = cos(a)
+                    val dy = sin(a)
+                    val px = -dy
+                    val py = dx
+                    val hubHalf = 7.dp.toPx()
+                    val rimHalf = 4.5.dp.toPx()
+                    val hubR = 13.dp.toPx()
+                    val rimR = outer - 19.dp.toPx()
+                    val spokePath = Path().apply {
+                        moveTo(cx + dx * hubR + px * hubHalf, cy + dy * hubR + py * hubHalf)
+                        lineTo(cx + dx * rimR + px * rimHalf, cy + dy * rimR + py * rimHalf)
+                        lineTo(cx + dx * rimR - px * rimHalf, cy + dy * rimR - py * rimHalf)
+                        lineTo(cx + dx * hubR - px * hubHalf, cy + dy * hubR - py * hubHalf)
+                        close()
+                    }
+                    drawPath(
+                        path = spokePath,
+                        color = StrongroomLight.relief(
+                            StrongroomInks.Graphite, StrongroomInks.Violet,
+                            lightGradient(a.toDouble(), lightState), lightState
+                        )
+                    )
+                    val lpw = StrongroomLight.paramsFor(lightState)
+                    val litSign =
+                        if (px * lpw.lightDirectionX + py * lpw.lightDirectionY >= 0f) 1f else -1f
+                    drawLine(
+                        color = StrongroomLight.relief(
+                            StrongroomInks.Graphite, StrongroomInks.Violet, 0.9f, lightState
+                        ),
+                        start = Offset(
+                            cx + dx * hubR + px * hubHalf * litSign,
+                            cy + dy * hubR + py * hubHalf * litSign
+                        ),
+                        end = Offset(
+                            cx + dx * rimR + px * rimHalf * litSign,
+                            cy + dy * rimR + py * rimHalf * litSign
+                        ),
+                        strokeWidth = 1.5.dp.toPx()
+                    )
+                }
+                // The hub: a relieved steel collar, a gold heart,
+                // and a bolt at its centre.
+                reliefRing(
+                    center = center, radius = 14.dp.toPx(),
+                    width = 7.dp.toPx(), base = StrongroomInks.Graphite,
+                    field = StrongroomInks.Violet, state = lightState
                 )
                 drawCircle(
                     color = StrongroomLight.relief(
-                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 0.35f, lightState
                     ),
-                    radius = outer - 4.dp.toPx(),
-                    style = Stroke(width = 3.dp.toPx())
+                    radius = 10.dp.toPx(), center = center
                 )
-                for (spoke in 0 until 3) {
-                    val a = Math.toRadians(spoke * 120.0 - 90.0).toFloat()
-                    drawLine(
-                        color = StrongroomRoles.Metal,
-                        start = Offset(cx, cy),
-                        end = Offset(
-                            cx + (outer - 12.dp.toPx()) * cos(a),
-                            cy + (outer - 12.dp.toPx()) * sin(a)
-                        ),
-                        strokeWidth = 10.dp.toPx()
-                    )
-                }
-                drawCircle(color = StrongroomInks.Gold, radius = 15.dp.toPx())
+                boltHead(
+                    center = center, radius = 4.5.dp.toPx(),
+                    gradient = 0.3f, slotAngleRad = 0.7,
+                    field = StrongroomInks.Violet, state = lightState
+                )
             }
             // The station under the hand — one digit, read at the
             // index; the combination itself is never shown whole,

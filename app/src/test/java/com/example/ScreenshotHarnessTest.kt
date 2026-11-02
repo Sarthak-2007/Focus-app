@@ -5,16 +5,28 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.background
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.LiftingPlate
+import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
+import com.example.domain.StrongroomGuard
+import com.example.ui.signing.Signing
+import com.example.ui.signing.SigningActions
+import com.example.ui.signing.SigningDialSurface
+import com.example.ui.signing.SigningState
+import com.example.ui.signing.SigningToken
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
@@ -540,6 +552,80 @@ class ScreenshotHarnessTest {
                 ),
                 actions = DrawerActions()
             )
+        }
+    }
+
+    // ── The signing table (LEAD-SIGNING's rebuild) ──────────────
+    // The table's faces: the whole table as he meets it (top of
+    // the scroll), the table's foot reached by his own scroll
+    // (the great wheel and the slip standing in use), and the
+    // dial alone — the dial is the table's hero craft and is read
+    // at its own size. The wheel is not shot alone: the ring
+    // alone covers too little of the frame to pass writeShot's
+    // off-field gate.
+
+    private fun signingState(): SigningState =
+        SigningState(
+            day = StrongroomComposition.ComposedDay(
+                filingDateIso = "2026-08-31",
+                shape = StrongroomComposition.DayShape.ORDINARY,
+                record = signing().copy(
+                    sentence = "Twelve hours. Nothing else counts.",
+                    taskLine = "Physics — rotation, then the error log"
+                ),
+                amendedBySigning = false
+            ),
+            tokens = listOf(
+                SigningToken("com.whatsapp", "WhatsApp"),
+                SigningToken("com.youtube", "YouTube"),
+                SigningToken("com.instagram", "Instagram"),
+                SigningToken("com.chrome", "Chrome"),
+                SigningToken("com.spotify", "Spotify")
+            ),
+            guard = StrongroomGuard.GuardState(allowanceMinutes = 30),
+            firstSigning = false
+        )
+
+    private fun signingActions(): SigningActions =
+        SigningActions(onAmend = {}, onAllowanceMove = {}, onSignature = {})
+
+    @Test
+    fun signing_tableTop() {
+        drawShot("signing-table.png") {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Signing(state = signingState(), actions = signingActions())
+            }
+        }
+    }
+
+    @Test
+    fun signing_tableFoot() {
+        drawShot("signing-table-lower.png", interact = {
+            repeat(3) { composeRule.onRoot().performTouchInput { swipeUp() } }
+        }) {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Signing(state = signingState(), actions = signingActions())
+            }
+        }
+    }
+
+    @Test
+    fun signing_dialAlone() {
+        drawShot("signing-dial.png") {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(StrongroomInks.Graphite),
+                    contentAlignment = Alignment.Center
+                ) {
+                    SigningDialSurface(
+                        liftingTime = LocalTime.of(20, 0),
+                        onSet = {},
+                        lightState = StrongroomLightState.SIGNING
+                    )
+                }
+            }
         }
     }
 }
