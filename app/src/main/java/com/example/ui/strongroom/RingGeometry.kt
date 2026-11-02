@@ -12,8 +12,9 @@ import kotlin.math.sin
  * again). That render species is NOT ported, consulted, or
  * reskinned anywhere in this file: what stands here is a new
  * drawing, built as pure geometry in Compose-canvas terms —
- * engraved hour figures (Anonymous Pro 700, set as outlines on
- * the curve) on a ring whose proportions carry R 26.71 mm as a
+ * engraved hour figures (Anonymous Pro 700, set on the curve as
+ * a filled letterpress pair — see the record-truth note below)
+ * on a ring whose proportions carry R 26.71 mm as a
  * relative DRAWING figure. Its verdict seat is Slice 4 (VISUAL
  * DESIGN, TO GRADE), judged by his eye in the running app — so
  * this geometry is built at full craft now, not as a placeholder:
@@ -31,9 +32,14 @@ import kotlin.math.sin
  *  - EL-4/EL-5 + C-1: engraved settings sit one weight grade above
  *    master (700 is the face's master for figures and the grade
  *    the ring is drawn at — the font weight is the renderer's
- *    act; the geometry's act is the cell discipline), hairlines
- *    prohibited, counters enlarged — drawing consequences carried
- *    by the renderer, not by these coordinates.
+ *    act; the geometry's act is the cell discipline). RECORD
+ *    TRUTH (CRITIC-SR-3, charge 3b, cured in the rethink): what
+ *    the Slice 1 renderer actually draws is a filled letterpress
+ *    pair — the groove in the bundled bold face, its relief edge
+ *    dropped toward the light. No outline path is drawn and no
+ *    counter enlargement or hairline treatment is carried yet:
+ *    those C-1 drawing consequences are Slice 4 inputs, and
+ *    neither this file nor the renderer claims them.
  *  - A-3.4 (the hour's ring-radius duty): the 5-glyph line at
  *    ENG-1 measures 46.2 mm of arc at the true 0.5459em advance;
  *    the cut proceeds at ENG-1 only if the filed radius is
