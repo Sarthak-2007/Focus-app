@@ -566,4 +566,42 @@ interface MonolithDao {
 
     @Query("SELECT * FROM rule_change_log ORDER BY id ASC")
     suspend fun getRuleChangeLogSnapshot(): List<RuleChangeLogEntity>
+
+    // P1 (BUILD-SR-3): the Strongroom day — signing/seal/plate rows,
+    // their punches (append-only), the Guard singleton, crank weeks.
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStrongroomDay(day: StrongroomDayEntity)
+
+    @Query("SELECT * FROM strongroom_days WHERE filingDateIso = :dateIso LIMIT 1")
+    suspend fun getStrongroomDay(dateIso: String): StrongroomDayEntity?
+
+    @Query("SELECT * FROM strongroom_days WHERE filingDateIso = :dateIso LIMIT 1")
+    fun getStrongroomDayFlow(dateIso: String): Flow<StrongroomDayEntity?>
+
+    @Query("SELECT * FROM strongroom_days ORDER BY filingDateIso DESC")
+    fun getStrongroomDaysFlow(): Flow<List<StrongroomDayEntity>>
+
+    @Query("SELECT * FROM strongroom_days WHERE state = 'SEALED' ORDER BY filingDateIso DESC LIMIT 1")
+    suspend fun getSealedStrongroomDay(): StrongroomDayEntity?
+
+    @Insert
+    suspend fun insertStrongroomPunch(punch: StrongroomPunchEntity): Long
+
+    @Query("SELECT * FROM strongroom_punches WHERE filingDateIso = :dateIso ORDER BY atOffsetMillis ASC")
+    suspend fun getStrongroomPunches(dateIso: String): List<StrongroomPunchEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStrongroomGuard(guard: StrongroomGuardEntity)
+
+    @Query("SELECT * FROM strongroom_guard WHERE id = 1 LIMIT 1")
+    suspend fun getStrongroomGuard(): StrongroomGuardEntity?
+
+    @Query("SELECT * FROM strongroom_guard WHERE id = 1 LIMIT 1")
+    fun getStrongroomGuardFlow(): Flow<StrongroomGuardEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStrongroomCrankWeek(week: StrongroomCrankWeekEntity)
+
+    @Query("SELECT * FROM strongroom_crank_weeks WHERE weekAnchorMillis = :anchor LIMIT 1")
+    suspend fun getStrongroomCrankWeek(anchor: Long): StrongroomCrankWeekEntity?
 }

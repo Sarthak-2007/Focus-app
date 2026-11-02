@@ -22,9 +22,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DayNoteEntity::class,
         TaskAccrualSegmentEntity::class,
         SessionEventLogEntity::class,
-        RuleChangeLogEntity::class
+        RuleChangeLogEntity::class,
+        StrongroomDayEntity::class,
+        StrongroomPunchEntity::class,
+        StrongroomGuardEntity::class,
+        StrongroomCrankWeekEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -544,6 +548,73 @@ abstract class MonolithDatabase : RoomDatabase() {
          * exactly, so a migrated row and a bare row read the
          * same way.
          */
+        /**
+         * P1 (BUILD-SR-3, 25→26): the Strongroom day arrives as four
+         * NEW tables — CREATE-only, no existing table touched, no
+         * data written. His loadouts / rules / sessions / history
+         * carry by construction; the Strongroom rows are born from
+         * signings (or from LegacyCarry's derivation over the legacy
+         * rows, in the store, under its own provenance field) —
+         * never from an invented backfill in a migration.
+         */
+        val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `strongroom_days` (" +
+                        "`filingDateIso` TEXT NOT NULL, " +
+                        "`lockedPackagesCsv` TEXT NOT NULL, " +
+                        "`liftingHour` INTEGER NOT NULL, " +
+                        "`liftingMinute` INTEGER NOT NULL, " +
+                        "`sentence` TEXT, " +
+                        "`breakLengthMinutes` INTEGER NOT NULL, " +
+                        "`breakFiresAtOffsetMillis` INTEGER NOT NULL, " +
+                        "`allowanceTotalMinutes` INTEGER NOT NULL, " +
+                        "`allowanceSpentMinutes` INTEGER NOT NULL, " +
+                        "`gapsEncoded` TEXT NOT NULL, " +
+                        "`sealedAtWallMillis` INTEGER NOT NULL, " +
+                        "`sealedAtElapsedMillis` INTEGER NOT NULL, " +
+                        "`sealedBootCount` INTEGER NOT NULL, " +
+                        "`spanDurationMillis` INTEGER NOT NULL, " +
+                        "`state` TEXT NOT NULL, " +
+                        "`struckHeldMillis` INTEGER NOT NULL, " +
+                        "`struckBracketGapMillis` INTEGER NOT NULL, " +
+                        "`crankSealBroken` INTEGER NOT NULL, " +
+                        "`carriedFromSessionId` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`filingDateIso`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `strongroom_punches` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`filingDateIso` TEXT NOT NULL, " +
+                        "`kind` TEXT NOT NULL, " +
+                        "`atOffsetMillis` INTEGER NOT NULL, " +
+                        "`packageName` TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_strongroom_punches_filingDateIso` " +
+                        "ON `strongroom_punches` (`filingDateIso`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `strongroom_guard` (" +
+                        "`id` INTEGER PRIMARY KEY NOT NULL, " +
+                        "`guardOn` INTEGER NOT NULL, " +
+                        "`allowanceMinutes` INTEGER NOT NULL, " +
+                        "`pendingAllowanceMinutes` INTEGER NOT NULL, " +
+                        "`pendingAllowanceFromMillis` INTEGER NOT NULL, " +
+                        "`pendingOffFromMillis` INTEGER NOT NULL, " +
+                        "`stretchEndMillis` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `strongroom_crank_weeks` (" +
+                        "`weekAnchorMillis` INTEGER PRIMARY KEY NOT NULL, " +
+                        "`spentSeconds` INTEGER NOT NULL, " +
+                        "`sealBroken` INTEGER NOT NULL, " +
+                        "`spentAtWallMillis` INTEGER NOT NULL, " +
+                        "`carriedFromLegacySpend` INTEGER NOT NULL)"
+                )
+            }
+        }
+
         val MIGRATION_24_25 = object : Migration(24, 25) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE intercept_logs ADD COLUMN stopReason TEXT NOT NULL DEFAULT 'UNKNOWN'")
@@ -742,7 +813,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
                     // Issue #31, Sarthak's ruling (2026-10-31, issue
                     // comment 6544207912) — the only two destructive
                     // paths in this app, each scoped to its ruled case:
