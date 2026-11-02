@@ -4,7 +4,6 @@ import com.example.domain.StrongroomGuard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -12,11 +11,15 @@ import org.junit.Test
  *
  * Obligations: ledger D-1 (frozen allowance) against B-6 (the
  * two-signature law for loosenings, FX-29) — with their collision
- * G-a (ledger §G, OBJ-T7-4) carried EXACTLY as the ledger carries
- * it: UNRESOLVED, decider Ren. This suite asserts D-1 as
- * filed-and-applied (the build's standing behaviour) and parks the
- * FX-29 road in a disabled, named expectation below. NOTHING in
- * this file settles G-a, and no seat may cite it as settling G-a.
+ * G-a (ledger §G, OBJ-T7-4). G-a stood UNRESOLVED when this suite
+ * was authored; RULINGS ROUND 8 §R8-4 (SUCCESSOR-21, under
+ * Sarthak's no-stop order, 2026-11-02) DECIDED it: D-1 governs
+ * permanently — a raise takes effect at the next day-start under
+ * the Guard's own law, and does NOT travel FX-29's two-signature
+ * road (FX-29 continues to govern loosenings as a class where no
+ * specific ruling exists). The disabled RIVAL expectation below
+ * was re-aimed to assert the decision by BUILD-SR-23 (composition
+ * step 4) and now runs un-ignored.
  *
  * Also D-2 (slow off) and D-3 (a stretch has no off) at the points
  * the lane's own tests do not already pin. Authored under
@@ -161,16 +164,17 @@ class StrongroomGuardStateModelTest {
     }
 
     // ------------------------------------------------------------------
-    // G-a — UNRESOLVED, carried, never settled by this suite
+    // G-a — DECIDED (R8-4): D-1 governs permanently
     // ------------------------------------------------------------------
 
     @Test
     fun ga_asTheMachineStands_noSignatureMachineryExistsOnTheGuardState() {
-        // A fact about TODAY's machine, asserted as a fact only:
-        // the Guard state carries no signature fields, so the
-        // FX-29 two-signature road is not implemented anywhere in
-        // it. This neither rules G-a nor pretends the road was
-        // considered and rejected — the decider is Ren (ledger §G).
+        // A fact about the machine, asserted as a fact: the
+        // Guard state carries no signature fields, so the FX-29
+        // two-signature road is not implemented anywhere in it.
+        // Since R8-4 that absence is also the DECIDED form — the
+        // road is not merely unbuilt, it is ruled out for the
+        // allowance (see the decision test below).
         val fields = fieldNames(StrongroomGuard.GuardState::class.java)
         assertTrue(fields.none { it.contains("signature", ignoreCase = true) })
         val methods = StrongroomGuard::class.java.declaredMethods.map { it.name }
@@ -178,30 +182,46 @@ class StrongroomGuardStateModelTest {
     }
 
     /**
-     * G-a / OBJ-T7-4 — THE UNRESOLVED EXPECTATION.
+     * G-a / OBJ-T7-4 — DECIDED by Rulings Round 8 §R8-4
+     * (SUCCESSOR-21 under Sarthak's no-stop order, 2026-11-02;
+     * flagged reversible by Ren's or Sarthak's word): D-1 governs
+     * permanently. A frozen-allowance raise takes effect at the
+     * next day-start (03:30) under the Guard's own law — Sarthak's
+     * direct Oct 31 ruling about this exact mechanism — and does
+     * NOT travel FX-29's two-signature road.
      *
-     * IF Ren rules that a frozen-allowance raise travels the FX-29
-     * two-signature road (ledger B-6), THEN the expectation is: a
-     * raise lands at the FIRST DAY-START AFTER THE SECOND
-     * SIGNATURE — one signature alone schedules nothing, and the
-     * D-1-only behaviour asserted above is superseded.
-     *
-     * This test is DISABLED until that ruling exists. It is an
-     * expectation on the record, never a settled assertion, and a
-     * green run of this suite says nothing about it (it does not
-     * execute). When the ruling lands, this seat un-ignores it,
-     * writes it against the ruled API, and the D-1 tests above are
-     * re-read in the same act.
+     * This test replaces the former @Ignore'd RIVAL expectation
+     * (re-aimed by BUILD-SR-23, composition step 4, per the merge
+     * brief's named cure). It asserts the decision against the
+     * machine as built: one request schedules the raise at the
+     * next day-start with no signature act anywhere — no second
+     * signature is requested, held, or awaited — and no
+     * two-signature machinery exists on the Guard to travel.
      */
-    @Ignore("G-a UNRESOLVED (ledger section G, OBJ-T7-4) — decider Ren; not a settled assertion")
     @Test
-    fun ga_RIVAL_twoSignatureRoad_raiseLandsAtFirstDayStartAfterTheSecondSignature() {
-        // No two-signature API exists in StrongroomGuard today, so
-        // there is nothing honest to assert against. The body is a
-        // marker, not a proof.
-        assertTrue(
-            "G-a unruled: enable only when Ren rules the FX-29 road and the API exists",
-            false
-        )
+    fun ga_DECIDED_d1Governs_raiseLandsAtNextDayStart_andNoTwoSignatureRoadExists() {
+        // One request, one schedule: the raise lands at the next
+        // day-start under D-1 alone.
+        val (state, result) = StrongroomGuard.requestRaise(base, 45, today, nextDayStart)
+        assertEquals(StrongroomGuard.RaiseRequest.Scheduled(45, nextDayStart), result)
+        // Before the day-start, today's word still stands; at the
+        // day-start the raise stands — no signature intervenes at
+        // either side of the boundary.
+        assertEquals(30, StrongroomGuard.applyPending(state, nextDayStart - 1).allowanceMinutes)
+        assertEquals(45, StrongroomGuard.applyPending(state, nextDayStart).allowanceMinutes)
+        // No two-signature road exists to travel: neither the
+        // machine's operations nor its state name a signature, a
+        // countersign, or a second approval for a loosening.
+        val methods = StrongroomGuard::class.java.declaredMethods.map { it.name }
+        assertTrue(methods.none {
+            it.contains("signature", ignoreCase = true) ||
+                it.contains("countersign", ignoreCase = true) ||
+                it.contains("sign", ignoreCase = true)
+        })
+        val fields = fieldNames(StrongroomGuard.GuardState::class.java)
+        assertTrue(fields.none {
+            it.contains("signature", ignoreCase = true) ||
+                it.contains("countersign", ignoreCase = true)
+        })
     }
 }
