@@ -33,6 +33,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -186,7 +188,7 @@ fun Signing(state: SigningState, actions: SigningActions, modifier: Modifier = M
     ) {
         SpokenWords(state)
         Spacer(Modifier.height(22.dp))
-        TokenTray(state, actions)
+        TokenTray(state, actions, lightState)
         Spacer(Modifier.height(26.dp))
         BreakRail(state, actions, lightState)
         Spacer(Modifier.height(26.dp))
@@ -249,7 +251,11 @@ private fun SpokenWords(state: SigningState) {
 // ── The tray of tokens (brief C-08; census C-02's choosing) ─────
 
 @Composable
-private fun TokenTray(state: SigningState, actions: SigningActions) {
+private fun TokenTray(
+    state: SigningState,
+    actions: SigningActions,
+    lightState: StrongroomLightState
+) {
     val allowed = state.day.record.allowedPackages
     Row(
         modifier = Modifier
@@ -287,12 +293,37 @@ private fun TokenTray(state: SigningState, actions: SigningActions) {
                             width = if (isAllowed) 2.5.dp else 1.dp,
                             color = if (isAllowed) StrongroomLight.litPartner(
                                 StrongroomInks.Gold, StrongroomInks.Graphite,
-                                StrongroomLightState.SIGNING
+                                lightState
                             ) else StrongroomInks.Graphite,
                             shape = CircleShape
                         ),
                     contentAlignment = Alignment.Center
                 ) {
+                    // The minted edge: a lit crescent toward the
+                    // lamp and a shadow crescent away from it —
+                    // a struck token, not a flat disc.
+                    Canvas(Modifier.matchParentSize()) {
+                        val c = Offset(size.width / 2f, size.height / 2f)
+                        val r = size.minDimension / 2f - 2.dp.toPx()
+                        val base = if (isAllowed) StrongroomInks.Gold
+                        else StrongroomInks.Graphite
+                        val fld = if (isAllowed) StrongroomInks.Graphite
+                        else StrongroomInks.Violet
+                        drawArc(
+                            color = StrongroomLight.relief(base, fld, 0.85f, lightState),
+                            startAngle = 153f, sweepAngle = 120f, useCenter = false,
+                            topLeft = Offset(c.x - r, c.y - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                        drawArc(
+                            color = StrongroomLight.relief(base, fld, -0.85f, lightState),
+                            startAngle = -27f, sweepAngle = 120f, useCenter = false,
+                            topLeft = Offset(c.x - r, c.y - r),
+                            size = Size(r * 2f, r * 2f),
+                            style = Stroke(width = 3.dp.toPx())
+                        )
+                    }
                     Text(
                         text = token.label.take(1).uppercase(),
                         style = StrongroomType.Scr3,
@@ -411,8 +442,18 @@ private fun BreakRail(
                     )
                 }
                 val px = size.width * preview / BreakChoice.MAX_MINUTES
+                // The rail's knob, as a struck brass stud: its
+                // shadow thrown away from the lamp, its face
+                // relieved toward it.
                 drawCircle(
-                    color = StrongroomInks.Gold,
+                    color = StrongroomLight.descend(StrongroomInks.Gold, 4),
+                    radius = 11.dp.toPx(),
+                    center = Offset(px + 1.5.dp.toPx(), midY + 2.dp.toPx())
+                )
+                drawCircle(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 0.5f, lightState
+                    ),
                     radius = 11.dp.toPx(),
                     center = Offset(px, midY)
                 )
@@ -437,6 +478,7 @@ private fun BreakRail(
                     modifier = Modifier
                         .padding(end = 10.dp)
                         .size(42.dp)
+                        .clip(CircleShape)
                         .background(StrongroomInks.Gold, CircleShape)
                         .clickable {
                             preview = BreakChoice.shortcut(preset)
@@ -450,6 +492,29 @@ private fun BreakRail(
                         },
                     contentAlignment = Alignment.Center
                 ) {
+                    // Struck brass grain, from the disc itself.
+                    Canvas(Modifier.matchParentSize()) {
+                        val cell = SigningTexture.Species.BRASS.cellPx.dp.toPx()
+                        var gy = 0
+                        var yy = 0f
+                        while (yy < size.height) {
+                            var gx = 0
+                            var xx = 0f
+                            while (xx < size.width) {
+                                drawRect(
+                                    color = SigningTexture.cellTone(
+                                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                                        SigningTexture.Species.BRASS, gx, gy,
+                                        seed = 31 + preset, state = lightState
+                                    ),
+                                    topLeft = Offset(xx, yy),
+                                    size = Size(cell + 1f, cell + 1f)
+                                )
+                                xx += cell; gx++
+                            }
+                            yy += cell; gy++
+                        }
+                    }
                     Text(
                         text = "$preset",
                         style = StrongroomType.Anon1,
@@ -545,12 +610,26 @@ private fun AllowancePawlSurface(
                     strokeWidth = 4.dp.toPx()
                 )
             }
-            // The pawl itself, seated at the preview's height.
+            // The pawl itself, seated at the preview's height:
+            // a brass knob — shadow thrown, face relieved, a
+            // graphite heart where the pin seats.
             val frac = 1f - (preview.coerceIn(0, 240) / 240f)
             val pawlY = frac * size.height
             drawCircle(
-                color = StrongroomInks.Gold,
+                color = StrongroomLight.descend(StrongroomInks.Gold, 4),
                 radius = 10.dp.toPx(),
+                center = Offset(size.width / 2f + 1.5.dp.toPx(), pawlY + 2.dp.toPx())
+            )
+            drawCircle(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.55f, lightState
+                ),
+                radius = 10.dp.toPx(),
+                center = Offset(size.width / 2f, pawlY)
+            )
+            drawCircle(
+                color = StrongroomRoles.OnLeaf,
+                radius = 3.5.dp.toPx(),
                 center = Offset(size.width / 2f, pawlY)
             )
         }
@@ -598,7 +677,32 @@ private fun SentenceAndTaskLines(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(3.dp))
             .background(paper, RoundedCornerShape(3.dp))
+            .drawBehind {
+                // Paper grain, from the paper itself — the sheet
+                // the sentence stands on is the slip's own stock.
+                val cell = SigningTexture.Species.PAPER.cellPx.dp.toPx()
+                var gy = 0
+                var yy = 0f
+                while (yy < size.height) {
+                    var gx = 0
+                    var xx = 0f
+                    while (xx < size.width) {
+                        drawRect(
+                            color = SigningTexture.cellTone(
+                                paper, StrongroomInks.Graphite,
+                                SigningTexture.Species.PAPER, gx, gy,
+                                seed = 61, state = lightState
+                            ),
+                            topLeft = Offset(xx, yy),
+                            size = Size(cell + 1f, cell + 1f)
+                        )
+                        xx += cell; gx++
+                    }
+                    yy += cell; gy++
+                }
+            }
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         // The task: the reason for the block, in his own words,

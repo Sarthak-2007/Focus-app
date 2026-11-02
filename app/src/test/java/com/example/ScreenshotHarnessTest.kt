@@ -60,6 +60,9 @@ import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
 import com.example.ui.signing.PrintBenchPose
 import com.example.ui.signing.SigningPrintBench
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -1245,5 +1248,57 @@ class ScreenshotHarnessTest {
             }
         }
         writeShot("signing.png", bitmap)
+    }
+
+    // ── The signing table in its own evening light (LEAD-SIGNING) ──
+    // The standing shots above read the table under DAY light; the
+    // signing is an EVENING act, and the table's dressed metal —
+    // minted token edges, struck-brass knobs and discs, the
+    // sentence sheet's paper grain — is tuned to the SIGNING
+    // light. Two faces: the table as he meets it, and its foot
+    // reached by his own scroll (the sheet and the slip).
+
+    private fun eveningSigningState(): SigningState =
+        SigningState(
+            day = composedDay(),
+            tokens = labels.map { (pkg, label) -> SigningToken(pkg, label) },
+            guard = StrongroomGuard.GuardState(allowanceMinutes = 30)
+        )
+
+    private fun eveningSigningActions(): SigningActions =
+        SigningActions(onAmend = {}, onAllowanceMove = {}, onSignature = {})
+
+    @Test
+    fun signing_tableTop_evening() {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = eveningSigningState(),
+                        actions = eveningSigningActions()
+                    )
+                }
+            }
+        }
+        writeShot("signing-table-evening.png", bitmap)
+    }
+
+    @Test
+    fun signing_tableFoot_evening() {
+        val bitmap = drawShot(
+            interact = {
+                repeat(3) { composeRule.onRoot().performTouchInput { swipeUp() } }
+            }
+        ) {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Signing(
+                        state = eveningSigningState(),
+                        actions = eveningSigningActions()
+                    )
+                }
+            }
+        }
+        writeShot("signing-table-lower.png", bitmap)
     }
 }
