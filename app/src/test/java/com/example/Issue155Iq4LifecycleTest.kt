@@ -152,8 +152,8 @@ class Issue155Iq4LifecycleTest {
         // (The decision now lives in the pure shieldPublicText;
         // its inputs are the witness and the missing count.)
         val src = shieldSource()
-        assertTrue(src.contains("!protecting -> \"Monolith session in progress\""))
-        assertTrue(src.contains("missingCount > 0 -> \"Monolith session in progress\""))
+        assertTrue(src.contains("!protecting -> \"Ulysses session in progress\""))
+        assertTrue(src.contains("missingCount > 0 -> \"Ulysses session in progress\""))
         assertTrue(src.contains("missingCount = missing.size"))
     }
 
@@ -167,6 +167,6 @@ class Issue155Iq4LifecycleTest {
         val src = shieldSource()
         assertTrue(src.contains("inSafeBreak = updated.isInSafeBreak"))
         assertTrue(src.contains("inSafeBreak = lastBaseInSafeBreak"))
-        assertTrue(src.contains("inSafeBreak -> \"Monolith \\u2014 on a break \\u00b7 peek apps open\""))
+        assertTrue(src.contains("inSafeBreak -> \"Ulysses \\u2014 on a break \\u00b7 peek apps open\""))
     }
 }

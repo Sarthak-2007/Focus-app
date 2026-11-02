@@ -97,6 +97,21 @@ import org.robolectric.shadows.ShadowSystemClock
  * priced cure (a @VisibleForTesting foreground/overlay seam on
  * PillController) belongs to the train owners (K1/W6); this branch
  * never edits their files.
+ *
+ * FINAL-PHASE CURE (BUILD-SR-15, A-1…A-3): the priced seam is now
+ * taken. On the judging run (41425228610) every probe reported ok
+ * and the usage gate opened, yet canDrawOverlays read false in
+ * all three designed-state captures — under Robolectric 4.17 the
+ * AppOps store the probes write is not the store
+ * Settings.canDrawOverlays consults, and no further probe route
+ * exists from the test side. PillController therefore carries
+ * the @VisibleForTesting overlayGateOverride the header priced:
+ * null in production (the platform read, unchanged); Tier B sets
+ * it explicitly — open for the designed-state captures, shut for
+ * can't-verify — so the window behaviour is pinned
+ * deterministically instead of by a shadow's accident. The
+ * probes above still run and still report: they remain the
+ * evidence for the usage/foreground gates, which DO open.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w412dp-h915dp-xhdpi")
@@ -552,7 +567,7 @@ class PillRenderScaffoldTest {
 
     // ---- controller drive + harvest ----
 
-    private fun startController() {
+    private fun startController(overlayGate: Boolean? = null) {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         controllerScope = scope
         controller = PillController(
@@ -562,6 +577,7 @@ class PillRenderScaffoldTest {
             scope = scope,
             ownPackage = context.packageName
         )
+        controller!!.overlayGateOverride = overlayGate
         controller!!.start()
     }
 
@@ -651,7 +667,7 @@ class PillRenderScaffoldTest {
             )
         }
         openGatesAndSeedForeground("com.notes.app")
-        startController()
+        startController(overlayGate = true)
         pumpTicks()
         val root = harvestedRootView() ?: failSeam("holding")
         val print = captureWindow("holding", root)
@@ -674,7 +690,7 @@ class PillRenderScaffoldTest {
             dao.insertApp(app("com.peeked", "Peeked", peekUntil = now + 120_000L))
         }
         openGatesAndSeedForeground("com.peeked")
-        startController()
+        startController(overlayGate = true)
         pumpTicks()
         val root = harvestedRootView() ?: failSeam("peek")
         val print = captureWindow("peek", root)
@@ -704,7 +720,7 @@ class PillRenderScaffoldTest {
             dao.insertApp(app("com.peeked", "Peeked", peekUntil = now + 120_000L))
         }
         openGatesAndSeedForeground("com.peeked")
-        startController()
+        startController(overlayGate = true)
         pumpTicks()
         val root = harvestedRootView() ?: failSeam("break")
         val print = captureWindow("break", root)
@@ -722,7 +738,7 @@ class PillRenderScaffoldTest {
     @Test
     fun b_unarmed_noWindowStands() {
         openGatesAndSeedForeground("com.notes.app")
-        startController()
+        startController(overlayGate = true)
         pumpTicks()
         assertNull(
             "unarmed must never raise a pill window (gates: $seamReport)",
@@ -759,7 +775,10 @@ class PillRenderScaffoldTest {
                 "on this Robolectric version and needs device evidence (intent spec §6)",
             !Settings.canDrawOverlays(context)
         )
-        startController()
+        // The controller's gate is shut deterministically via the
+        // seam (BUILD-SR-15): the platform read above is evidence
+        // about the harness, the override is the pinned input.
+        startController(overlayGate = false)
         pumpTicks()
         assertNull(
             "with the overlay grant revoked, no pill window may stand",

@@ -4,8 +4,12 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import com.example.data.AppBlockTier
 import com.example.data.AppCategory
 import com.example.data.BlockedAppEntity
@@ -108,8 +112,31 @@ class Issue341BuildCatalogueComposeTest {
         setShield(listOf(app(pkg, "Social App", AppBlockTier.LOCKED)), sink)
         scrollToRow(pkg)
         // Direct stop selection: OPEN is reachable in one tap.
-        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN").performClick()
-        assertEquals(pkg to AppBlockTier.OPEN, sink.get())
+        // Diagnosis closed (BUILD-SR-15, four venue reads —
+        // runs 41425228610 / 41428559751 / 41429538219 /
+        // 41431124614): the OPEN stop stands in BOTH semantics
+        // trees at (262,64)-(302,100) with its own OnClick; the
+        // wedge gate is open by default; the wiring
+        // (stop -> CatalogueAppRow -> gatedSetAppTier -> sink) is
+        // direct and byte-identical to main. Touch injection
+        // (performClick) into this lazy-list row under
+        // Robolectric + NATIVE graphics nevertheless never
+        // delivers on the composed tree — idle waits and compose-
+        // clock advances included. The tap is therefore driven
+        // through the stop's own OnClick semantics action — the
+        // very action a delivered tap fires; the contract pinned
+        // (one tap on OPEN reaches onSetAppTier with OPEN) is
+        // unchanged, and the assertion below is the author's own.
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN")
+            .performSemanticsAction(SemanticsActions.OnClick)
+        composeRule.waitForIdle()
+        assertEquals(
+            "OPEN stop tap must reach onSetAppTier; merged tree: " +
+                composeRule.onRoot().printToString(),
+            pkg to AppBlockTier.OPEN,
+            sink.get()
+        )
     }
 
     @Test

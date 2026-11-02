@@ -3,6 +3,7 @@ package com.example
 import android.app.Notification
 import com.example.service.MonolithShieldService
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -88,23 +89,33 @@ class Issue155CompletionExpiryTest {
 
     @Test
     fun lockScreenPublicVersionNeverClaimsProtectionWithoutTheWitness() {
-        // LEAD-4 A7 (WING-F stack): the public version is gated on
-        // the protecting witness itself, not the subtitle alone.
-        // In this harness the witness is down (no shield loop has
-        // flipped it), so even a standing-form card must carry the
-        // non-claim line on the lock screen — before the gate it
-        // read "Focus session protected" verbatim.
+        // LEAD-4 A7 (WING-F stack), RE-AIMED at the final phase
+        // (BUILD-SR-15) to the E-4 retirement: the standing card is
+        // retired as a lock-screen presence — an ongoing card is
+        // VISIBILITY_SECRET with NO public version at all, so no
+        // state of it (witness up or down) can print any line on
+        // the lock screen, claim or non-claim. That is the A7 law
+        // in its strongest form; the pre-retirement assertions on
+        // the public text of ongoing cards asserted a surface the
+        // ruling removed. The completion card is not ongoing: it
+        // keeps its PRIVATE form + public version, state-matched.
         MonolithShieldService.protecting = false
         val standing = buildNotificationCard(
-            "Monolith \u2022 Deep Work", "42:00 left in session \u2022 3 reaches blocked",
+            "Ulysses \u2022 Deep Work", "42:00 left in session \u2022 3 reaches blocked",
             ongoing = true
         )
-        assertEquals("Monolith session in progress", publicTextOf(standing))
-        val arming = buildNotificationCard("Monolith", "Arming shield\u2026", ongoing = true)
-        assertEquals("Monolith session in progress", publicTextOf(arming))
+        assertNull(
+            "an ongoing card carries no public version after E-4",
+            standing.publicVersion
+        )
+        assertEquals(Notification.VISIBILITY_SECRET, standing.visibility)
+        val arming = buildNotificationCard("Ulysses", "Arming shield\u2026", ongoing = true)
+        assertNull(arming.publicVersion)
+        assertEquals(Notification.VISIBILITY_SECRET, arming.visibility)
         val complete = buildNotificationCard(
             "Session Complete", "Your receipt is waiting in the Ledger.", ongoing = false
         )
+        assertEquals(Notification.VISIBILITY_PRIVATE, complete.visibility)
         assertEquals("Session complete", publicTextOf(complete))
     }
 
@@ -195,7 +206,7 @@ class Issue155CompletionExpiryTest {
         assertTrue(source.contains("if (!protecting) {"))
         assertTrue(
             source.contains(
-                "updateNotification(\"Monolith\", \"Arming shield\\u2026\")"
+                "updateNotification(\"Ulysses\", \"Arming shield\\u2026\")"
             )
         )
     }
@@ -302,7 +313,7 @@ class Issue155CompletionExpiryTest {
         val window = source.substring(catchIdx, minOf(catchIdx + 1200, source.length))
         assertTrue(
             window.contains(
-                "updateNotification(\"Monolith\", \"Arming shield\\u2026\")"
+                "updateNotification(\"Ulysses\", \"Arming shield\\u2026\")"
             )
         )
     }
@@ -366,7 +377,7 @@ class Issue155CompletionExpiryTest {
         assertTrue(!source.contains("detector degraded"))
         assertTrue(
             source.contains(
-                "\"Usage access (off \u2014 Monolith may miss app launches)\""
+                "\"Usage access (off \u2014 Ulysses may miss app launches)\""
             )
         )
     }
@@ -394,10 +405,16 @@ class Issue155CompletionExpiryTest {
         // standing card.
         val source = shieldSource()
         assertTrue(source.contains("!ongoing -> \"Session complete\""))
-        assertTrue(source.contains("\"Monolith session in progress\""))
+        assertTrue(source.contains("\"Ulysses session in progress\""))
         assertTrue(source.contains(".setOngoing(ongoing)"))
         assertTrue(
             source.contains("if (timeoutAfterMs > 0) setTimeoutAfter(timeoutAfterMs)")
         )
+        // E-4 (final-phase re-aim, BUILD-SR-15): the public version
+        // is attached ONLY to non-ongoing cards; ongoing cards are
+        // VISIBILITY_SECRET — the state-matching above now lives
+        // behind that gate in buildNotification.
+        assertTrue(source.contains("NotificationCompat.VISIBILITY_SECRET"))
+        assertTrue(source.contains("if (!ongoing) setPublicVersion(publicVersion)"))
     }
 }

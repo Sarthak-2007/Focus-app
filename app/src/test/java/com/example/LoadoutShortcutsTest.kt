@@ -32,7 +32,7 @@ class LoadoutShortcutsTest {
         assertEquals("loadout_7", specs[0].id)
         assertEquals(7, specs[0].profileId)
         assertEquals("Study Loadout", specs[0].shortLabel)
-        assertEquals("Apply Study Loadout in Monolith", specs[0].longLabel)
+        assertEquals("Apply Study Loadout in Ulysses", specs[0].longLabel)
         assertEquals("loadout_9", specs[1].id)
     }
 

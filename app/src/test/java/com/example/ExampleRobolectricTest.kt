@@ -78,9 +78,9 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `verify app_name is Monolith`() {
+    fun `verify app_name is ULYSSES`() {
         val appName = context.getString(R.string.app_name)
-        assertEquals("Monolith", appName)
+        assertEquals("ULYSSES", appName)
     }
 
     @Test

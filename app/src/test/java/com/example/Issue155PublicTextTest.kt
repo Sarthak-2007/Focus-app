@@ -45,7 +45,7 @@ class Issue155PublicTextTest {
     @Test
     fun safeBreakPrintsTheBreakLineNeverTheProtectionClaim() {
         val line = text(inSafeBreak = true)
-        assertEquals("Monolith \u2014 on a break \u00b7 peek apps open", line)
+        assertEquals("Ulysses \u2014 on a break \u00b7 peek apps open", line)
         assertFalse(
             "a break is a partial seal; its lock-screen line must not claim protection",
             line.contains("protected")
@@ -58,15 +58,15 @@ class Issue155PublicTextTest {
         // non-claim line even mid-break: the break branch sits
         // behind every truth gate, directly before the claim.
         assertEquals(
-            "Monolith session in progress",
+            "Ulysses session in progress",
             text(arming = true, inSafeBreak = true)
         )
         assertEquals(
-            "Monolith session in progress",
+            "Ulysses session in progress",
             text(protecting = false, inSafeBreak = true)
         )
         assertEquals(
-            "Monolith session in progress",
+            "Ulysses session in progress",
             text(missingCount = 1, inSafeBreak = true)
         )
     }

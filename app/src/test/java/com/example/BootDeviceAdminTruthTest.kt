@@ -41,7 +41,7 @@ class BootDeviceAdminTruthTest {
     @Test
     fun disableMessage_activeSession_warnsAndStatesTheLimit() {
         val message = deviceAdminDisableMessage(sessionActive = true)
-        assertTrue(message.contains("A Monolith focus session is active"))
+        assertTrue(message.contains("A Ulysses focus session is active"))
         assertTrue(message.contains("Android still allows you to deactivate"))
         assertTrue(message.contains("does not prevent deactivation or uninstall"))
         assertTrue(message.contains("only adds friction and this warning"))
@@ -50,7 +50,7 @@ class BootDeviceAdminTruthTest {
     @Test
     fun disableMessage_noSession_saysSoAndStatesTheSameLimit() {
         val message = deviceAdminDisableMessage(sessionActive = false)
-        assertTrue(message.contains("No active Monolith focus session"))
+        assertTrue(message.contains("No active Ulysses focus session"))
         assertTrue(message.contains("Android still allows you to deactivate"))
         assertTrue(message.contains("does not prevent deactivation or uninstall"))
         assertTrue(message.contains("only adds friction and this warning"))

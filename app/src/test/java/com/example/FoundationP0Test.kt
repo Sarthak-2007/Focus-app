@@ -237,13 +237,20 @@ class FoundationP0Test {
     }
 
     @Test
-    fun `the sealing is three descending clunks and the lifting mirrors it`() {
+    fun `the sealing is three clunks ascending in weight and the lifting mirrors it`() {
+        // R7-4 (rulings round 7 addendum): the clunks DESCEND IN
+        // PITCH and ASCEND IN WEIGHT — the last clunk is the
+        // heaviest. The pre-ruling form of this test asserted the
+        // descending-weight table the ruling killed; re-aimed at
+        // the final phase (BUILD-SR-15), never the code back.
         val seal = MonolithMotion.SealClunks
         assertEquals(3, seal.size)
-        assertTrue(seal.zipWithNext().all { (a, b) -> b.atMs > a.atMs && b.weight < a.weight })
+        assertTrue(seal.zipWithNext().all { (a, b) -> b.atMs > a.atMs && b.weight > a.weight })
+        assertTrue(seal.zipWithNext().all { (a, b) -> b.durationMs > a.durationMs })
         val lift = MonolithMotion.LiftClunks
         assertEquals(3, lift.size)
         assertTrue(lift.zipWithNext().all { (a, b) -> b.atMs > a.atMs && b.weight > a.weight })
         assertEquals(seal.map { it.atMs }, lift.map { it.atMs })
+        assertEquals(seal.map { it.weight }, lift.map { it.weight })
     }
 }
