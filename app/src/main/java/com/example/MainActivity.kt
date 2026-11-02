@@ -20,6 +20,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +31,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.example.data.PermissionStepStore
+import com.example.data.StrongroomDayEntity
+import com.example.data.StrongroomHeldArrivalEntity
+import com.example.data.StrongroomStore
+import com.example.data.toSigningRecord
+import com.example.domain.StrongroomComposition
+import com.example.domain.StrongroomDay
 import com.example.service.FailureLog
 import com.example.service.GlanceRouting
 import com.example.service.InterceptConsumptionStore
@@ -42,8 +49,13 @@ import com.example.service.PermissionReturnService
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
+import com.example.ui.doorway.Doorway
+import com.example.ui.doorway.DoorwayState
+import com.example.ui.doorway.plateTruthForDoorway
 import com.example.ui.shell.StrongroomShell
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ==================================================================
 // THE FRESH SHELL — gate step 5 (the deletion), BUILD-SR-32.
@@ -354,12 +366,32 @@ class MainActivity : ComponentActivity() {
  * the old standing destination died with the enum (BUILD-SR-34;
  * named in the file head) — no place in the new order IS the
  * archive; the drawer's slice re-earns the flag when it stands.
+ *
+ * BUILD-SR-35 (composition, second act): the shell's DOORWAY
+ * place-host carries the Doorway surface itself, its state read
+ * from the standing engine facts by [loadDoorwayState] below —
+ * the first leg's own ShellHost glue (a hardcoded AtRest doorway
+ * composed outside any place) is superseded by the shell and
+ * does not exist in this form.
  */
 @Composable
 private fun ShellHost(viewModel: MonolithViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val airlockState by viewModel.airlockState.collectAsStateWithLifecycle()
+
+    // The Doorway's standing state (BUILD-SR-35 composition): read
+    // from the engine facts at the shell's birth and re-read on
+    // every resume (the tick below is bumped by the lifecycle
+    // observer's ON_RESUME arm). Until the first read lands it is
+    // AtRest — the derived empty form, standing only while no
+    // composed day has been read yet.
+    val doorwayRefreshTick = remember { mutableStateOf(0) }
+    var doorwayState by remember { mutableStateOf(DoorwayState.AtRest) }
+    val appContext = context.applicationContext
+    LaunchedEffect(doorwayRefreshTick.value) {
+        doorwayState = loadDoorwayState(appContext)
+    }
 
     // Watch Store residency (census §2c, re-carried): the old
     // composition stamped residency on DECK entry; the host has
@@ -389,6 +421,11 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                 // Issue #308: the user is back (by the return
                 // service or by hand) — any return watch ends here.
                 PermissionReturnService.stop(context)
+                // The Doorway's facts are re-read on the same
+                // return (BUILD-SR-35 composition): a day composed,
+                // a caller held, or a plate struck while the app
+                // stood aside is standing at the doorway on return.
+                doorwayRefreshTick.value++
                 viewModel.runWatchSweep()
                 viewModel.onAppResumed()
                 viewModel.refreshDeckWarrant()
@@ -409,8 +446,92 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // The door holds; Back is not an exit.
     }
 
-    StrongroomShell(viewModel = viewModel)
+    StrongroomShell(
+        viewModel = viewModel,
+        doorwayContent = { Doorway(state = doorwayState) }
+    )
 }
+
+/**
+ * The Doorway's facts, read from the standing engine (BUILD-SR-35
+ * composition, second act) — the ONLY source of [DoorwayState] in
+ * the composed app:
+ *
+ *  - **The composed day**: today's filing-day row in the
+ *    Strongroom store, when it stands COMPOSED or SIGNED (a sealed
+ *    or struck day is not standing at the signing place — the
+ *    shell's own routing owns those hours). Re-expressed as a
+ *    [StrongroomComposition.ComposedDay] exactly as the store's
+ *    own composeDay re-reads a standing row (shape from the row,
+ *    record from the row, the signing-amendment fact from the
+ *    row), then mapped by the Doorway's own
+ *    [com.example.ui.doorway.DoorwayComposition.fromComposedDay]
+ *    inside [DoorwayState.fromFacts]. No week standing order
+ *    exists in the kept engine, so none is invented here: a day
+ *    that does not stand in the store does not stand at the door.
+ *  - **The held-waiting fact**: any arrival still WAITING in
+ *    today's held pile.
+ *  - **Yesterday's plate**: the plate of the filing day before
+ *    today's, when it stands struck — re-read as struck (B-14:
+ *    never re-struck) from its stored held/bracket facts and its
+ *    punches, then carried through
+ *    [plateTruthForDoorway].
+ *
+ * When none of these stand, the result IS [DoorwayState.AtRest]:
+ * the honest empty doorway, derived — never hardcoded.
+ */
+private suspend fun loadDoorwayState(context: Context): DoorwayState =
+    withContext(Dispatchers.IO) {
+        val store = StrongroomStore(AppContainer.dao(context.applicationContext))
+        val todayIso = StrongroomDay.filingDateIso(System.currentTimeMillis())
+        val yesterdayIso = java.time.LocalDate.parse(todayIso).minusDays(1).toString()
+
+        val todayRow = store.day(todayIso)
+        val composedDay = todayRow
+            ?.takeIf {
+                it.state == StrongroomDayEntity.STATE_COMPOSED ||
+                    it.state == StrongroomDayEntity.STATE_SIGNED
+            }
+            ?.let { row ->
+                StrongroomComposition.ComposedDay(
+                    filingDateIso = row.filingDateIso,
+                    shape = runCatching {
+                        StrongroomComposition.DayShape.valueOf(row.dayShape)
+                    }.getOrDefault(StrongroomComposition.DayShape.ORDINARY),
+                    record = row.toSigningRecord(),
+                    amendedBySigning = row.amendedBySigning
+                )
+            }
+
+        val waiting = store.heldArrivals(todayIso).any {
+            it.state == StrongroomHeldArrivalEntity.STATE_WAITING
+        }
+
+        val yesterdayRow = store.day(yesterdayIso)
+        val plate = yesterdayRow
+            ?.takeIf { it.state in StrongroomDayEntity.STRUCK_STATES }
+            ?.let { row ->
+                plateTruthForDoorway(
+                    StrongroomDay.DayPlate(
+                        filingDateIso = row.filingDateIso,
+                        hoursHeldMillis = row.struckHeldMillis,
+                        punches = store.punches(yesterdayIso),
+                        sealState = runCatching {
+                            StrongroomDay.SealState.valueOf(row.state)
+                        }.getOrDefault(StrongroomDay.SealState.BROKEN),
+                        crankSealBroken = row.crankSealBroken,
+                        bracketGapMillis = row.struckBracketGapMillis,
+                        taskLine = row.taskLine
+                    )
+                )
+            }
+
+        DoorwayState.fromFacts(
+            composedDay = composedDay,
+            waitingSlipPresent = waiting,
+            plate = plate
+        )
+    }
 // Issue #27 (finding 5): a FIX trip must never die silently.
 // Every Settings launch goes through here: the exact pane
 // first; if the OEM throws, the generic Settings home is the
