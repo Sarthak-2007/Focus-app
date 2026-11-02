@@ -31,9 +31,16 @@ import com.example.ui.`break`.BreakActions
 import com.example.ui.`break`.BreakClock
 import com.example.ui.`break`.BreakState
 import androidx.compose.ui.graphics.toArgb
+import com.example.domain.StrongroomComposition
+import com.example.domain.StrongroomGuard
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
+import com.example.ui.signing.PrintBenchPose
+import com.example.ui.signing.SigningActions
+import com.example.ui.signing.SigningPrintBench
+import com.example.ui.signing.SigningState
+import com.example.ui.signing.SigningToken
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -522,6 +529,66 @@ class ScreenshotHarnessTest {
                 actions = DrawerActions()
             )
         }
+    }
+
+    // ── THE SIGNING PRINT BENCH (DESIGN-MOTION) ────────────────
+    // The moving-parts-on-a-photograph prototype: the picked
+    // print as the still world, the crafted wheel and dial
+    // seated on it in shadow and grain. Two stills — the bench
+    // AT REST (wheel at 0°, the dial hand seated on its detent,
+    // the record's 20:00 read as the face's 8) and MID-TURN
+    // (the wheel at 41° with its ghost trail standing, the dial
+    // hand at 10:43 — between the 10:30 and 10:45 detents, the
+    // spring not yet caught — one seat standing taken).
+
+    private fun benchState(): SigningState = SigningState(
+        day = StrongroomComposition.ComposedDay(
+            filingDateIso = "2026-08-31",
+            shape = StrongroomComposition.DayShape.ORDINARY,
+            record = signing(),
+            amendedBySigning = false
+        ),
+        tokens = labels.map { SigningToken(it.key, it.value) },
+        guard = StrongroomGuard.GuardState(allowanceMinutes = 30)
+    )
+
+    private fun benchActions() = SigningActions(
+        onAmend = {},
+        onAllowanceMove = {},
+        onSignature = {}
+    )
+
+    private fun shootBench(name: String, pose: PrintBenchPose) {
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    SigningPrintBench(
+                        state = benchState(),
+                        actions = benchActions(),
+                        pose = pose
+                    )
+                }
+            }
+        }
+        writeShot(name, bitmap)
+    }
+
+    @Test
+    fun signing_printBench_atRest() {
+        shootBench("signing-print-bench-rest.png", PrintBenchPose())
+    }
+
+    @Test
+    fun signing_printBench_midTurn() {
+        shootBench(
+            "signing-print-bench-midturn.png",
+            PrintBenchPose(
+                wheelDeg = 41f,
+                wheelGhostDeg = 9f,
+                dialHandMinute = 643,
+                seatsTaken = 1
+            )
+        )
     }
 
     @Test
