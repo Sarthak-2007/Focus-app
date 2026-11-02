@@ -119,17 +119,23 @@ class Issue341BuildCatalogueComposeTest {
         // explicit idle wait, and a failure prints the unmerged
         // semantics tree into the assertion so the next read is
         // evidence, not another guess.
+        // Third read (BUILD-SR-15): both dumps are now evidence.
+        // The OPEN stop stands in BOTH trees at (262,64)-(302,100)
+        // with its own OnClick; the wedge gate is open
+        // (isSessionActive defaults false); the row and its stops
+        // are byte-identical to main, where this passed. What the
+        // composed tree changed is the weight of the first frames
+        // (P0 theme/type) — and this is the file's only
+        // SCROLL-DEPENDENT tap: performScrollToNode starts the
+        // lazy list's scroll, whose settle runs on the compose
+        // clock that Robolectric does not auto-advance. A tap
+        // injected before the settle lands on the pre-scroll
+        // layout and reaches no stop. The clock is therefore
+        // advanced past the settle on both sides of the tap.
+        composeRule.mainClock.advanceBy(1_000)
         composeRule.waitForIdle()
-        // Second instrument (BUILD-SR-15): the first cure's dump
-        // (run 41428559751) proves the OPEN stop stands in the
-        // unmerged tree at (262,64)-(302,100) with its own
-        // OnClick, inside the row whose combinedClickable merges
-        // descendants — the merged-tree node the plain finder
-        // returns is the suspect. Click the unmerged node; a
-        // failure now prints the MERGED tree (the click's own
-        // tree) beside the assertion.
-        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN", useUnmergedTree = true)
-            .performClick()
+        composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN").performClick()
+        composeRule.mainClock.advanceBy(1_000)
         composeRule.waitForIdle()
         assertEquals(
             "OPEN stop tap must reach onSetAppTier; merged tree: " +
