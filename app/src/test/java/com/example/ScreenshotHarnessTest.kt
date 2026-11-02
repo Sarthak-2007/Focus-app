@@ -746,6 +746,29 @@ class ScreenshotHarnessTest {
     }
 
     @Test
+    fun lifting_handingBack_midReturn() {
+        // LEAD-MOVES: THE HANDING BACK, mid-return. 1,500 ms into
+        // the ceremony — the lock tripped at 600 and four people
+        // who waited stand at the threshold as wordless brass
+        // slips, each mid-travel into the threshold's return slot
+        // on its own staggered body (HandingBackMotion): handed
+        // back BEFORE the swing opens (2,680) and long before
+        // the plate is struck. No names, no printed count — the
+        // slips are the presence; the names live at the Drawer.
+        val whole = wholePlateView()
+        shootLifting(
+            "lifting-handing-back.png",
+            LiftingState(
+                plate = whole,
+                pile = PlatePileView.fromPlates(listOf(whole) + restingViews()),
+                isFailure = false,
+                waitingSlips = 4,
+                ceremonyStartOffsetMs = 1_500
+            )
+        )
+    }
+
+    @Test
     fun lifting_failureFace_sealBroken() {
         val broken = plateView(
             liftingPlate(

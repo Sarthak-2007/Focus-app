@@ -227,17 +227,39 @@ object BreakPhases {
      *  ([BreakRedriveScore.EndMs]) plus its settle tail. */
     val REDRIVE_MS: Long get() = BreakRedriveScore.EndMs.toLong() + 500L
 
+    /** The longest any phase window runs, however long the
+     *  span: the firing's acts are physical and brief — on a
+     *  long break they take their filed time at the span's two
+     *  ends and the room at rest owns the middle. */
+    const val WINDOW_CAP_MS: Long = 30_000L
+
     /**
-     * The phase windows for a span of [totalMillis]: each window
-     * is its filed length, compressed to a quarter of the span
-     * when the span is short — a freely chosen 1-minute break
-     * (D-6: any length is lawful) still eases and still re-drives,
-     * in proportion, never skipped and never overlapping.
+     * The phase windows for a span of [totalMillis]. The law,
+     * in order: each window is A QUARTER OF THE SPAN — a freely
+     * chosen 1-minute break (D-6: any length is lawful) still
+     * eases for 15 of its 60 seconds and still re-drives for
+     * 15, every phase standing in proportion, never skipped;
+     * the quarter is CAPPED at [WINDOW_CAP_MS], so a long span's
+     * windows stay the brief physical acts they are; and a
+     * window never falls below its FILED length ([EASE_MS] /
+     * [REDRIVE_MS]) — the ease never faster than its cam, the
+     * re-drive never shorter than its score. Where even the
+     * filed pair would overlap (a span shorter than the two
+     * acts together), the windows fall back to the quarter each:
+     * in proportion, and never overlapping. (Cure, LEAD-MOVES
+     * 2026-11-03, for VERIFY-SEAT's named debt: the first
+     * written form took min(filed, quarter), which on a 1-minute
+     * span crushed the ease to its 1,800 ms filing and the
+     * phases all but vanished — the test that names this law
+     * failed from its birth until this cure.)
      * Returns (easeWindow, redriveWindow).
      */
     fun windows(totalMillis: Long): Pair<Long, Long> {
         val quarter = totalMillis / 4L
-        return minOf(EASE_MS, quarter) to minOf(REDRIVE_MS, quarter)
+        val ease = maxOf(EASE_MS, minOf(quarter, WINDOW_CAP_MS))
+        val redrive = maxOf(REDRIVE_MS, minOf(quarter, WINDOW_CAP_MS))
+        if (ease + redrive > totalMillis) return quarter to quarter
+        return ease to redrive
     }
 
     /** The phase at a reading, from the clock alone. */

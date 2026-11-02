@@ -35,10 +35,17 @@ import com.example.domain.LiftingPlate
 import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
+import androidx.compose.ui.draw.rotate
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomLitSurface
 import com.example.ui.foundation.StrongroomRoles
 import com.example.ui.foundation.StrongroomType
+import com.example.ui.foundation.boltHead
+import com.example.ui.foundation.grainAnnulus
+import com.example.ui.foundation.grainDisc
+import com.example.ui.foundation.grainRect
+import com.example.ui.foundation.lightVectorFor
+import com.example.ui.foundation.taperedSpoke
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -60,6 +67,17 @@ import kotlin.math.sin
  * engine as the lift fires; this surface presents no list of
  * those who waited, and the lift announces nothing — there are
  * no words on this surface beyond the plate's own struck ones.
+ * LEAD-MOVES (2026-11-03): the handing back now also stands
+ * PRESENT as mechanism — the waiting stand at the threshold as
+ * wordless brass slips and are handed back one by one on
+ * [HandingBackMotion] as the lock trips, every one gone before
+ * the swing opens and the plate is struck; presence without
+ * presentation — no name, no printed count, no word was added,
+ * and the domain machine's gate is untouched. The same pass
+ * machined what read as diagrams: bolts travel in jamb
+ * housings, the wheel and dial are solid grained castings, and
+ * the pile answers the landing with its own dip and settle
+ * ([PlateLanding.pileDipAt]).
  *
  * THE FAILURE FORM stands in this same file, at the same craft
  * (C-18): the same door, AJAR in a dark room, the seal gone and
@@ -87,6 +105,13 @@ data class LiftingState(
     /** True when the standing struck day is a fallen day: the
      *  failure face stands, and no ceremony is played. */
     val isFailure: Boolean = false,
+    /** How many people waited through this day, each person
+     *  once — the handing back's standing fact, carried as a
+     *  count and nothing more: the surface draws that many
+     *  wordless slips at the threshold and hands them back on
+     *  [HandingBackMotion]; it never learns or shows who they
+     *  are (the names stand at the Drawer's threshold, C-11). */
+    val waitingSlips: Int = 0,
     /** Where the ceremony clock stands when this surface is
      *  entered: the host reads it from the finish's own elapsed
      *  zero; a surface entered after the day has lifted stands
@@ -128,7 +153,12 @@ fun Lifting(state: LiftingState, modifier: Modifier = Modifier) {
             .background(StrongroomRoles.Field)
             .semantics { contentDescription = "ULYSSES" }
     ) {
-        DoorCeremony(pose = pose, modifier = Modifier.weight(1f))
+        DoorCeremony(
+            pose = pose,
+            waitingSlips = state.waitingSlips,
+            reducedMotion = state.reducedMotion,
+            modifier = Modifier.weight(1f)
+        )
         TrayZone(
             plate = plate,
             pile = state.pile,
@@ -144,7 +174,12 @@ fun Lifting(state: LiftingState, modifier: Modifier = Modifier) {
 // ────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DoorCeremony(pose: LiftCeremonyPose, modifier: Modifier = Modifier) {
+private fun DoorCeremony(
+    pose: LiftCeremonyPose,
+    waitingSlips: Int = 0,
+    reducedMotion: Boolean = false,
+    modifier: Modifier = Modifier
+) {
     val lightState = LocalStrongroomLightState.current
     Canvas(modifier = modifier.fillMaxSize()) {
         val w = size.width
@@ -182,10 +217,37 @@ private fun DoorCeremony(pose: LiftCeremonyPose, modifier: Modifier = Modifier) 
         )
 
         // The bolts, on the frame's right jamb — iron that held
-        // the door, withdrawing into the jamb as their fractions
-        // run (reverse load order: the lowest, heaviest bolt
-        // first). A withdrawn bolt is gone into the steel.
+        // the door, withdrawing into their jamb housings as
+        // their fractions run (reverse load order: the lowest,
+        // heaviest bolt first). The jamb is a machined steel
+        // strip let into the case; each bolt travels in its own
+        // housing slot, a recess with a shadowed mouth — the
+        // bolt is a grained bar with a bevelled nose, and under
+        // strain (its slide not yet broken free) its nose edge
+        // catches the light with the load it carries. A
+        // withdrawn bolt is gone into the steel; its housing
+        // stands empty, and reads empty.
         val boltFull = frameW * 0.16f
+        val jambW = boltFull + 20.dp.toPx()
+        val jambX = frameX + frameW - 6.dp.toPx()
+        grainRect(
+            topLeft = Offset(jambX, frameY + frameH * 0.10f),
+            size = Size(jambW, frameH * 0.80f),
+            cellPx = LiftingTexture.Species.STEEL.cellPx.dp.toPx()
+        ) { cx, cy ->
+            LiftingTexture.cellTone(
+                StrongroomInks.Graphite, StrongroomInks.Violet,
+                LiftingTexture.Species.STEEL, cx, cy,
+                seed = 47, state = lightState
+            )
+        }
+        drawRect(
+            color = StrongroomLight.relief(
+                StrongroomInks.Graphite, StrongroomInks.Violet, 0.8f, lightState
+            ),
+            topLeft = Offset(jambX, frameY + frameH * 0.10f),
+            size = Size(2.5.dp.toPx(), frameH * 0.80f)
+        )
         for (i in 0 until 3) {
             // Withdrawal order is heaviest-first; the door's bolts
             // seat top-to-bottom light-to-heavy, so withdrawal
@@ -193,24 +255,75 @@ private fun DoorCeremony(pose: LiftCeremonyPose, modifier: Modifier = Modifier) 
             val boltIndex = 2 - i
             val fraction = pose.boltFractions.getOrElse(boltIndex) { 0f }
             val extension = boltFull * (1f - fraction)
-            if (extension <= 0.5f) continue
             val by = frameY + frameH * (0.24f + i * 0.26f)
+            val slotH = 17.dp.toPx()
+            // The housing: a recess slot in the jamb, longer than
+            // the bolt's travel, its mouth shadowed, its end wall
+            // the steel the bolt strikes home against at sealing.
             drawRect(
-                color = StrongroomRoles.Metal,
-                topLeft = Offset(frameX + frameW - extension, by - 6.dp.toPx()),
-                size = Size(extension, 12.dp.toPx())
+                color = StrongroomLight.descend(StrongroomInks.Graphite, 2),
+                topLeft = Offset(jambX + 3.dp.toPx(), by - slotH / 2f),
+                size = Size(jambW - 3.dp.toPx(), slotH)
             )
+            drawRect(
+                color = StrongroomLight.shadowPartner(StrongroomInks.Graphite),
+                topLeft = Offset(jambX + 3.dp.toPx(), by - slotH / 2f),
+                size = Size(jambW - 3.dp.toPx(), 2.dp.toPx())
+            )
+            if (extension <= 0.5f) continue
+            val boltH = 11.dp.toPx()
+            val boltX = frameX + frameW - extension
+            // The bar itself: machined steel grain, locked to
+            // the bolt (its cells ride its own frame, offset by
+            // its drawn position's cell phase so the skin does
+            // not swim as it travels).
+            grainRect(
+                topLeft = Offset(boltX, by - boltH / 2f),
+                size = Size(extension, boltH),
+                cellPx = LiftingTexture.Species.STEEL.cellPx.dp.toPx()
+            ) { cx, cy ->
+                LiftingTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    LiftingTexture.Species.STEEL,
+                    cx + (boltX / LiftingTexture.Species.STEEL.cellPx.dp.toPx()).toInt(),
+                    cy, seed = 49 + boltIndex, state = lightState
+                )
+            }
+            // Its top face catches the light along its length.
             drawRect(
                 color = StrongroomLight.relief(
                     StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
                 ),
-                topLeft = Offset(frameX + frameW - extension, by - 6.dp.toPx()),
-                size = Size(extension, 2.5.dp.toPx())
+                topLeft = Offset(boltX, by - boltH / 2f),
+                size = Size(extension, 2.2.dp.toPx())
             )
+            // The nose: a bevelled leading end — a darker wedge,
+            // and under strain a lit edge where the load stands.
+            val bevel = 5.dp.toPx()
+            val nosePath = androidx.compose.ui.graphics.Path().apply {
+                moveTo(boltX, by - boltH / 2f)
+                lineTo(boltX + bevel, by)
+                lineTo(boltX, by + boltH / 2f)
+                close()
+            }
+            drawPath(
+                nosePath,
+                StrongroomLight.descend(StrongroomInks.Graphite, 1)
+            )
+            if (fraction > 0f && fraction <= 0.08f) {
+                drawLine(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.95f, lightState
+                    ),
+                    start = Offset(boltX + 1.dp.toPx(), by - boltH / 2f + 1.dp.toPx()),
+                    end = Offset(boltX + 1.dp.toPx(), by + boltH / 2f - 1.dp.toPx()),
+                    strokeWidth = 1.6.dp.toPx()
+                )
+            }
             drawCircle(
-                color = StrongroomInks.Graphite,
-                radius = 4.dp.toPx(),
-                center = Offset(frameX + frameW - extension + 4.dp.toPx(), by)
+                color = StrongroomLight.descend(StrongroomInks.Graphite, 2),
+                radius = 3.4.dp.toPx(),
+                center = Offset(boltX + extension - 6.dp.toPx(), by)
             )
         }
 
@@ -284,56 +397,172 @@ private fun DoorCeremony(pose: LiftCeremonyPose, modifier: Modifier = Modifier) 
 
         // Face furniture, drawn while the face still fronts the
         // room (it swings out of the drawing's plane as the leaf
-        // turns): the dead dial and the great wheel, at rest.
+        // turns): the dead dial and the great wheel, at rest —
+        // machined solid (LEAD-MOVES): the dial a grained steel
+        // disc in a brass ring with a cast hand; the wheel a
+        // grained rim band with bolt heads around it, tapered
+        // spokes and a stacked hub, as the picked print wears
+        // its iron.
         if (leafW > frameW * 0.45f) {
+            val lightDir = lightVectorFor(lightState)
             val dialC = Offset(leafX + leafW / 2f, leafY + leafH * 0.17f)
             val dialR = leafW * 0.13f
-            drawCircle(color = StrongroomInks.Graphite, radius = dialR, center = dialC)
-            drawCircle(
-                color = pin, radius = dialR, center = dialC,
-                style = Stroke(width = 1.5.dp.toPx())
-            )
+            grainDisc(
+                center = dialC, radius = dialR,
+                cellPx = LiftingTexture.Species.STEEL.cellPx.dp.toPx()
+            ) { cx, cy ->
+                LiftingTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    LiftingTexture.Species.STEEL, cx, cy,
+                    seed = 43, state = lightState
+                )
+            }
+            grainAnnulus(
+                center = dialC, outerR = dialR + 2.5.dp.toPx(), innerR = dialR - 1.5.dp.toPx(),
+                cellPx = LiftingTexture.Species.BRASS.cellPx.dp.toPx()
+            ) { cx, cy ->
+                LiftingTexture.cellTone(
+                    StrongroomInks.Gold, StrongroomInks.Graphite,
+                    LiftingTexture.Species.BRASS, cx, cy,
+                    seed = 45, state = lightState
+                )
+            }
             for (i in 0 until 12) {
                 val a = (i * 30f) * (Math.PI / 180f).toFloat()
-                val inner = dialC + Offset(sin(a) * dialR * 0.78f, -cos(a) * dialR * 0.78f)
-                val outer = dialC + Offset(sin(a) * dialR * 0.94f, -cos(a) * dialR * 0.94f)
-                drawLine(color = pin, start = inner, end = outer, strokeWidth = 1.5.dp.toPx())
+                val inner = dialC + Offset(sin(a) * dialR * 0.74f, -cos(a) * dialR * 0.74f)
+                val outer = dialC + Offset(sin(a) * dialR * 0.92f, -cos(a) * dialR * 0.92f)
+                drawLine(color = pin, start = inner, end = outer, strokeWidth = 2.dp.toPx())
             }
-            drawLine(
-                color = pin, start = dialC,
-                end = dialC + Offset(0f, dialR * 0.62f),
-                strokeWidth = 2.5.dp.toPx()
+            taperedSpoke(
+                center = dialC, angleDeg = 90.0,
+                fromR = dialR * 0.10f, toR = dialR * 0.62f,
+                fromHalfPx = 3.2.dp.toPx(), toHalfPx = 1.2.dp.toPx(),
+                fill = pin,
+                litEdge = StrongroomLight.sealedPinstripeLitLip(),
+                shadowEdge = StrongroomLight.descend(StrongroomInks.Gold, 2),
+                lightDir = lightDir
             )
             drawCircle(color = pin, radius = 3.dp.toPx(), center = dialC)
 
             val wheelC = Offset(leafX + leafW / 2f, leafY + leafH * 0.47f)
             val wheelR = leafW * 0.22f
-            val rimLit = StrongroomLight.relief(
-                StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
-            )
-            val rimShadow = StrongroomLight.relief(
-                StrongroomInks.Graphite, StrongroomInks.Violet, -0.85f, lightState
-            )
-            drawArc(
-                color = rimShadow, startAngle = -40f, sweepAngle = 180f,
-                useCenter = false, topLeft = Offset(wheelC.x - wheelR, wheelC.y - wheelR),
-                size = Size(wheelR * 2, wheelR * 2), style = Stroke(width = 7.dp.toPx())
-            )
-            drawArc(
-                color = rimLit, startAngle = 140f, sweepAngle = 180f,
-                useCenter = false, topLeft = Offset(wheelC.x - wheelR, wheelC.y - wheelR),
-                size = Size(wheelR * 2, wheelR * 2), style = Stroke(width = 7.dp.toPx())
-            )
-            for (deg in listOf(90f, 210f, 330f)) {
-                val a = deg * (Math.PI / 180f).toFloat()
-                drawLine(
-                    color = StrongroomInks.Graphite, start = wheelC,
-                    end = wheelC + Offset(cos(a) * wheelR * 0.92f, sin(a) * wheelR * 0.92f),
-                    strokeWidth = 5.dp.toPx()
+            val rimIn = wheelR * 0.78f
+            grainAnnulus(
+                center = wheelC, outerR = wheelR, innerR = rimIn,
+                cellPx = LiftingTexture.Species.STEEL.cellPx.dp.toPx()
+            ) { cx, cy ->
+                LiftingTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    LiftingTexture.Species.STEEL, cx, cy,
+                    seed = 51, state = lightState
                 )
             }
-            drawCircle(color = StrongroomInks.Gold, radius = wheelR * 0.20f, center = wheelC)
+            // Bolt heads around the rim, as the print wears them.
+            for (i in 0 until 8) {
+                val a = Math.toRadians(i * 45.0 + 22.0)
+                val bc = wheelC + Offset(
+                    cos(a).toFloat() * (wheelR + rimIn) / 2f,
+                    sin(a).toFloat() * (wheelR + rimIn) / 2f
+                )
+                boltHead(
+                    center = bc, radius = wheelR * 0.085f,
+                    face = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.3f, lightState
+                    ),
+                    lit = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
+                    ),
+                    shadow = StrongroomLight.descend(StrongroomInks.Graphite, 2)
+                )
+            }
+            for (deg in listOf(90.0, 210.0, 330.0)) {
+                taperedSpoke(
+                    center = wheelC, angleDeg = deg,
+                    fromR = wheelR * 0.16f, toR = rimIn,
+                    fromHalfPx = wheelR * 0.10f, toHalfPx = wheelR * 0.065f,
+                    fill = StrongroomLight.descend(StrongroomInks.Graphite, 1),
+                    litEdge = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
+                    ),
+                    shadowEdge = StrongroomLight.descend(StrongroomInks.Graphite, 3),
+                    lightDir = lightDir
+                )
+            }
+            grainDisc(
+                center = wheelC, radius = wheelR * 0.20f,
+                cellPx = LiftingTexture.Species.BRASS.cellPx.dp.toPx()
+            ) { cx, cy ->
+                LiftingTexture.cellTone(
+                    StrongroomInks.Gold, StrongroomInks.Graphite,
+                    LiftingTexture.Species.BRASS, cx, cy,
+                    seed = 53, state = lightState
+                )
+            }
             drawCircle(color = StrongroomInks.Graphite, radius = wheelR * 0.08f, center = wheelC)
+        }
+
+        // ── THE HANDING BACK, at the threshold (C-11) ──
+        // The people who waited stand at the door's foot as
+        // wordless brass slips on the threshold — no name, no
+        // printed count, no word — and as the lock trips each
+        // is handed back in turn: it sinks into the threshold's
+        // return slot on its own body and is gone into the
+        // phone's own keeping, every one before the swing opens
+        // and long before the plate is struck. What stands here
+        // after the return is an empty threshold and the slot
+        // that took them.
+        if (waitingSlips > 0) {
+            val drawn = minOf(waitingSlips, HandingBackMotion.DRAWN_SLIPS_MAX)
+            val slipW = 30.dp.toPx()
+            val slipH = 15.dp.toPx()
+            val slotY = frameY + frameH - 3.dp.toPx()
+            var sx = frameX + 16.dp.toPx()
+            // The return slot: a dark cut in the threshold under
+            // the slips' stand, rimmed in the threshold's gold.
+            drawRect(
+                color = StrongroomLight.descend(StrongroomInks.Graphite, 2),
+                topLeft = Offset(frameX + 10.dp.toPx(), slotY),
+                size = Size(drawn * (slipW + 9.dp.toPx()) + 3.dp.toPx(), 5.dp.toPx())
+            )
+            for (i in 0 until drawn) {
+                val f = HandingBackMotion.fractionFor(
+                    i, waitingSlips, pose.elapsedMs, reducedMotion
+                ).toFloat()
+                if (f < 1f) {
+                    // The slip sinks into the slot on its body:
+                    // the standing height above the threshold is
+                    // the fraction not yet handed back.
+                    val standingH = slipH * (1f - f)
+                    val top = slotY - standingH
+                    grainRect(
+                        topLeft = Offset(sx, top),
+                        size = Size(slipW, standingH),
+                        cellPx = LiftingTexture.Species.BRASS.cellPx.dp.toPx()
+                    ) { cx, cy ->
+                        LiftingTexture.cellTone(
+                            StrongroomInks.Gold, StrongroomInks.Graphite,
+                            LiftingTexture.Species.BRASS, cx, cy,
+                            seed = 61 + i * 7, state = lightState
+                        )
+                    }
+                    drawRect(
+                        color = StrongroomInks.Graphite,
+                        topLeft = Offset(sx, top),
+                        size = Size(slipW, 1.4.dp.toPx())
+                    )
+                    // The slip's punched corner — a held thing's
+                    // mark, struck like the plate's holes in
+                    // miniature; it carries no word.
+                    if (f < 0.35f) {
+                        drawCircle(
+                            color = StrongroomInks.Graphite,
+                            radius = 2.6.dp.toPx(),
+                            center = Offset(sx + slipW - 6.dp.toPx(), top + 5.dp.toPx())
+                        )
+                    }
+                }
+                sx += slipW + 9.dp.toPx()
+            }
         }
 
         // The threshold: one gold line where the door's swing ends.
@@ -370,11 +599,22 @@ private fun TrayZone(
                     modifier = Modifier
                         .fillMaxWidth()
                         .offset(y = dropPx.dp)
+                        // The plate arrives slightly askew and
+                        // squares itself as the landing body
+                        // settles — the overshoot past 1 rocks it
+                        // a breath the other way, then rest.
+                        .rotate(
+                            ((1.0 - pose.plateDropFraction) * 2.2).toFloat()
+                        )
                 )
             }
         }
         Spacer(Modifier.height(10.dp))
-        PlatePileStrip(pile = pile, landingStruck = pose.struck)
+        PlatePileStrip(
+            pile = pile,
+            landingStruck = pose.struck,
+            dipFraction = pose.pileDip.toFloat()
+        )
     }
 }
 
@@ -447,6 +687,29 @@ fun StruckPlateCard(plate: StruckPlateView, modifier: Modifier = Modifier) {
                     size = Size(d, d), style = Stroke(width = 1.2.dp.toPx())
                 )
             }
+            // The plate's machined edge (LEAD-MOVES): a bevelled
+            // top edge catching the light, a shadowed bottom
+            // edge where the plate meets the pile — a struck
+            // plate has thickness, and thickness reads at its rim.
+            drawRect(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.55f, lightState
+                ),
+                topLeft = Offset.Zero,
+                size = Size(size.width, 2.6.dp.toPx())
+            )
+            drawRect(
+                color = StrongroomLight.descend(StrongroomInks.Gold, 2),
+                topLeft = Offset(0f, size.height - 2.6.dp.toPx()),
+                size = Size(size.width, 2.6.dp.toPx())
+            )
+            drawRect(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Gold, StrongroomInks.Graphite, 0.3f, lightState
+                ),
+                topLeft = Offset.Zero,
+                size = Size(2.dp.toPx(), size.height)
+            )
         }
         // The hours held, struck in brass at the plate's head.
         Text(
@@ -493,12 +756,21 @@ fun StruckPlateCard(plate: StruckPlateView, modifier: Modifier = Modifier) {
  * no label, no total stands anywhere in this strip.
  */
 @Composable
-private fun PlatePileStrip(pile: PlatePileView, landingStruck: Boolean) {
+private fun PlatePileStrip(
+    pile: PlatePileView,
+    landingStruck: Boolean,
+    dipFraction: Float = 0f
+) {
     val lightState = LocalStrongroomLightState.current
+    // The pile's dip under the landing: the whole stack rides
+    // down by the dip's depth (3 dp at full dip) and rings back
+    // on the pile's own body — brass pressed by brass, settling.
+    val dipDp = (dipFraction.coerceIn(-0.35f, 1f) * 3f).dp
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(104.dp)
+            .offset(y = dipDp)
     ) {
         // The tray: a graphite receptacle with a gold rim — it
         // receives and keeps; it displays nothing.
@@ -731,21 +1003,45 @@ private fun FailureFace(
                 // The wheel at rest and the dead dial — the same
                 // furniture, unlit. Nothing has been added to
                 // this face, and nothing taken away but the seal.
+                // Machined solid as on the lifting face
+                // (LEAD-MOVES) — in the dark room it reads by
+                // its grain and edges alone.
                 val wheelC = Offset(leafX + leafW / 2f, leafY + leafH * 0.47f)
                 val wheelR = leafW * 0.22f
-                drawCircle(
-                    color = StrongroomInks.Graphite, radius = wheelR, center = wheelC,
-                    style = Stroke(width = 7.dp.toPx())
-                )
-                for (deg in listOf(90f, 210f, 330f)) {
-                    val a = deg * (Math.PI / 180f).toFloat()
-                    drawLine(
-                        color = StrongroomInks.Graphite, start = wheelC,
-                        end = wheelC + Offset(cos(a) * wheelR * 0.92f, sin(a) * wheelR * 0.92f),
-                        strokeWidth = 5.dp.toPx()
+                val darkLight = lightVectorFor(darkState)
+                grainAnnulus(
+                    center = wheelC, outerR = wheelR, innerR = wheelR * 0.78f,
+                    cellPx = LiftingTexture.Species.STEEL.cellPx.dp.toPx()
+                ) { cellX, cellY ->
+                    LiftingTexture.cellTone(
+                        StrongroomInks.Graphite, StrongroomInks.Violet,
+                        LiftingTexture.Species.STEEL, cellX, cellY,
+                        seed = 51, state = darkState
                     )
                 }
-                drawCircle(color = pin, radius = wheelR * 0.20f, center = wheelC)
+                for (deg in listOf(90.0, 210.0, 330.0)) {
+                    taperedSpoke(
+                        center = wheelC, angleDeg = deg,
+                        fromR = wheelR * 0.16f, toR = wheelR * 0.78f,
+                        fromHalfPx = wheelR * 0.10f, toHalfPx = wheelR * 0.065f,
+                        fill = StrongroomLight.descend(StrongroomInks.Graphite, 1),
+                        litEdge = StrongroomLight.relief(
+                            StrongroomInks.Graphite, StrongroomInks.Violet, -0.3f, darkState
+                        ),
+                        shadowEdge = StrongroomLight.descend(StrongroomInks.Graphite, 3),
+                        lightDir = darkLight
+                    )
+                }
+                grainDisc(
+                    center = wheelC, radius = wheelR * 0.20f,
+                    cellPx = LiftingTexture.Species.BRASS.cellPx.dp.toPx()
+                ) { cellX, cellY ->
+                    LiftingTexture.cellTone(
+                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                        LiftingTexture.Species.BRASS, cellX, cellY,
+                        seed = 53, state = darkState
+                    )
+                }
                 drawCircle(color = StrongroomInks.Graphite, radius = wheelR * 0.08f, center = wheelC)
             }
             // The gapped plate in the tray, and the pile beneath
