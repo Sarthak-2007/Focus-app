@@ -1,9 +1,11 @@
 package com.example.ui.doorway
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,11 +31,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
@@ -42,10 +46,7 @@ import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
 import com.example.ui.foundation.StrongroomLightState
-import com.example.ui.foundation.StrongroomRoles
 import com.example.ui.foundation.StrongroomType
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
  * C-21 · THE DOORWAY / THE GLANCE — the app's first screen, and
@@ -81,30 +82,31 @@ import kotlin.math.sin
  *     (TX-SHOW-13). No plate stands when no seal stood (B-14) —
  *     the tray side is simply empty.
  *
- * THE DOOR (C-01, its Doorway share): deep-violet enamelled steel,
- * gold pinstripe laid by hand, one great wheel, a combination dial
- * dead until its hour — standing OPEN beside its dark opening.
- * The open Door carries NO printings: the four printings (C-12)
- * are cut at the closing onto the SEALED face; an open door has
- * nothing engraved to show, and the door-word's slot
- * (GAP-COORD-01) is not this surface's to fill or to fake.
+ * THE DOOR (C-01, its Doorway share): the seven-ink print — the
+ * real vault-door photograph recoloured into the room's inks,
+ * Sarthak's own pick, cleared by his eye — standing as the whole
+ * surface through [DoorFace], which the host lays behind this
+ * place edge to edge. The open Door carries NO printings: the
+ * four printings (C-12) are cut at the closing onto the SEALED
+ * face; an open door has nothing engraved to show, and the
+ * door-word's slot (GAP-COORD-01) is not this surface's to fill
+ * or to fake. (The flat drawn door that stood here before — 7dp
+ * enamel grain cells, a leaf drawn at 26% of the room's width —
+ * was killed by Sarthak's eye on his phone, 2026-11-03: "Even
+ * that tiny thing is ugly." The print is the face; no drawn
+ * stand-in stands in for the door again.)
  *
- * Texture (intake §1, in-build): the enamel, steel and brass are
- * drawn as grain — every cell's tone derived from the surface's
- * own ink through RELIGHT's partners and eighths ([DoorwayTexture]).
- * No flat fill carries a material surface here; no image, generated
- * or otherwise, exists in this file.
+ * Texture: the print IS the texture — a real door's enamel,
+ * steel and brass at photographic grain. The one drawn grain
+ * left on this surface is the struck plate's brass
+ * ([DoorwayTexture] BRASS), a kept record's own material.
  *
- * Motion, in physics vocabulary (foundation primitives only): on
- * entry the Door completes the last of its weight-driven travel —
- * [DrivenDoor] ([com.example.ui.foundation.DoorBody]: imbalance
- * torque 1900 declining to zero at 88°, inertia 30, closer band
- * +95 resistance over 66–76°, end-stop stiffness 800 / resistance
- * 260 engaging past 74°, settle ε 0.5° / 1.0°·s⁻¹) — starting where
- * the body passes 74°, settling against its stop at its filed
- * 82.09°. Nothing else on this surface moves: the Doorway is a
- * place at rest, and dopamine lives at passive moments only
- * (ledger E-5) — a still door, a forming line, kept brass.
+ * Motion, in physics vocabulary (foundation primitives only):
+ * on entry [DoorFace] completes the last of the door's
+ * weight-driven travel — [DrivenDoor]'s angle read through
+ * [DoorwaySwing], spent as the whole face's settle. Nothing
+ * else on this surface moves: the Doorway is a place at rest,
+ * and dopamine lives at passive moments only (ledger E-5).
  * All motion figures UNPROVEN-ON-DEVICE (foundation head, G-7).
  *
  * This surface authors no navigation, no settings, no greeting,
@@ -288,11 +290,13 @@ fun Doorway(state: DoorwayState, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(StrongroomRoles.Field)
-            .semantics { contentDescription = "ULYSSES" }
+            .semantics { contentDescription = "ULYSSES" },
+        verticalArrangement = Arrangement.Bottom
     ) {
-        DoorAtRest(lightState = lightState, modifier = Modifier.weight(1f))
-        // The signing place, in the Doorway's count order (C-21).
+        // The signing place, in the Doorway's count order (C-21),
+        // standing at the foot of the door face — the host lays
+        // [DoorFace] behind this surface whole, and these four
+        // pieces stand on the print.
         Column(modifier = Modifier.padding(horizontal = 20.dp)) {
             state.composition?.let { CompositionSheet(it, lightState) }
             Spacer(Modifier.height(14.dp))
@@ -311,11 +315,32 @@ fun Doorway(state: DoorwayState, modifier: Modifier = Modifier) {
 }
 
 // ------------------------------------------------------------------
-// The Door, standing open (C-01, Doorway share)
+// The Door face (C-01, Doorway share) — THE SEVEN-INK PRINT
 // ------------------------------------------------------------------
 
+/**
+ * THE FACE: the seven-ink print — the real vault-door photograph
+ * recoloured into the room's seven inks, picked and cleared by
+ * Sarthak's own eye (2026-11-01) — standing as the opening
+ * surface's whole ground: full-bleed, cropped to the screen's
+ * reach, the door IS the surface. The host lays this behind the
+ * doorway place whole; every decided element of the place (the
+ * sheet, the line, the slip, the plate, the swing act, the
+ * signing table, the drawer front) stands on it. No drawn
+ * stand-in: the flat vector door this replaced read as a toy,
+ * and shrunk into the room's top corner it read as a bug
+ * (Sarthak's phone, 2026-11-03 03:35 IST).
+ *
+ * Motion: on entry the face completes the last of the door's
+ * weight-driven travel — the foundation's driven body
+ * ([DrivenDoor], its angle read through [DoorwaySwing]) spent
+ * as a settle of the whole face: a breath of scale off the
+ * print and a few dp of downward ease as it comes onto its
+ * stop. The print itself never redraws; the body only
+ * projects its angle onto the face's carriage.
+ */
 @Composable
-private fun DoorAtRest(lightState: StrongroomLightState, modifier: Modifier = Modifier) {
+fun DoorFace(modifier: Modifier = Modifier) {
     val door = remember { DrivenDoor() }
     var entryMs by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -326,189 +351,25 @@ private fun DoorAtRest(lightState: StrongroomLightState, modifier: Modifier = Mo
         }
     }
     val angle = door.angleAt(DoorwaySwing.StartMs + entryMs)
-    // The leaf's remaining travel, as the drawing spends it: the
-    // leaf eases the last fraction of its swing against the wall —
-    // a translation of (final − current) degrees, spent at a
-    // drawing scale of 0.9 dp per degree, and the dark opening
-    // widens as the leaf leaves it. Physics decides the angle;
-    // the drawing only projects it.
-    val travelLeftDp = ((door.finalDeg - angle) * 0.9).toFloat()
-
-    Canvas(modifier = modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
-        val field = StrongroomLight.stateSurface(
-            StrongroomInks.Graphite, lightState, com.example.ui.foundation.StrongroomLitSurface.FACE
-        )
-        drawRect(field)
-
-        // The frame and its dark opening — the vault's mouth, the
-        // door standing open beside it.
-        val frameX = w * 0.34f
-        val frameY = h * 0.07f
-        val frameW = w * 0.60f
-        val frameH = h * 0.84f
-        // Steel case: graphite mass, relieved at its lit edge.
-        drawRect(
-            color = StrongroomRoles.Metal,
-            topLeft = Offset(frameX - 10.dp.toPx(), frameY - 10.dp.toPx()),
-            size = Size(frameW + 20.dp.toPx(), frameH + 20.dp.toPx())
-        )
-        drawRect(
-            color = StrongroomLight.relief(
-                StrongroomInks.Graphite, StrongroomInks.Violet, 0.8f, lightState
-            ),
-            topLeft = Offset(frameX - 10.dp.toPx(), frameY - 10.dp.toPx()),
-            size = Size(frameW + 20.dp.toPx(), 3.dp.toPx())
-        )
-        // The opening: graphite descended to its floor — a dark
-        // room behind the open door, nothing shown inside it.
-        drawRect(
-            color = StrongroomInks.Graphite,
-            topLeft = Offset(frameX, frameY),
-            size = Size(frameW, frameH)
-        )
-        // The threshold: one gold line where the door's swing ends.
-        drawRect(
-            color = StrongroomLight.sealedPinstripe(),
-            topLeft = Offset(frameX, frameY + frameH),
-            size = Size(frameW, 2.5.dp.toPx())
-        )
-
-        // The leaf, open against the room's wall at the frame's
-        // left, eased by its remaining travel.
-        val leafW = w * 0.26f
-        val leafH = frameH * 0.97f
-        val leafX = frameX - leafW - 14.dp.toPx() + travelLeftDp.dp.toPx()
-        val leafY = frameY + frameH * 0.015f
-        val enamel = StrongroomLight.stateSurface(
-            StrongroomInks.Violet, lightState, com.example.ui.foundation.StrongroomLitSurface.FACE
-        )
-        // Enamel grain: every cell relieved from the enamel itself.
-        val cell = DoorwayTexture.Species.ENAMEL.cellPx.dp.toPx()
-        var cy = 0
-        var yy = leafY
-        while (yy < leafY + leafH) {
-            var cx = 0
-            var xx = leafX
-            while (xx < leafX + leafW) {
-                val tone = DoorwayTexture.cellTone(
-                    enamel, StrongroomInks.Graphite,
-                    DoorwayTexture.Species.ENAMEL, cx, cy,
-                    seed = 11, state = lightState
-                )
-                drawRect(
-                    color = tone,
-                    topLeft = Offset(xx, yy),
-                    size = Size(cell + 1f, cell + 1f)
-                )
-                xx += cell; cx++
-            }
-            yy += cell; cy++
-        }
-        // The hand-laid gold pinstripe: an inset line, and inside
-        // it a second, finer line — laid, not printed.
-        val pin = StrongroomLight.sealedPinstripe()
-        val inset = 12.dp.toPx()
-        drawRect(
-            color = pin,
-            topLeft = Offset(leafX + inset, leafY + inset),
-            size = Size(leafW - 2 * inset, 2.dp.toPx())
-        )
-        drawRect(
-            color = pin,
-            topLeft = Offset(leafX + inset, leafY + leafH - inset - 2.dp.toPx()),
-            size = Size(leafW - 2 * inset, 2.dp.toPx())
-        )
-        drawRect(
-            color = pin,
-            topLeft = Offset(leafX + inset, leafY + inset),
-            size = Size(2.dp.toPx(), leafH - 2 * inset)
-        )
-        drawRect(
-            color = pin,
-            topLeft = Offset(leafX + leafW - inset - 2.dp.toPx(), leafY + inset),
-            size = Size(2.dp.toPx(), leafH - 2 * inset)
-        )
-
-        // The combination dial, dead until its hour: a graphite
-        // face, gold ticks, its hand at rest pointing down — it
-        // does not turn at the doorway, and nothing here wakes it.
-        val dialC = Offset(leafX + leafW / 2f, leafY + leafH * 0.17f)
-        val dialR = leafW * 0.21f
-        drawCircle(color = StrongroomInks.Graphite, radius = dialR, center = dialC)
-        drawCircle(
-            color = pin, radius = dialR, center = dialC,
-            style = Stroke(width = 1.5.dp.toPx())
-        )
-        for (i in 0 until 12) {
-            val a = (i * 30f) * (Math.PI / 180f).toFloat()
-            val inner = dialC + Offset(sin(a) * dialR * 0.78f, -cos(a) * dialR * 0.78f)
-            val outer = dialC + Offset(sin(a) * dialR * 0.94f, -cos(a) * dialR * 0.94f)
-            drawLine(color = pin, start = inner, end = outer, strokeWidth = 1.5.dp.toPx())
-        }
-        drawLine(
-            color = pin, start = dialC,
-            end = dialC + Offset(0f, dialR * 0.62f),
-            strokeWidth = 2.5.dp.toPx()
-        )
-        drawCircle(color = pin, radius = 3.dp.toPx(), center = dialC)
-
-        // The great wheel, at rest — the face's furniture and the
-        // signing swing's working handle (ledger A-16). Steel rim
-        // relieved on its lit side, three spokes, a gold hub.
-        val wheelC = Offset(leafX + leafW / 2f, leafY + leafH * 0.47f)
-        val wheelR = leafW * 0.36f
-        val rimLit = StrongroomLight.relief(
-            StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
-        )
-        val rimShadow = StrongroomLight.relief(
-            StrongroomInks.Graphite, StrongroomInks.Violet, -0.85f, lightState
-        )
-        drawArc(
-            color = rimShadow, startAngle = -40f, sweepAngle = 180f,
-            useCenter = false, topLeft = Offset(wheelC.x - wheelR, wheelC.y - wheelR),
-            size = Size(wheelR * 2, wheelR * 2), style = Stroke(width = 7.dp.toPx())
-        )
-        drawArc(
-            color = rimLit, startAngle = 140f, sweepAngle = 180f,
-            useCenter = false, topLeft = Offset(wheelC.x - wheelR, wheelC.y - wheelR),
-            size = Size(wheelR * 2, wheelR * 2), style = Stroke(width = 7.dp.toPx())
-        )
-        for (deg in listOf(90f, 210f, 330f)) {
-            val a = deg * (Math.PI / 180f).toFloat()
-            drawLine(
-                color = StrongroomInks.Graphite, start = wheelC,
-                end = wheelC + Offset(cos(a) * wheelR * 0.92f, sin(a) * wheelR * 0.92f),
-                strokeWidth = 5.dp.toPx()
-            )
-        }
-        drawCircle(color = StrongroomInks.Gold, radius = wheelR * 0.20f, center = wheelC)
-        drawCircle(color = StrongroomInks.Graphite, radius = wheelR * 0.08f, center = wheelC)
-
-        // Three bolt heads along the leaf's frame edge — the
-        // boltwork behind the face, at rest with the door open.
-        for (i in 0 until 3) {
-            val by = leafY + leafH * (0.24f + i * 0.26f)
-            drawCircle(
-                color = StrongroomInks.Graphite, radius = 5.dp.toPx(),
-                center = Offset(leafX + leafW - 9.dp.toPx(), by)
-            )
-            drawCircle(
-                color = rimLit, radius = 5.dp.toPx(),
-                center = Offset(leafX + leafW - 9.dp.toPx(), by),
-                style = Stroke(width = 1.dp.toPx())
-            )
-        }
-        // Two brass hinge knuckles on the leaf's frame edge.
-        for (frac in listOf(0.10f, 0.86f)) {
-            drawRect(
-                color = StrongroomInks.Gold,
-                topLeft = Offset(leafX + leafW - 3.dp.toPx(), leafY + leafH * frac),
-                size = Size(6.dp.toPx(), leafH * 0.07f)
-            )
-        }
+    val startAngle = door.angleAt(DoorwaySwing.StartMs)
+    val travelFraction = if (door.finalDeg > startAngle) {
+        ((door.finalDeg - angle) / (door.finalDeg - startAngle))
+            .toFloat().coerceIn(0f, 1f)
+    } else {
+        0f
     }
+    Image(
+        painter = painterResource(R.drawable.strongroom_door_print),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                scaleX = 1f + 0.03f * travelFraction
+                scaleY = 1f + 0.03f * travelFraction
+                translationY = -8.dp.toPx() * travelFraction
+            }
+    )
 }
 
 // ------------------------------------------------------------------

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomDay
+import com.example.ui.doorway.DoorFace
 import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
 import com.example.ui.drawer.Drawer
@@ -423,6 +424,10 @@ class ScreenshotHarnessTest {
         val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
                 Box(Modifier.size(412.dp, 915.dp)) {
+                    // The face behind the whole place, as the host
+                    // lays it (LEAD-DOORFIX): the seven-ink print,
+                    // edge to edge — the door IS the surface.
+                    DoorFace()
                     Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) {
                             Doorway(state = DoorwayState.AtRest)
