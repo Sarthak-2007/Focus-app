@@ -121,16 +121,18 @@ object StrongroomEngineBridge {
     }
 
     /**
-     * THE SURFACES' ONE DOOR (FEEL-SEAT): a surface mechanism
-     * that earns a felt event at the hand's own moment — the
-     * signing wheel's detents and gates — names the event and
-     * fires it here, through the SAME standing bus and the
-     * SAME registry row as every ceremony above. There is no
-     * second bus and no surface-side waveform: the re-point of
-     * call sites onto the bus (the composition record's named
-     * follow-up) extends to the surfaces through this door
-     * only. Never throws; a failed firing is a silent firing
-     * and the gesture stands.
+     * THE SURFACES' ONE DOOR (FEEL-SEAT; the SOUND seat arrived
+     * at the same door independently the same night and the two
+     * builds merged here): a surface mechanism that earns a felt
+     * event at the hand's own moment — the signing wheel's
+     * detents and gates, the drum's land, the drawer's slide —
+     * names the event and fires it here, through the SAME
+     * standing bus and the SAME registry row as every ceremony
+     * above. There is no second bus and no surface-side
+     * waveform: the re-point of call sites onto the bus (the
+     * composition record's named follow-up) extends to the
+     * surfaces through this door only. Never throws; a failed
+     * firing is a silent firing and the gesture stands.
      */
     fun fireSurfaceEvent(context: Context, event: HapticEvent) {
         fireSensory(context, event)

@@ -52,6 +52,7 @@ import com.example.service.MonolithDeviceAdminReceiver
 import com.example.service.MonolithShieldService
 import com.example.service.PermissionReturnService
 import com.example.service.StrongroomEngineBridge
+import com.example.service.haptics.HapticEvent
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
@@ -453,12 +454,23 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         liftingState = loadLiftingState(appContext, finishForLifting?.e0Mono)
     }
     val sealedFaceActions = SealedFaceActions(
-        // The knock's sound/haptic substance rides the Stage 13/14
-        // slices through this seam; platform-edge reaches are
-        // already answered by the engine's knock voice via the
-        // bridge. The face itself changes nothing in answer.
-        onKnock = {},
+        // The knock's sound/haptic substance rides through this
+        // seam (collected by the SOUND seat, 2026-11-03): a rap on
+        // the face fires the KNOCK through the one bus — the same
+        // voice the bridge's platform-edge reach fires, once per
+        // rap, never twice (the reach and the rap are different
+        // acts). The face itself changes nothing in answer.
+        onKnock = {
+            StrongroomEngineBridge.fireSurfaceEvent(
+                appContext, HapticEvent.KNOCK
+            )
+        },
         onGrilleOpen = {
+            // The deliberate second touch speaks its low
+            // mechanical touch as the room opens (GRILLE_TOUCH).
+            StrongroomEngineBridge.fireSurfaceEvent(
+                appContext, HapticEvent.GRILLE_TOUCH
+            )
             viewModel.moveToPlace(com.example.session.StrongroomPlace.ANTECHAMBER)
         }
     )
@@ -659,7 +671,14 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                     }
                     // The drawer's shut front — the room's
                     // furniture at the foot of the signing place.
-                    DrawerFront(onOpen = { drawerOpen = true })
+                    // The opening act is the drawer's slide
+                    // (DRAWER_OPEN, wired by the SOUND seat).
+                    DrawerFront(onOpen = {
+                        StrongroomEngineBridge.fireSurfaceEvent(
+                            appContext, HapticEvent.DRAWER_OPEN
+                        )
+                        drawerOpen = true
+                    })
                 }
                 }
                 }
@@ -1054,7 +1073,14 @@ private fun BreakHost(viewModel: MonolithViewModel) {
                     refreshTick++
                 }
             },
-            onKnock = {}
+            // A rap on the break's face is the same knock (the
+            // break lives behind the same door) — fired through
+            // the one bus, as on the sealed face (SOUND seat).
+            onKnock = {
+                StrongroomEngineBridge.fireSurfaceEvent(
+                    appContext, HapticEvent.KNOCK
+                )
+            }
         )
     )
 }

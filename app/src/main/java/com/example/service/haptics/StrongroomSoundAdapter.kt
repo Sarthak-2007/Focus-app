@@ -86,6 +86,7 @@ class StrongroomSoundAdapter(
             HapticEvent.SEAL_CLUNK_DISARM to listOf(SoundEvent.LEGACY_HARMONIC_SEAL),
             HapticEvent.ROTARY_DETENT to listOf(SoundEvent.LEGACY_ROTARY_DETENT),
             HapticEvent.COMBINATION_STATION to listOf(SoundEvent.COMBINATION_DETENT),
+            HapticEvent.COMBINATION_GATE to listOf(SoundEvent.COMBINATION_GATE_CLACK),
             HapticEvent.COMBINATION_FINAL_SEAT to listOf(SoundEvent.COMBINATION_SETTLE),
             HapticEvent.SIGNATURE_LATCH to listOf(SoundEvent.LEGACY_FIRM_CLICK),
             // The sealed face's one event.
@@ -93,10 +94,34 @@ class StrongroomSoundAdapter(
             // The antechamber.
             HapticEvent.GRILLE_TOUCH to listOf(SoundEvent.GRILLE_DOOR_TOUCH),
             HapticEvent.DRUM_DETENT to listOf(SoundEvent.DRUM_DETENT),
+            HapticEvent.DRUM_LAND to listOf(
+                SoundEvent.DRUM_LAND_STRIKE,
+                SoundEvent.DRUM_LAND_SEAT
+            ),
             HapticEvent.DRUM_RETURN to listOf(SoundEvent.DRUM_MINUTE_END),
             HapticEvent.GOVERNOR_CRANK_TURN to listOf(SoundEvent.GOVERNOR_CRANK_TURN),
             HapticEvent.GOVERNOR_SEAL_SNAP to listOf(SoundEvent.LEAD_SEAL_SNAP),
             HapticEvent.CODE_DETENT_SPEND to listOf(SoundEvent.CODE_SHOWING_TICK),
+            // The guard & the stretch (SOUND seat, voice-debt
+            // clearance, 2026-11-03): the pawl's double click is
+            // two voices dispatched back-to-back across the felt
+            // row's own gap; the dawn rock is three dying pulses
+            // with no terminal voice, as filed.
+            HapticEvent.GUARD_TIGHTEN_DETENT to listOf(
+                SoundEvent.TIGHTEN_TICK_1,
+                SoundEvent.TIGHTEN_TICK_2
+            ),
+            HapticEvent.GUARD_TIGHTEN_SEAT to listOf(SoundEvent.TIGHTEN_SEAT_CLICK),
+            HapticEvent.GUARD_RAISE_ROCK to listOf(
+                SoundEvent.RAISE_ROCK_1,
+                SoundEvent.RAISE_ROCK_2,
+                SoundEvent.RAISE_ROCK_3
+            ),
+            HapticEvent.STRETCH_SCRAPE to listOf(SoundEvent.CARVE_SCRAPE),
+            HapticEvent.STRETCH_CARVE to listOf(
+                SoundEvent.CARVE_BLOW,
+                SoundEvent.CARVE_CHIP
+            ),
             // The break: its firing is a NAMED_SILENCE in the
             // voice table (dispatched, recorded, unplayed); its
             // end has its own voice.
@@ -106,6 +131,9 @@ class StrongroomSoundAdapter(
             HapticEvent.BREAK_WARNING to listOf(SoundEvent.LEGACY_WARNING_KNOCK),
             // The plate.
             HapticEvent.PLATE_STRIKE to listOf(SoundEvent.PLATE_STRIKE),
+            HapticEvent.PLATE_STRIKE_FAILURE to listOf(SoundEvent.PLATE_STRIKE_FAILURE),
+            // The drawer.
+            HapticEvent.DRAWER_OPEN to listOf(SoundEvent.DRAWER_SLIDE),
             // The legacy voices, subsumed by the bus census.
             // LATCH_RELEASE resolves to the same named performer:
             // the performer's direction parameterisation stays

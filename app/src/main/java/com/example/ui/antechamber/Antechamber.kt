@@ -35,10 +35,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.domain.StrongroomDay
+import com.example.service.StrongroomEngineBridge
+import com.example.service.haptics.HapticEvent
 import com.example.ui.foundation.BodyIntegrator
 import com.example.ui.foundation.BodyState
 import com.example.ui.foundation.LocalStrongroomLightState
@@ -330,12 +333,17 @@ private fun CallingHorn(onCallOut: () -> Unit) {
 @Composable
 private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) {
     val lightState = LocalStrongroomLightState.current
+    val context = LocalContext.current
     val room = state.room
     val stock = room.drumStock
     val labels = remember(state.tokens) { state.tokens.associate { it.packageName to it.label } }
 
     var rotation by remember(stock, room.shutterClosed) { mutableStateOf(0.0) }
     var settleTarget by remember { mutableStateOf<Double?>(null) }
+    // Whether the standing settle is a LANDING (a released drum
+    // caught by its rail) or a strain-return behind the shutter —
+    // only the landing speaks DRUM_LAND (SOUND seat, 2026-11-03).
+    var settleIsLanding by remember { mutableStateOf(false) }
     // The spent drum's hard-stop attempt: one refusal per
     // approach, re-armed only when the hand leaves the approach
     // (a release ends the approach; the next approach is a new
@@ -369,11 +377,35 @@ private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) 
         rotation = target
         restRotation = target
         settleTarget = null
+        // The drum LANDS (ledger A-7, wired by the SOUND seat):
+        // the settle's completion is the land — strike + seat —
+        // on the open drum only; a strain-return behind the
+        // shutter lands nothing.
+        if (settleIsLanding && !room.shutterClosed) {
+            StrongroomEngineBridge.fireSurfaceEvent(
+                context, HapticEvent.DRUM_LAND
+            )
+        }
+        settleIsLanding = false
     }
 
     val turnedIndex = if (stock.isEmpty()) -1
     else RevolvingDrum.stationAt(rotation, stock.size)
     val turnedPackage = stock.getOrNull(turnedIndex)
+
+    // The drum's detents speak as stations pass the index —
+    // under the dragging hand, under the crank, and through the
+    // settle's last travel alike (one derivation, every road).
+    var lastTurnedIndex by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(turnedIndex) {
+        val prev = lastTurnedIndex
+        if (prev != null && turnedIndex >= 0 && turnedIndex != prev) {
+            StrongroomEngineBridge.fireSurfaceEvent(
+                context, HapticEvent.DRUM_DETENT
+            )
+        }
+        lastTurnedIndex = turnedIndex
+    }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -390,9 +422,11 @@ private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) 
                         onDragStart = { lastAngle = null; settleTarget = null },
                         onDragEnd = {
                             if (room.shutterClosed) {
+                                settleIsLanding = false
                                 settleTarget = restRotation
                                 stopAttempt = RevolvingDrum.spentStopAttempt()
                             } else if (stock.isNotEmpty()) {
+                                settleIsLanding = true
                                 val idx = RevolvingDrum.stationAt(rotation, stock.size)
                                 settleTarget = RevolvingDrum.settleTarget(rotation, idx, stock.size)
                             }
@@ -420,9 +454,20 @@ private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) 
                                     val strained = (rotation + delta).coerceIn(
                                         restRotation - 4.0, restRotation + 4.0
                                     )
-                                    stopAttempt?.onApproach(
-                                        kotlin.math.abs(strained - restRotation) - 4.0
-                                    )
+                                    // The refusal, when the attempt
+                                    // spends it, is the registry's
+                                    // own row — felt in the wrist,
+                                    // silent by filed law (HARD-STOP-
+                                    // SILENCE); it fires here, once
+                                    // per approach (SOUND seat).
+                                    if (stopAttempt?.onApproach(
+                                            kotlin.math.abs(strained - restRotation) - 4.0
+                                        ) == true
+                                    ) {
+                                        StrongroomEngineBridge.fireSurfaceEvent(
+                                            context, HapticEvent.DRUM_HARD_STOP
+                                        )
+                                    }
                                     strained
                                 } else {
                                     rotation + delta
@@ -614,9 +659,11 @@ private fun DrumAndTokens(state: AntechamberState, actions: AntechamberActions) 
             },
             onRelease = {
                 if (room.shutterClosed) {
+                    settleIsLanding = false
                     settleTarget = restRotation
                     stopAttempt = RevolvingDrum.spentStopAttempt()
                 } else if (stock.isNotEmpty()) {
+                    settleIsLanding = true
                     val idx = RevolvingDrum.stationAt(rotation, stock.size)
                     settleTarget = RevolvingDrum.settleTarget(rotation, idx, stock.size)
                 }
@@ -685,6 +732,7 @@ private fun DrumCrank(
 @Composable
 private fun GovernorsWall(state: AntechamberState, actions: AntechamberActions) {
     val lightState = LocalStrongroomLightState.current
+    val context = LocalContext.current
     val room = state.room
     Column(Modifier.fillMaxWidth()) {
         Row(
@@ -694,6 +742,8 @@ private fun GovernorsWall(state: AntechamberState, actions: AntechamberActions) 
             if (room.crankAvailable) {
                 var wound by remember { mutableStateOf(0.0) }
                 var fired by remember { mutableStateOf(false) }
+                var sealSnapped by remember { mutableStateOf(false) }
+                var trainsFired by remember { mutableStateOf(0) }
                 Box(
                     modifier = Modifier
                         .size(104.dp)
@@ -715,6 +765,27 @@ private fun GovernorsWall(state: AntechamberState, actions: AntechamberActions) 
                                         if (delta < -180.0) delta += 360.0
                                         if (delta > 0.0) {
                                             wound += delta
+                                            // The crank's sound (SOUND
+                                            // seat, 2026-11-03): the lead
+                                            // seal SNAPS as the crank
+                                            // first turns against it —
+                                            // once, irreversible for the
+                                            // week — and each 100° of
+                                            // the throw speaks the
+                                            // crank's detent train.
+                                            if (!sealSnapped) {
+                                                sealSnapped = true
+                                                StrongroomEngineBridge.fireSurfaceEvent(
+                                                    context, HapticEvent.GOVERNOR_SEAL_SNAP
+                                                )
+                                            }
+                                            val trains = (wound / 100.0).toInt()
+                                            if (trains > trainsFired) {
+                                                trainsFired = trains
+                                                StrongroomEngineBridge.fireSurfaceEvent(
+                                                    context, HapticEvent.GOVERNOR_CRANK_TURN
+                                                )
+                                            }
                                             if (wound >= 300.0 && !fired) {
                                                 fired = true
                                                 actions.onGovernorCrank()
