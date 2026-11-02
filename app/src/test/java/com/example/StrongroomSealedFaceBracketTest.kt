@@ -106,8 +106,8 @@ class StrongroomSealedFaceBracketRenderTest {
         composeRule.onNodeWithTag("sealed_face").assertIsDisplayed()
         composeRule.onNodeWithTag("sealed_face_bracket", useUnmergedTree = true).assertExists()
         composeRule.onNodeWithTag("sealed_face_ring").assertDoesNotExist()
-        composeRule.onNodeWithTag("door_word_kept_place").assertExists()
-        composeRule.onNodeWithTag("sentence_kept_place").assertExists()
-        composeRule.onNodeWithTag("held_mark_kept_place").assertExists()
+        composeRule.onNodeWithTag("door_word_kept_place", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("sentence_kept_place", useUnmergedTree = true).assertExists()
+        composeRule.onNodeWithTag("held_mark_kept_place", useUnmergedTree = true).assertExists()
     }
 }
