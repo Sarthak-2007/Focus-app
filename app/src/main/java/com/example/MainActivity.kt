@@ -639,21 +639,38 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                         state = drawerState,
                         actions = DrawerActions(
                             onHandingBack = {
-                                // C-11 at the drawer's threshold:
-                                // the waiting people are returned
-                                // to his phone's own list — the
-                                // delivery itself is the wiring
-                                // layer's act (P6's seam: the lift's
-                                // engine path returns them; the
-                                // drawer keeps no list of its own)
-                                // and this host confirms the standing
-                                // the gate waits on. No row is
-                                // resolved TAKEN or LEFT here: that
-                                // choice is the held surface's, per
-                                // call, never a browsing act.
-                                drawerState = drawerState.copy(
-                                    handingBackDelivered = true
-                                )
+                                // C-11 at the drawer's threshold,
+                                // DELIVERED (PLACES): the lift's
+                                // engine path returns the waited
+                                // people as it fires — this act is
+                                // for the remainder: any day whose
+                                // lift path never ran (struck
+                                // before the wiring, or by a path
+                                // that died first) still holds
+                                // WAITING rows, and the threshold
+                                // delivers them through the store's
+                                // own verb, resolving each row
+                                // HANDED_BACK — never TAKEN or
+                                // LEFT: those are his per-arrival
+                                // choices, and a browsing act
+                                // makes neither. The state is then
+                                // re-read whole, so the gate's
+                                // standing is the rows' own truth,
+                                // not a flag this host flipped.
+                                shellScope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        val dao = AppContainer.dao(appContext)
+                                        val store = StrongroomStore(dao)
+                                        dao.getAllStrongroomDaysSnapshot()
+                                            .filter {
+                                                it.state in StrongroomDayEntity.STRUCK_STATES
+                                            }
+                                            .forEach { row ->
+                                                store.deliverHandingBack(row.filingDateIso)
+                                            }
+                                    }
+                                    drawerState = loadDrawerState(appContext)
+                                }
                             },
                             onClose = { drawerOpen = false }
                         )
@@ -1524,7 +1541,13 @@ private suspend fun loadDrawerState(context: Context): DrawerState =
         DrawerState(
             contents = DrawerContents.derive(plates, stored),
             handingBack = LiftingPlate.HandingBack.prepare(waiting),
-            handingBackDelivered = false
+            // Delivered as the rows stand: when nobody still
+            // waits under a struck day, the handing back has
+            // happened (the bridge delivered it at the lift);
+            // a still-waiting list is the threshold's undelivered
+            // remainder, and only the threshold act below (or a
+            // lift that runs) resolves it — never this read.
+            handingBackDelivered = waiting.isEmpty()
         )
     }
 
@@ -1656,16 +1679,42 @@ private suspend fun loadLiftingState(
     val offset = finishE0Mono?.let {
         (android.os.SystemClock.elapsedRealtime() - it).toInt()
     } ?: com.example.ui.lifting.LiftingCeremony.ScoreEndMs
+    // The landing day's held arrivals, read once for both
+    // standing facts below.
+    val latestArrivals = store.heldArrivals(struckRows.first().filingDateIso)
     // The handing back's standing fact (LEAD-MOVES): how many
     // people waited through the standing struck day — distinct
     // lines still WAITING on its held-arrivals rows, each person
     // once. A count only: the names stand at the Drawer's
     // threshold, and the lifting surface draws wordless slips.
-    val waiting = store.heldArrivals(struckRows.first().filingDateIso)
+    val waiting = latestArrivals
         .filter { it.state == StrongroomHeldArrivalEntity.STATE_WAITING }
         .map { it.line }
         .distinct()
         .size
+    // THE HANDING BACK, carried (PLACES): the landing day's
+    // waited people — those the lift handed back (HANDED_BACK
+    // rows) plus any still WAITING (a day whose lift path never
+    // ran) — prepared by P6's preparation; delivered stands
+    // exactly when nobody still waits. The bridge delivers at
+    // the firing, before the strike; this read is the proof's
+    // standing form, never a second delivery.
+    val handingBack = LiftingPlate.HandingBack.prepare(
+        latestArrivals
+            .filter {
+                it.state == StrongroomHeldArrivalEntity.STATE_WAITING ||
+                    it.state == StrongroomHeldArrivalEntity.STATE_HANDED_BACK
+            }
+            .map { arrival ->
+                LiftingPlate.WaitingPerson(
+                    displayName = arrival.line,
+                    ownListRef = "held:${arrival.id}"
+                )
+            }
+    )
+    val handingBackDelivered = latestArrivals.none {
+        it.state == StrongroomHeldArrivalEntity.STATE_WAITING
+    }
     LiftingState(
         plate = latest,
         pile = PlatePileView.fromPlates(views),
@@ -1673,7 +1722,9 @@ private suspend fun loadLiftingState(
         waitingSlips = waiting,
         ceremonyStartOffsetMs = offset.coerceIn(
             0, com.example.ui.lifting.LiftingCeremony.ScoreEndMs
-        )
+        ),
+        handingBack = handingBack,
+        handingBackDelivered = handingBackDelivered
     )
 }
 

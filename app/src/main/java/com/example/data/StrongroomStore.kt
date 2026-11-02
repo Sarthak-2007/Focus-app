@@ -234,6 +234,51 @@ class StrongroomStore(private val dao: MonolithDao) {
         )
     }
 
+    /**
+     * THE HANDING BACK, DELIVERED (PLACES — B-13 as a real act).
+     *
+     * At the lift, the people who waited under [dateIso] are
+     * handed back into his phone's own list BEFORE the plate is
+     * read: every WAITING row is resolved HANDED_BACK — neither
+     * TAKEN (he made no choice) nor LEFT (he chose nothing) —
+     * and the prepared handing back ([LiftingPlate.HandingBack
+     * .prepare]: each person once, in the order they first
+     * waited) is returned as the act's proof. Rows already
+     * resolved by his own per-arrival choices are untouched, and
+     * the day's HELD punches are not arrivals: they stay struck
+     * on the plate exactly as they were.
+     *
+     * Delivery is the wiring layer's execution precondition at
+     * the lift (R2-7): the bridge calls this as the lift fires,
+     * before the strike; the drawer's threshold calls it for any
+     * day whose lift path never ran. Idempotent — a second
+     * delivery finds nobody waiting and returns the empty
+     * handing back.
+     */
+    suspend fun deliverHandingBack(
+        dateIso: String
+    ): com.example.domain.LiftingPlate.HandingBack {
+        val waiting = dao.getStrongroomHeldArrivals(dateIso)
+            .filter { it.state == StrongroomHeldArrivalEntity.STATE_WAITING }
+        if (waiting.isEmpty()) {
+            return com.example.domain.LiftingPlate.HandingBack.prepare(emptyList())
+        }
+        val prepared = com.example.domain.LiftingPlate.HandingBack.prepare(
+            waiting.map { arrival ->
+                com.example.domain.LiftingPlate.WaitingPerson(
+                    displayName = arrival.line,
+                    ownListRef = "held:${arrival.id}"
+                )
+            }
+        )
+        for (arrival in waiting) {
+            dao.updateStrongroomHeldArrival(
+                arrival.copy(state = StrongroomHeldArrivalEntity.STATE_HANDED_BACK)
+            )
+        }
+        return prepared
+    }
+
     // ------------------------------------------------------------------
     // Punches + purse
     // ------------------------------------------------------------------
