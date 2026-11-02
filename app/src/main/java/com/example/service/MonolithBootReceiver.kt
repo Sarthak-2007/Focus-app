@@ -213,6 +213,17 @@ class MonolithBootReceiver : BroadcastReceiver() {
             }
         }
 
+        // Group 4b — P2 (BUILD-SR-3): the Strongroom seal's own
+        // boot truth, as its own guarded group. A boot under a
+        // standing seal is either the ajar truth (strike it — the
+        // door tells the truth first) or no boot at all (a package
+        // replace: the monotonic clock survived, the span stands —
+        // re-raise + re-arm). The bridge re-derives from the stored
+        // day; the composition is never recomposed here (B-10).
+        runGuardedBootAction("strongroom-seal") {
+            StrongroomEngineBridge.onBoot(appContext)
+        }
+
         // Group 5 — issue #155 (F1): the home-screen glance owes a
         // re-render off the reconciled state. The reconcile above
         // can finalise a session that ended while the phone was off
