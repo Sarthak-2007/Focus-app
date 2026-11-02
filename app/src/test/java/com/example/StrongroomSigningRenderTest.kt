@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import com.example.ui.strongroom.CompositionDraft
@@ -51,6 +52,45 @@ class StrongroomSigningRenderTest {
         spentDay = spentDay
     )
 
+    /** The standing hour on the signing's hour step, read off
+     *  the value node itself. */
+    private fun hourText(): String =
+        composeRule.onNodeWithTag("signing_hour_value")
+            .fetchSemanticsNode()!!
+            .config[SemanticsProperties.Text][0].text
+
+    /** E-15, driven as a hand drives it — by eye (BUILD-SR-24
+     *  re-aim): the hour is set by the drag strip, never a
+     *  stepper. The strip travels 2 minutes per dp and its
+     *  release snaps to a quarter inside ±4 minutes, so each
+     *  drag aims 2 dp PAST the target (the snap window absorbs
+     *  whatever fraction of the gesture touch slop spends),
+     *  then the value is read back and corrected until it
+     *  stands. Three passes bound the walk; the assertion
+     *  after the loop is the verdict. */
+    private fun dragHourTo(target: String) {
+        fun minutesOf(hhmm: String) =
+            hhmm.split(":").let { it[0].toInt() * 60 + it[1].toInt() }
+        repeat(3) {
+            val current = hourText()
+            if (current == target) return
+            var delta = minutesOf(target) - minutesOf(current)
+            if (delta > 720) delta -= 1440
+            if (delta < -720) delta += 1440
+            val travelDp = delta / 2f + if (delta >= 0) 2f else -2f
+            composeRule.onNodeWithTag("signing_hour_drag").performTouchInput {
+                val startX = if (travelDp >= 0) center.x - 120f else center.x + 120f
+                swipe(
+                    start = Offset(startX, center.y),
+                    end = Offset(startX + travelDp * density, center.y),
+                    durationMillis = 400
+                )
+            }
+            composeRule.waitForIdle()
+        }
+        assertEquals(target, hourText())
+    }
+
     @Test
     fun signing_walksTheSequence_andHandsTheSetDayOnward() {
         val signed = AtomicReference<SigningResult?>(null)
@@ -79,13 +119,23 @@ class StrongroomSigningRenderTest {
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("signing_hour_value").assertIsDisplayed()
         composeRule.onNodeWithText("06:30").assertExists()
-        composeRule.onNodeWithTag("signing_hour_up").performClick()
+        // RE-AIMED at the end phase (BUILD-SR-24): the retired
+        // stepper tag signing_hour_up stands nowhere — E-15's
+        // governed drag strip sets the hour in its place.
+        dragHourTo("07:30")
         composeRule.onNodeWithText("07:30").assertExists()
 
         composeRule.onNodeWithTag("signing_continue").performClick()
         composeRule.waitForIdle()
         // No sentence written: the kept place stands.
-        composeRule.onNodeWithText("THE KEPT PLACE STANDS").assertExists()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // the deck struck the sentence step's headings and
+        // captions — no kept-place caption stands anywhere;
+        // the step is its fields alone, and the kept place is
+        // proven by the RESULT at the walk's end (the handed-on
+        // sentence is null), not by furniture copy.
+        composeRule.onNodeWithTag("signing_sentence_field").assertIsDisplayed()
+        composeRule.onNodeWithText("THE KEPT PLACE STANDS").assertDoesNotExist()
 
         composeRule.onNodeWithTag("signing_continue").performClick()
         composeRule.waitForIdle()
@@ -117,9 +167,14 @@ class StrongroomSigningRenderTest {
 
         composeRule.onNodeWithTag("signing_sign").performClick()
         composeRule.waitForIdle()
-        composeRule.onNodeWithTag("signing_ready").assertIsDisplayed()
+        // RE-AIMED at the end phase (BUILD-SR-24) to the deck:
+        // §1 struck every post-spin confirmation line — the
+        // sealing itself is the confirmation, and no
+        // signing_ready sheet stands; the READY step is its
+        // DONE handle alone, which hands the result onward.
+        composeRule.onNodeWithTag("signing_done").assertIsDisplayed()
         composeRule.onNodeWithText("The door stands ready. It swings at the first sitting.")
-            .assertExists()
+            .assertDoesNotExist()
 
         composeRule.onNodeWithTag("signing_done").performClick()
         composeRule.waitForIdle()

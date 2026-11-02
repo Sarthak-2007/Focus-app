@@ -102,8 +102,14 @@ class SealedFaceModelImmutabilityTest {
                     !Modifier.isStatic(it.modifiers) &&
                     !it.name.startsWith("$")
             }
+        // RE-AIMED at the end phase (BUILD-SR-24) to the ruled
+        // census: R7-1 amended the model with sealGoneBracket
+        // (B-11's seal-gone testimony — a struck pair of hours,
+        // final like every engraved fact, carrying no live
+        // state: it is struck once from the fallen day's record
+        // and never learns the block's news either).
         assertEquals(
-            listOf("hasSentence", "liftingHour", "sentence"),
+            listOf("hasSentence", "liftingHour", "sealGoneBracket", "sentence"),
             fields.map { it.name }.sorted()
         )
         fields.forEach { field ->

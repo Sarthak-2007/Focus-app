@@ -60,9 +60,15 @@ class DayPlateP6Test {
         val medium = punchDiameter(LiftingPlate.PunchGrade.MEDIUM)
         val small = punchDiameter(LiftingPlate.PunchGrade.SMALL)
         assertTrue(large > medium && medium > small)
-        assertEquals(20f, large.value)
-        assertEquals(13f, medium.value)
-        assertEquals(8f, small.value)
+        // RE-AIMED at the end phase (BUILD-SR-24) to the ruled
+        // figures: Slice 1's 20/13/8 dp are RETIRED — DESIGNER-
+        // SR-4's corrected ladder governs (REACH Ø 2.8 mm ·
+        // HELD Ø 2.0 mm · FLOOR Ø 1.5 mm at 1 mm ≈ 6.3 dp),
+        // the same figures LayoutGradeWiringTest pins at the
+        // grade wire. The code does not go back.
+        assertEquals(17.64f, large.value, 0.01f)
+        assertEquals(12.6f, medium.value, 0.01f)
+        assertEquals(9.45f, small.value, 0.01f)
     }
 
     @Test
