@@ -132,10 +132,10 @@ class Issue341BuildCatalogueComposeTest {
         // injected before the settle lands on the pre-scroll
         // layout and reaches no stop. The clock is therefore
         // advanced past the settle on both sides of the tap.
-        composeRule.mainClock.advanceBy(1_000)
+        composeRule.mainClock.advanceTimeBy(1_000)
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("app_row_stop_${pkg}_OPEN").performClick()
-        composeRule.mainClock.advanceBy(1_000)
+        composeRule.mainClock.advanceTimeBy(1_000)
         composeRule.waitForIdle()
         assertEquals(
             "OPEN stop tap must reach onSetAppTier; merged tree: " +
