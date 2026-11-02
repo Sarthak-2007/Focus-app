@@ -232,7 +232,11 @@ object GuardCopy {
     const val EXITS_TITLE: String = "The ways out, chosen in advance"
     const val EXITS_LAW: String =
         "Only what was chosen in advance stands here. Nothing is stockpiled; nothing can be drawn on the day."
-    const val ROUTINES_TITLE: String = "Routines — under the Guard"
+    // No collective header stands over the routines (TYPE-SR-1's
+    // word dispute, deck §12.7: the collective noun is scheduler
+    // vocabulary the word-bench already killed as room voice).
+    // They stand under their own names only, grouped by place on
+    // the surface — there is deliberately no ROUTINES_TITLE here.
     const val ROUTINES_LAW: String =
         "A routine's on stands at once. Its off travels the Guard's slow road, from the next day-start."
 

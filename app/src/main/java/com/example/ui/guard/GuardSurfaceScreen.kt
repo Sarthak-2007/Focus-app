@@ -232,9 +232,11 @@ fun GuardSurfaceScreen(
             // ROUTINES — settled here, under the Guard (D-9).
             // --------------------------------------------------
             if (model.routineRows.isNotEmpty()) {
+                // No collective header (TYPE-SR-1, deck §12.7):
+                // the routines stand under their own names only,
+                // grouped by place — the law line leads, and each
+                // routine's own name is its heading.
                 Spacer(Modifier.height(34.dp))
-                Text(GuardCopy.ROUTINES_TITLE, style = GuardSectionStyle, color = GuardLeaf)
-                Spacer(Modifier.height(8.dp))
                 Text(GuardCopy.ROUTINES_LAW, style = GuardBodyStyle, color = GuardLeaf)
                 model.routineRows.forEach { row ->
                     Spacer(Modifier.height(16.dp))
