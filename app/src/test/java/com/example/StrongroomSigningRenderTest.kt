@@ -59,39 +59,81 @@ class StrongroomSigningRenderTest {
             .fetchSemanticsNode()!!
             .config[SemanticsProperties.Text][0].text
 
+    /** The break's standing span on the hour step, read off
+     *  its value node ("N MIN"). */
+    private fun breakMinutes(): Int =
+        composeRule.onNodeWithTag("signing_break_value")
+            .fetchSemanticsNode()!!
+            .config[SemanticsProperties.Text][0].text
+            .removeSuffix(" MIN").trim().toInt()
+
+    /** One horizontal drag on a setter strip, [travelPx] of
+     *  pointer travel in ten stepped moves — this Compose
+     *  version's touch scope has no swipe member, and the
+     *  strip accumulates per-event deltas, so the steps sum
+     *  to the same travel (the idiom the wheel drag below
+     *  already proves on the venue). */
+    private fun dragStrip(tag: String, travelPx: Float) {
+        composeRule.onNodeWithTag(tag).performTouchInput {
+            val startX = if (travelPx >= 0) center.x - 120f else center.x + 120f
+            down(Offset(startX, center.y))
+            repeat(10) {
+                moveBy(Offset(travelPx / 10f, 0f))
+            }
+            up()
+        }
+        composeRule.waitForIdle()
+    }
+
     /** E-15, driven as a hand drives it — by eye (BUILD-SR-24
      *  re-aim): the hour is set by the drag strip, never a
      *  stepper. The strip travels 2 minutes per dp and its
-     *  release snaps to a quarter inside ±4 minutes, so each
-     *  drag aims 2 dp PAST the target (the snap window absorbs
-     *  whatever fraction of the gesture touch slop spends),
-     *  then the value is read back and corrected until it
-     *  stands. Three passes bound the walk; the assertion
-     *  after the loop is the verdict. */
+     *  release snaps to a quarter inside ±4 minutes.
+     *
+     *  The gesture itself must be MEASURED before it can be
+     *  aimed: this harness spends the first ~13.5 dp of every
+     *  gesture before drag recognition (proven on PR #865's
+     *  targeted run 41443521636 — a 32 dp drag delivered 37 of
+     *  its intended 64 minutes; two 13.5 dp corrections
+     *  delivered nothing). The break strip is the calibration
+     *  instrument: it stands on the same step, travels
+     *  1 minute per dp on the same pointer road, and its
+     *  release rests on whole minutes — no quarter snap to
+     *  distort the read — and the walk's result never asserts
+     *  the break, so spending it on measurement costs the
+     *  test nothing. Two drags of different sizes solve the
+     *  road's px-per-dp (R) and the gesture's slop (S) exactly:
+     *  counted minutes = (px − S) / R. The hour drag is then
+     *  sent at px = Δ/2 · R + S, read back, and re-sent with a
+     *  growing nudge while it does not stand (three passes
+     *  bound the walk; the assertion after is the verdict). */
     private fun dragHourTo(target: String) {
         fun minutesOf(hhmm: String) =
             hhmm.split(":").let { it[0].toInt() * 60 + it[1].toInt() }
-        repeat(3) {
-            val current = hourText()
-            if (current == target) return
-            var delta = minutesOf(target) - minutesOf(current)
-            if (delta > 720) delta -= 1440
-            if (delta < -720) delta += 1440
-            val travelDp = delta / 2f + if (delta >= 0) 2f else -2f
-            composeRule.onNodeWithTag("signing_hour_drag").performTouchInput {
-                val startX = if (travelDp >= 0) center.x - 120f else center.x + 120f
-                val travelPx = travelDp * density
-                // Down / stepped moves / up — this Compose
-                // version's touch scope has no swipe member;
-                // the strip accumulates per-event deltas, so
-                // the steps sum to the same travel.
-                down(Offset(startX, center.y))
-                repeat(10) {
-                    moveBy(Offset(travelPx / 10f, 0f))
-                }
-                up()
-            }
-            composeRule.waitForIdle()
+        fun wrappedDelta(from: Int, to: Int): Int {
+            var d = to - from
+            if (d > 720) d -= 1440
+            if (d < -720) d += 1440
+            return d
+        }
+        val b0 = breakMinutes()
+        dragStrip("signing_break_drag", 240f)
+        val b1 = breakMinutes()
+        dragStrip("signing_break_drag", 120f)
+        val b2 = breakMinutes()
+        val countedA = (b1 - b0).toFloat()
+        val countedB = (b2 - b1).toFloat()
+        require(countedA > countedB && countedB > 0f) {
+            "the calibration drags did not register on the break strip " +
+                "($b0 → $b1 → $b2) — the hour cannot be aimed"
+        }
+        val r = (240f - 120f) / (countedA - countedB)
+        val s = 240f - countedA * r
+        repeat(3) { pass ->
+            val delta = wrappedDelta(minutesOf(hourText()), minutesOf(target))
+            if (delta == 0) return
+            val nudge = (if (delta > 0) 1f else -1f) * (2f + pass * 5f)
+            dragStrip("signing_hour_drag", delta / 2f * r + s + nudge)
         }
         assertEquals(target, hourText())
     }
