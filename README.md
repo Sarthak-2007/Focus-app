@@ -1,8 +1,8 @@
-# Monolith
+# ULYSSES
 
 A phone blocker built as a bank strongroom.
 
-Monolith is a personal Android app for one person's study day. In the evening you sign tomorrow: which apps stay reachable, when the phone lifts, and your own combination. Signing seals the phone behind the strongroom door. During the sealed hours the phone lives in the strongroom's launcher — allowed apps sit in the antechamber, everything else is behind the door, and reaching for a locked app is answered by the knock. At the lifting hour the bolts withdraw, the door opens, and the day is struck onto a brass day plate. Plates stack as the record of kept days — never scored, never totalled.
+Ulysses (working name: Monolith) is a personal Android app for one person's study day. The name is the idea: Odysseus had himself tied to the mast before the sirens, by his own order, while he was strong — this app is the ropes. In the evening you sign tomorrow: which apps stay reachable, when the phone lifts, and your own combination. Signing seals the phone behind the strongroom door. During the sealed hours the phone lives in the strongroom's launcher — allowed apps sit in the antechamber, everything else is behind the door, and reaching for a locked app is answered by the knock. At the lifting hour the bolts withdraw, the door opens, and the day is struck onto a brass day plate. Plates stack as the record of kept days — never scored, never totalled.
 
 What I settle while I am strong, this holds while I am not. It reopens nothing. At night it tells me the truth.
 
