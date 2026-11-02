@@ -141,6 +141,18 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <!-- CONTAIN: the app's HOME standing. While a
+                     Strongroom seal stands, the launcher IS the
+                     whole phone (his Nov 1 order) — the sealed
+                     face is the phone's face, so the activity that
+                     renders it must be a lawful home: HOME +
+                     DEFAULT make it selectable as the device's
+                     home and let a HOME press land on the face
+                     instead of escaping the seal to a foreign
+                     launcher. LAUNCHER stays: outside a seal the
+                     app is an ordinary launcher icon too. -->
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <meta-data
                 android:name="android.app.shortcuts"

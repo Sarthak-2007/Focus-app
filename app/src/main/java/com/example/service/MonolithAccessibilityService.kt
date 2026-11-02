@@ -23,6 +23,7 @@ import com.example.data.MonolithDatabase
 import com.example.data.MonolithRepository
 import com.example.data.SurfaceRuleStore
 import com.example.data.surfaceViewIdsFor
+import com.example.data.toSigningRecord
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -766,6 +767,12 @@ class MonolithAccessibilityService : AccessibilityService() {
          *  change one, re-derive the other. */
         const val ACCESS_SELF_CHECK_MILLIS: Long = 30_000L
 
+        /** CONTAIN: the seal collector's cadence. The seal changes
+         *  at human cadence (swing / lift / boot strike), so a 2 s
+         *  poll is never the containment bottleneck — the shield
+         *  door re-reads the store every 1 s tick regardless. */
+        const val STRONGROOM_SEAL_POLL_MILLIS: Long = 2_000L
+
         /** Binding generation (issue #7, TECH-1 B-Major-1): bumped
          *  when a binding begins (onServiceConnected) and every time
          *  one ends (onUnbind/onDestroy). A pipeline probe captures
@@ -795,6 +802,25 @@ class MonolithAccessibilityService : AccessibilityService() {
 
         @Volatile
         var armedMono: Long = 0L
+            internal set
+
+        /** CONTAIN: the Strongroom seal witness — the standing
+         *  sealed day this door's containment gate has observed,
+         *  and its SIGNED allowed set exactly as signed (B-9).
+         *  Written by the seal collector started in
+         *  onServiceConnected (a poll of the store's one-shot
+         *  sealed-day read: the Strongroom DAO carries no Flow,
+         *  and the seal changes at human cadence — swing, lift,
+         *  boot strike — never per event). False / empty when no
+         *  seal stands. Both die with the binding (onUnbind),
+         *  like [armedSessionId]: a rebound service re-reads the
+         *  store before it judges any reach. */
+        @Volatile
+        var strongroomSealStanding: Boolean = false
+            internal set
+
+        @Volatile
+        var strongroomAllowedPackages: Set<String> = emptySet()
             internal set
 
         /** Foreground witness (issue #43, finding 2): the package
@@ -873,6 +899,7 @@ class MonolithAccessibilityService : AccessibilityService() {
         // the measurement; the store stamps it.
         WatchStore.onAccessibilityBound(true)
         startSessionArmedCollector()
+        startStrongroomSealCollector()
         startEventWorker()
         startAccessSelfCheck()
     }
@@ -1094,6 +1121,84 @@ class MonolithAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** CONTAIN: the seal collector — polls the Strongroom store's
+     *  sealed-day read for the life of this binding and stamps the
+     *  containment witness (the standing seal + its signed allowed
+     *  set). A failed read changes nothing: the last truth stands
+     *  until a read succeeds (a wedged store must not silently
+     *  unseal the phone; the shield door re-reads the store on its
+     *  own tick regardless, so containment never rests on this
+     *  witness alone). */
+    private fun startStrongroomSealCollector() {
+        val dao = com.example.AppContainer.dao(applicationContext) /* ISSUE-67: single construction point */
+        scope.launch {
+            while (true) {
+                try {
+                    val row = com.example.data.StrongroomStore(dao).sealedDay()
+                    if (row != null) {
+                        strongroomAllowedPackages =
+                            row.toSigningRecord().allowedPackages.toSet()
+                        strongroomSealStanding = true
+                    } else {
+                        strongroomSealStanding = false
+                        strongroomAllowedPackages = emptySet()
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    noteDetectionFailure("strongroomSealCollector", e)
+                }
+                delay(STRONGROOM_SEAL_POLL_MILLIS)
+            }
+        }
+    }
+
+    /** CONTAIN: judge and answer one foreground reach under a
+     *  standing seal. Runs off the event thread. The verdict is
+     *  [com.example.domain.StrongroomContainment]'s — this door
+     *  only executes it:
+     *   - KNOCK: the reach is fed into the bridge FIRST (the
+     *     REACH punch is struck and the knock sounds through the
+     *     one sensory bus), then the app is ejected and the
+     *     sealed face — MainActivity, which renders SEALED_FACE
+     *     from the standing seal — comes forward. The reach opens
+     *     nothing.
+     *   - HOLD_HOME: a foreign launcher is ejected and the face
+     *     comes forward, silently — no punch, no knock.
+     *  The episode claim is the cross-door claim both doors share:
+     *  one opening, one answer, whichever door fires first. */
+    private suspend fun processStrongroomReach(
+        pkgName: String,
+        verdict: com.example.domain.StrongroomContainment.Verdict
+    ) {
+        if (!InterceptClaim.tryClaim(pkgName)) return
+        if (verdict == com.example.domain.StrongroomContainment.Verdict.KNOCK) {
+            StrongroomEngineBridge.onLockedAppReach(applicationContext, pkgName)
+        }
+        ejectForShield(pkgName)
+        bringSealedFaceForward()
+    }
+
+    /** CONTAIN: bring Ulysses forward — while sealed, MainActivity
+     *  IS the sealed face (the shell derives SEALED_FACE from the
+     *  one snapshot), so the phone's own launch intent for this
+     *  package is the face's summons. A failed launch is logged,
+     *  never silent, and never fatal to enforcement: the ejection
+     *  above has already ended the reach. */
+    private fun bringSealedFaceForward() {
+        try {
+            val intent = packageManager
+                .getLaunchIntentForPackage(applicationContext.packageName)
+                ?.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                ) ?: return
+            startActivity(intent)
+        } catch (e: Exception) {
+            noteDetectionFailure("strongroomFaceForward", e)
+        }
+    }
+
     override fun onUnbind(intent: Intent?): Boolean {
         if (instance === this) {
             // End this binding's generation FIRST: any probe still
@@ -1107,6 +1212,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             lastRootMono = 0L
             armedSessionId = -1
             armedMono = 0L
+            strongroomSealStanding = false
+            strongroomAllowedPackages = emptySet()
             foregroundPackage = null
             foregroundMono = 0L
             callOwnerPackageNow = null
@@ -1176,6 +1283,49 @@ class MonolithAccessibilityService : AccessibilityService() {
         // the heartbeat): window events are proof the device is awake
         // and in use, so a missed boundary gets caught here too.
         RoutineHeartbeat.tickOpportunistic(applicationContext)
+
+        // CONTAIN: the Strongroom containment gate — judged on a
+        // window change, BEFORE the legacy session gate below. A
+        // Strongroom seal is its own standing: with no legacy
+        // session armed the old gate returned here and the seal
+        // held nothing outside the app (FLOW-SEAT's whole-day
+        // walk, step 7). Now, while a seal stands, a foreground
+        // reach is judged by StrongroomContainment over the sealed
+        // day's SIGNED allowed set: PASS falls through to the
+        // legacy path untouched (both standings may coexist; the
+        // legacy doors keep their own law for what the seal
+        // passes), KNOCK / HOLD_HOME are answered here and the
+        // event goes no further — one opening, one answer. The
+        // judgement reads only the collector's witness + the
+        // platform's own package classifications: no window
+        // content is read for it, so the #42 discipline (no
+        // content without a standing) is intact — the seal IS a
+        // standing, and this gate reads none of its content.
+        if (strongroomSealStanding &&
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+        ) {
+            val verdict = com.example.domain.StrongroomContainment.verdict(
+                packageName = pkgName,
+                ownPackage = applicationContext.packageName,
+                allowedPackages = strongroomAllowedPackages,
+                isSafetyFloor = com.example.data.SafetyFloor.isFloorPackage(pkgName),
+                isHomePackage = pkgName in homePackages(),
+                isSystemUi = false // system-UI family already returned above
+            )
+            if (verdict != com.example.domain.StrongroomContainment.Verdict.PASS) {
+                scope.launch {
+                    try {
+                        processStrongroomReach(pkgName, verdict)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        // One bad reach must not kill enforcement.
+                        MLog.w("a11y strongroom reach dropped", e)
+                    }
+                }
+                return
+            }
+        }
 
         // Session gate BEFORE any window content is read (Wave-3
         // #42): with no session armed, this service reads nothing,
@@ -2524,6 +2674,8 @@ class MonolithAccessibilityService : AccessibilityService() {
             lastRootMono = 0L
             armedSessionId = -1
             armedMono = 0L
+            strongroomSealStanding = false
+            strongroomAllowedPackages = emptySet()
             foregroundPackage = null
             foregroundMono = 0L
             callOwnerPackageNow = null

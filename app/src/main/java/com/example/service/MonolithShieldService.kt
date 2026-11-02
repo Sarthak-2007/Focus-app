@@ -29,6 +29,7 @@ import com.example.data.batteryShieldWarning
 import com.example.data.readBatterySnapshot
 import com.example.data.MonolithRepository
 import com.example.data.ShieldRaiseStore
+import com.example.data.toSigningRecord
 import com.example.data.NightDimMath
 import com.example.data.SightState
 import java.util.UUID
@@ -300,6 +301,33 @@ class MonolithShieldService : Service() {
         MLog.w("liveActiveSessionId read failed; dispatch treats it as no live session", it)
     }.getOrNull()
 
+    /** CONTAIN: the Strongroom seal's standing, re-derived from
+     *  the store exactly like [liveActiveSessionId] — the seal is
+     *  a protection standing in its own right (the bridge starts
+     *  this shield at the swing and re-raises it at an INTACT
+     *  boot), so a sticky restart with a seal standing but no
+     *  legacy session resumes containment instead of declining to
+     *  exist. A thrown read reads as no seal (fail closed, and
+     *  logged — never silent). */
+    private fun liveStrongroomSealStanding(): Boolean = runCatching {
+        runBlocking {
+            com.example.data.StrongroomStore(
+                com.example.AppContainer.dao(applicationContext)
+            ).sealedDay() != null
+        }
+    }.onFailure {
+        MLog.w("liveStrongroomSealStanding read failed; dispatch treats it as no seal", it)
+    }.getOrDefault(false)
+
+    /** CONTAIN: true while this loop is running containment for a
+     *  Strongroom seal with no legacy session — the task-removal
+     *  restart law reads it beside [protecting], so a swiped-away
+     *  shield over a standing seal resurrects like a session's
+     *  does. Set by the monitor loop's containment branch, cleared
+     *  when the seal goes or a session takes the loop over. */
+    @Volatile
+    private var strongroomContaining: Boolean = false
+
     // Issue #122: the last notification this service posted, in
     // its BASE form (no battery segment) — a battery broadcast
     // re-posts it with the fresh warning without inventing a
@@ -360,12 +388,21 @@ class MonolithShieldService : Service() {
         val action = intent?.action
         // A null delivery (sticky restart) is dispatched on the
         // re-derived session fact, read BEFORE any state moves.
+        // CONTAIN: the fact is session OR seal — a standing
+        // Strongroom seal is a live protection standing (the
+        // bridge started this shield for it), so a sticky restart
+        // over a sealed day resumes instead of standing down.
         val liveSessionId = if (action == null) liveActiveSessionId() else null
+        val sealStanding = if (action == null) liveStrongroomSealStanding() else false
         return when (
-            shieldDispatchFor(action, monitorJob?.isActive == true, liveSessionId != null)
+            shieldDispatchFor(
+                action, monitorJob?.isActive == true,
+                liveSessionId != null || sealStanding
+            )
         ) {
             ShieldDispatch.STOP -> {
                 protecting = false
+                strongroomContaining = false
                 protectingSessionId = -1
                 protectingMono = 0L
                 sightState = SightState.BLIND_NO_ACCESS
@@ -593,7 +630,12 @@ class MonolithShieldService : Service() {
                     parkedPasses++
                     if (parkedPasses % 5 == 0) {
                         val s = dao.getActiveSessionSnapshot()
-                        if (s == null || !s.isActive) {
+                        // CONTAIN: a standing Strongroom seal is a
+                        // protection standing too — the parked loop
+                        // stands down only when NEITHER stands.
+                        val sealStands = com.example.data.StrongroomStore(dao)
+                            .sealedDay() != null
+                        if ((s == null || !s.isActive) && !sealStands) {
                             stopForeground(STOP_FOREGROUND_REMOVE)
                             stopSelf()
                             break
@@ -608,6 +650,27 @@ class MonolithShieldService : Service() {
                 acquireTickWakeLock()
                 val activeSession = repository.activeSessionSnapshot() // ISSUE-67(d): via repository, not direct DAO
                 if (activeSession == null || !activeSession.isActive) {
+                    // CONTAIN: no legacy session — but a Strongroom
+                    // seal may stand, and this shield is the seal's
+                    // own raised shield (the bridge starts it at
+                    // the swing). Before this branch existed the
+                    // loop stood itself down on its first tick and
+                    // the seal held nothing outside the app
+                    // (FLOW-SEAT's whole-day walk, step 7). Now:
+                    // while the seal stands, the loop runs the
+                    // containment tick — the foreground judged
+                    // against the sealed day's signed record — and
+                    // stands down only when the seal goes too.
+                    val strongroomStore = com.example.data.StrongroomStore(dao)
+                    val sealedRow = strongroomStore.sealedDay()
+                    if (sealedRow != null) {
+                        strongroomContaining = true
+                        strongroomContainmentTick(repository, sealedRow)
+                        releaseTickWakeLock()
+                        delay(1000L)
+                        continue
+                    }
+                    strongroomContaining = false
                     // Issue #143: no session, no dim — retire the
                     // phase before standing down.
                     publishBreakDim(BreakDimState())
@@ -616,6 +679,7 @@ class MonolithShieldService : Service() {
                     stopSelf()
                     break
                 }
+                strongroomContaining = false
 
                 // Issue #155 (IQ-4 edge 9): the in-loop A→B handover.
                 // The heartbeat reconcile at this loop's own top can
@@ -1319,12 +1383,125 @@ class MonolithShieldService : Service() {
     }
 
     /**
+     * CONTAIN — ONE CONTAINMENT TICK (the shield door's half of the
+     * seal's enforcement; the accessibility door is the other).
+     *
+     * The foreground is read the same way this loop reads it for a
+     * session: the accessibility witness first (a real window
+     * event), the UsageStats probe as fallback — except the probe's
+     * blocked set here is derived from the SEALED DAY's signed
+     * record, not the legacy tiers: every catalogued package the
+     * containment verdict would KNOCK or HOLD (all of them minus
+     * the signed allowed set, minus the safety floor, minus
+     * Ulysses itself). The verdict is StrongroomContainment's:
+     *  - KNOCK: the reach is fed into the bridge (REACH punch +
+     *    the knock through the one sensory bus), the app is
+     *    ejected through the accessibility door when it is bound,
+     *    and the sealed face comes forward.
+     *  - HOLD_HOME: a foreign launcher — ejected and the face
+     *    forward, silently.
+     * The cross-door episode claim is shared with the accessibility
+     * door: one opening is answered once, by whichever door fires
+     * first. A tick that cannot see (no witness, probe blind) does
+     * nothing — blindness is never converted into an intercept.
+     */
+    private suspend fun strongroomContainmentTick(
+        repository: MonolithRepository,
+        sealedRow: com.example.data.StrongroomDayEntity
+    ) {
+        val signing = sealedRow.toSigningRecord()
+        val allowed = signing.allowedPackages.toSet()
+        val dao = com.example.AppContainer.dao(applicationContext)
+        val heldPackages = dao.getAllAppsSnapshot()
+            .map { it.packageName }
+            .filter { pkg ->
+                com.example.domain.StrongroomContainment.verdict(
+                    packageName = pkg,
+                    ownPackage = applicationContext.packageName,
+                    allowedPackages = allowed,
+                    isSafetyFloor = com.example.data.SafetyFloor.isFloorPackage(pkg),
+                    isHomePackage = false,
+                    isSystemUi = false
+                ) != com.example.domain.StrongroomContainment.Verdict.PASS
+            }
+            .toSet()
+        if (heldPackages.isEmpty()) return
+        val witness = if (MonolithAccessibilityService.instance != null) {
+            MonolithAccessibilityService.foregroundPackage
+        } else {
+            null
+        }
+        val foreground = ForegroundSelection.selectBlockedForeground(
+            accessibilityForeground = witness,
+            blockedPackages = heldPackages,
+            usageStatsFallback = {
+                repository.probeForegroundApp(heldPackages, emptySet()).blockedPackage
+            }
+        ) ?: return
+        // The witness path returns a held package without knowing
+        // WHY it is held; the verdict names the answer. A launcher
+        // package is in the held set only via the catalogue — its
+        // verdict is re-derived with the home fact the set-build
+        // above deliberately did not bake in.
+        val verdict = com.example.domain.StrongroomContainment.verdict(
+            packageName = foreground,
+            ownPackage = applicationContext.packageName,
+            allowedPackages = allowed,
+            isSafetyFloor = com.example.data.SafetyFloor.isFloorPackage(foreground),
+            isHomePackage = foreground in homePackageNames(),
+            isSystemUi = false
+        )
+        if (verdict == com.example.domain.StrongroomContainment.Verdict.PASS) return
+        if (!InterceptClaim.tryClaim(foreground)) return
+        if (verdict == com.example.domain.StrongroomContainment.Verdict.KNOCK) {
+            StrongroomEngineBridge.onLockedAppReach(applicationContext, foreground)
+        }
+        MonolithAccessibilityService.instance?.ejectForShield(foreground)
+        bringSealedFaceForward()
+    }
+
+    /** The packages that answer the HOME intent on this phone —
+     *  the same resolution the accessibility door's homePackages
+     *  performs. Uncached here: a containment tick runs once a
+     *  second and only reaches this on a held foreground. */
+    private fun homePackageNames(): Set<String> = try {
+        val homeIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        packageManager.queryIntentActivities(homeIntent, 0)
+            .mapNotNull { it.activityInfo?.packageName }
+            .toSet()
+    } catch (e: Exception) {
+        MLog.w("strongroom homePackages probe failed", e)
+        emptySet()
+    }
+
+    /** CONTAIN: bring Ulysses forward — while sealed, MainActivity
+     *  IS the sealed face (the shell derives SEALED_FACE from the
+     *  one snapshot), so the phone's own launch intent for this
+     *  package is the face's summons. A failed launch is logged,
+     *  never silent, and never fatal: the ejection has already
+     *  ended the reach. */
+    private fun bringSealedFaceForward() {
+        try {
+            val intent = packageManager
+                .getLaunchIntentForPackage(applicationContext.packageName)
+                ?.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                ) ?: return
+            startActivity(intent)
+        } catch (e: Exception) {
+            MLog.w("strongroom face-forward launch failed", e)
+        }
+    }
+
+    /**
      * Local stop on the live instance (issue #43, finding 5): the
      * fallback when stopShield's service dispatch itself fails.
      * Performs exactly the ACTION_STOP_SHIELD branch's work.
      */
     internal fun requestLocalStop() {
         protecting = false
+        strongroomContaining = false
         protectingSessionId = -1
         protectingMono = 0L
         sightState = SightState.BLIND_NO_ACCESS
@@ -1351,7 +1528,10 @@ class MonolithShieldService : Service() {
      * relaunches, by platform design.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (ShieldRestartPolicy.shouldScheduleRestart(protecting)) {
+        // CONTAIN: a seal's containment counts as protection for
+        // the restart law — a swiped-away shield over a standing
+        // seal resurrects like a session's shield does.
+        if (ShieldRestartPolicy.shouldScheduleRestart(protecting || strongroomContaining)) {
             scheduleRestartAlarm()
         }
         super.onTaskRemoved(rootIntent)
