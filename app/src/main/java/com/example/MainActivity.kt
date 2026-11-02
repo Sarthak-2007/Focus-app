@@ -873,14 +873,15 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                             }
                         }
                         todayOpen -> {
+                            val faceNow = sealedFaceState
                             com.example.ui.home.TodayScreen(
                                 state = com.example.ui.home.TodayState(
                                     statusLine = when {
                                         sealFailed ->
                                             "The seal did not take — try again."
-                                        sealedFaceState != null ->
+                                        faceNow != null ->
                                             "Sealed until " +
-                                                sealedFaceState.printings
+                                                faceNow.printings
                                                     .liftingHour.text
                                         swingStanding ->
                                             "Signed — not sealed yet"
@@ -891,7 +892,7 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                                     taskLine = doorwayState.composition?.taskLine,
                                     liftingHourText =
                                         doorwayState.composition?.liftingHourText
-                                            ?: sealedFaceState?.printings
+                                            ?: faceNow?.printings
                                                 ?.liftingHour?.text,
                                     lockedCount =
                                         doorwayState.composition?.lockedThings,
@@ -923,12 +924,13 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                             )
                         }
                         else -> {
+                            val faceNow = sealedFaceState
                             com.example.ui.home.HomeScreen(
                                 state = com.example.ui.home.HomeState(
                                     todayLine = when {
-                                        sealedFaceState != null ->
+                                        faceNow != null ->
                                             "Sealed until " +
-                                                sealedFaceState.printings
+                                                faceNow.printings
                                                     .liftingHour.text
                                         swingStanding ->
                                             "Today is signed — it seals " +
