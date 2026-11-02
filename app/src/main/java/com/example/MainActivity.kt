@@ -35,6 +35,7 @@ import com.example.data.PermissionStepStore
 import com.example.data.StrongroomDayEntity
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.data.StrongroomStore
+import com.example.data.toPurse
 import com.example.data.toSigningRecord
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
@@ -470,7 +471,200 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                     SigningHost(viewModel = viewModel)
                 }
             }
+        },
+        antechamberContent = {
+            // The room behind the grille (BUILD-SR-38): composed
+            // only inside a standing seal — the shell derives the
+            // ANTECHAMBER place from the seal + his second touch,
+            // and the host below renders nothing when no sealed
+            // day stands (no dead route, route-book Law R-2).
+            AntechamberHost(viewModel = viewModel)
         }
+    )
+}
+
+/**
+ * BUILD-SR-38 composition glue — the Antechamber (census C-08,
+ * with C-09 the drum · C-14 the held pile · C-15 calling out ·
+ * C-04 the governor's crank) in the shell's ANTECHAMBER place.
+ *
+ * The room's facts are re-derived from the kept engine on every
+ * entry and after every act (the composed main's own pattern):
+ * the sealed day's row gives the signing exactly as signed and
+ * the purse as the store stands it (row.toPurse() — the purse is
+ * NEVER held in this host: spend persists in the store, and a
+ * purse re-derived from anywhere else is the resurrection Slice
+ * 1's K2 kill named); the crank week and the day's held rows come
+ * from the same store. Every spend runs through the store's own
+ * verbs (spendAllowance · spendCrank · resolveHeldArrival ·
+ * punch), and a launch or a dial happens ONLY behind a standing
+ * spend / a taken slip — at the hard stop nothing is spent and
+ * nothing is launched, and the room re-derives with the shutter
+ * closed.
+ *
+ * The governor's crank: this host persists the week's spend and
+ * returns him to the sealed face. The door's crack for that
+ * minute is the seal's own consumption and no kept verb carries
+ * it — named GAP-COORD-CRANK-CONSUMPTION on the slice's PR, never
+ * invented here.
+ */
+@Composable
+private fun AntechamberHost(viewModel: MonolithViewModel) {
+    val context = LocalContext.current
+    val appContext = context.applicationContext
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val apps by viewModel.apps.collectAsStateWithLifecycle()
+
+    var signing by remember {
+        mutableStateOf<com.example.domain.StrongroomDay.SigningRecord?>(null)
+    }
+    var room by remember {
+        mutableStateOf<com.example.ui.antechamber.AntechamberRoom?>(null)
+    }
+    var dateIso by remember { mutableStateOf("") }
+    var revealed by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var refreshTick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(refreshTick) {
+        val facts = withContext(Dispatchers.IO) {
+            val store = StrongroomStore(AppContainer.dao(appContext))
+            val row = store.sealedDay() ?: return@withContext null
+            val now = System.currentTimeMillis()
+            Triple(
+                row.toSigningRecord(),
+                com.example.ui.antechamber.AntechamberModel.room(
+                    signing = row.toSigningRecord(),
+                    purse = row.toPurse(),
+                    crank = store.crankWeek(now),
+                    heldRows = store.heldArrivals(row.filingDateIso)
+                ),
+                row.filingDateIso
+            )
+        }
+        signing = facts?.first
+        room = facts?.second
+        dateIso = facts?.third ?: ""
+    }
+
+    val standingSigning = signing ?: return
+    val standingRoom = room ?: return
+    val standingDate = dateIso
+
+    com.example.ui.antechamber.Antechamber(
+        state = com.example.ui.antechamber.AntechamberState(
+            signing = standingSigning,
+            room = standingRoom,
+            tokens = apps.map {
+                com.example.ui.antechamber.AntechamberToken(it.packageName, it.appName)
+            },
+            revealedCodeIds = revealed
+        ),
+        actions = com.example.ui.antechamber.AntechamberActions(
+            onTakeTurned = { pkg ->
+                scope.launch {
+                    val spent = withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .spendAllowance(
+                                standingDate,
+                                com.example.ui.antechamber.RevolvingDrum.MINUTES_PER_TAKING
+                            )
+                    }
+                    if (spent != null) {
+                        // The minute stands spent in the store;
+                        // only now does the app open — for its
+                        // minute, through the phone's own launcher
+                        // entry, exactly as a taken peek launches.
+                        runCatching {
+                            val launchIntent = appContext.packageManager
+                                .getLaunchIntentForPackage(pkg)
+                                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            if (launchIntent != null) {
+                                appContext.startActivity(launchIntent)
+                            }
+                        }
+                    }
+                    refreshTick++
+                }
+            },
+            onShowCode = { slip ->
+                scope.launch {
+                    val shown = withContext(Dispatchers.IO) {
+                        val store = StrongroomStore(AppContainer.dao(appContext))
+                        val row = store.sealedDay() ?: return@withContext false
+                        store.spendAllowance(
+                            row.filingDateIso,
+                            com.example.ui.antechamber.RevolvingDrum.MINUTES_PER_TAKING
+                        ) ?: return@withContext false
+                        // The showing is struck (TX-SHOW-12): a
+                        // SHOWING hole with the hour — the digits
+                        // themselves are never struck.
+                        val offset = (android.os.SystemClock.elapsedRealtime() -
+                            row.sealedAtElapsedMillis).coerceAtLeast(0L)
+                        store.punch(
+                            row.filingDateIso,
+                            StrongroomDay.Punch(
+                                StrongroomDay.PunchKind.SHOWING, offset, ""
+                            )
+                        )
+                        true
+                    }
+                    if (shown) revealed = revealed + slip.id
+                    refreshTick++
+                }
+            },
+            onResolveHeld = { slip, taken ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .resolveHeldArrival(slip.id, taken)
+                    }
+                    revealed = revealed - slip.id
+                    refreshTick++
+                }
+            },
+            onTakeCall = { slip ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .resolveHeldArrival(slip.id, taken = true)
+                    }
+                    // Connects THIS call only: the phone's own
+                    // dialler on the number as it arrived.
+                    runCatching {
+                        appContext.startActivity(
+                            Intent(Intent.ACTION_DIAL, Uri.parse("tel:${slip.line}"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                    refreshTick++
+                }
+            },
+            onGovernorCrank = {
+                scope.launch {
+                    val spent = withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .spendCrank(System.currentTimeMillis())
+                    }
+                    if (spent != null) {
+                        viewModel.moveToPlace(
+                            com.example.session.StrongroomPlace.SEALED_FACE
+                        )
+                    }
+                    refreshTick++
+                }
+            },
+            onCallOut = {
+                runCatching {
+                    appContext.startActivity(
+                        Intent(Intent.ACTION_DIAL)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                }
+            },
+            onReturnToFace = {
+                viewModel.moveToPlace(com.example.session.StrongroomPlace.SEALED_FACE)
+            }
+        )
     )
 }
 
