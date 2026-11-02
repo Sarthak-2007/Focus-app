@@ -172,7 +172,7 @@ fun DeskClockFace(
                 cx + (cos(rad) * rimRadius).toFloat(),
                 cy + (sin(rad) * rimRadius).toFloat()
             )
-            val dotRadius = when (mark.size) {
+            val dotRadius = when (mark.kind.size) {
                 DeskClockRecord.MarkSize.LARGE -> 8.5.dp.toPx()
                 DeskClockRecord.MarkSize.MEDIUM -> 6.dp.toPx()
                 DeskClockRecord.MarkSize.SMALL -> 3.75.dp.toPx()
