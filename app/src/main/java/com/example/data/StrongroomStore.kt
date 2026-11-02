@@ -167,6 +167,73 @@ class StrongroomStore(private val dao: MonolithDao) {
 
     suspend fun sealedDay(): StrongroomDayEntity? = dao.getSealedStrongroomDay()
 
+    /**
+     * R2-8's detection fact (BUILD-SR-28, the K1 cure): a signing
+     * is the FIRST signing when no signing record stands before
+     * it — no day row in the store carries a signing's mark
+     * (amendedBySigning, or a state a signing produces: SIGNED,
+     * SEALED, or struck). Composed-only rows are the standing
+     * order's work, not a signing: a man whose days were composed
+     * for a week but who never signed is still owed the teaching
+     * at his first signing. Pure over the rows, so the host's
+     * draft and the bare JVM test read the same fact.
+     */
+    fun isFirstSigning(days: List<StrongroomDayEntity>): Boolean =
+        days.none { row ->
+            row.amendedBySigning ||
+                row.state == StrongroomDayEntity.STATE_SIGNED ||
+                row.state == StrongroomDayEntity.STATE_SEALED ||
+                row.state in StrongroomDayEntity.STRUCK_STATES
+        }
+
+    /** The first-signing fact against the store as it stands. */
+    suspend fun isFirstSigning(): Boolean = isFirstSigning(dao.getAllStrongroomDaysSnapshot())
+
+    // ------------------------------------------------------------------
+    // The held pile — arrivals recorded at arrival (W-6 cure)
+    // ------------------------------------------------------------------
+
+    /**
+     * Record a held arrival under the day it arrived in. Written
+     * at the arrival by the engine (the listener's Strongroom
+     * path through the bridge); read back by the antechamber on
+     * every entry. Returns the row's id — the pile's handle for
+     * the per-arrival choice.
+     */
+    suspend fun recordHeldArrival(
+        dateIso: String,
+        kind: String,
+        line: String,
+        arrivedAtWallMillis: Long
+    ): Long = dao.insertStrongroomHeldArrival(
+        StrongroomHeldArrivalEntity(
+            filingDateIso = dateIso,
+            kind = kind,
+            line = line,
+            arrivedAtWallMillis = arrivedAtWallMillis
+        )
+    )
+
+    /** The day's held arrivals, first-waited first — every state,
+     *  so the pile's derivation (WAITING only) is the model's own
+     *  act, tested where it lives. */
+    suspend fun heldArrivals(dateIso: String): List<StrongroomHeldArrivalEntity> =
+        dao.getStrongroomHeldArrivals(dateIso)
+
+    /** His per-arrival choice, persisted: the taken line is
+     *  discharged (TAKEN), the left line leaves the pile (LEFT).
+     *  No other arrival is touched by either act. */
+    suspend fun resolveHeldArrival(id: Int, taken: Boolean) {
+        val row = dao.getStrongroomHeldArrivalsById(id) ?: return
+        if (row.state != StrongroomHeldArrivalEntity.STATE_WAITING) return
+        dao.updateStrongroomHeldArrival(
+            row.copy(
+                state = if (taken) StrongroomHeldArrivalEntity.STATE_TAKEN
+                else StrongroomHeldArrivalEntity.STATE_LEFT
+            )
+        )
+    }
+
     // ------------------------------------------------------------------
     // Punches + purse
     // ------------------------------------------------------------------

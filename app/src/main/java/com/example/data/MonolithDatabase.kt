@@ -26,9 +26,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         StrongroomDayEntity::class,
         StrongroomPunchEntity::class,
         StrongroomGuardEntity::class,
-        StrongroomCrankWeekEntity::class
+        StrongroomCrankWeekEntity::class,
+        StrongroomHeldArrivalEntity::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = false
 )
 abstract class MonolithDatabase : RoomDatabase() {
@@ -619,6 +620,32 @@ abstract class MonolithDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * BUILD-SR-28 (26→27): the held pile's record arrives as
+         * ONE new table — CREATE-only, no existing table touched,
+         * no data written (the MIGRATION_25_26 discipline). Held
+         * arrivals are born from arrivals under a standing seal,
+         * recorded by the engine at the arrival — never from an
+         * invented backfill here.
+         */
+        val MIGRATION_26_27 = object : Migration(26, 27) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `strongroom_held_arrivals` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`filingDateIso` TEXT NOT NULL, " +
+                        "`kind` TEXT NOT NULL, " +
+                        "`line` TEXT NOT NULL, " +
+                        "`arrivedAtWallMillis` INTEGER NOT NULL, " +
+                        "`state` TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_strongroom_held_arrivals_filingDateIso` " +
+                        "ON `strongroom_held_arrivals` (`filingDateIso`)"
+                )
+            }
+        }
+
         val MIGRATION_24_25 = object : Migration(24, 25) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE intercept_logs ADD COLUMN stopReason TEXT NOT NULL DEFAULT 'UNKNOWN'")
@@ -817,7 +844,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     MonolithDatabase::class.java,
                     "monolith_tactile_db"
                 )
-                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26)
+                    .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23, MIGRATION_23_24, MIGRATION_24_25, MIGRATION_25_26, MIGRATION_26_27)
                     // Issue #31, Sarthak's ruling (2026-10-31, issue
                     // comment 6544207912) — the only two destructive
                     // paths in this app, each scoped to its ruled case:

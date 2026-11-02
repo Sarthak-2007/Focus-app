@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -837,6 +838,134 @@ class ScreenshotHarnessTest {
         assertTrue("HB-4: the jammed arm must annul at L+1500", annulled)
     }
 
+    // ------------------------------------------------------------------
+    // THE STRONGROOM FACES (BUILD-SR-28, item 4 — CRITIC-SR-8 §6.5:
+    // the venue photographed only the legacy root, so every cold
+    // walk was blind on this slice). FABRICATED STATE, named as
+    // such in the PARK / faulted-receipt pattern: the surfaces are
+    // composed directly over hand-built model state — the signing
+    // draft is built by the PRODUCTION StrongroomFlowModel (with
+    // firstSigning = true, so the frame also carries R2-8's
+    // teaching line), the antechamber state by the same model's
+    // adapter over fabricated held-arrival rows in P1's own entity
+    // shape. What is fabricated: the day, its apps, its arrivals.
+    // What is NOT: every word and figure on the frames is rendered
+    // by production surfaces from production model code.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun srStrongroomFaces() {
+        val signingRecord = com.example.domain.StrongroomDay.SigningRecord(
+            filingDateIso = "2026-11-02",
+            lockedPackages = setOf("com.video.app"),
+            allowedPackages = listOf("com.phone.app"),
+            liftingTime = java.time.LocalTime.of(20, 0),
+            sentence = "Finish the chapter, then stop.",
+            breakLengthMinutes = 20,
+            breakFiresAtOffsetMillis = -1L,
+            allowanceMinutes = 30,
+            gaps = emptyList()
+        )
+        val draft = com.example.ui.strongroom.StrongroomFlowModel.signingDraft(
+            dayShapeName = "ORDINARY",
+            appOptions = listOf(
+                com.example.ui.strongroom.SigningAppOption("com.video.app", "Video"),
+                com.example.ui.strongroom.SigningAppOption("com.phone.app", "Phone"),
+                com.example.ui.strongroom.SigningAppOption("com.chat.app", "Chat")
+            ),
+            composedLocked = setOf("com.video.app"),
+            liftingTime = java.time.LocalTime.of(20, 0),
+            sentence = "Finish the chapter, then stop.",
+            breakLengthMinutes = 20,
+            spentDay = false,
+            firstSigning = true
+        )
+        val antechamber = com.example.ui.strongroom.StrongroomFlowModel.antechamberState(
+            signing = signingRecord,
+            purseRemainingMinutes = 29,
+            nameOf = { pkg ->
+                mapOf(
+                    "com.phone.app" to "Phone",
+                    "com.chat.app" to "Chat",
+                    "com.video.app" to "Video"
+                )[pkg] ?: pkg
+            },
+            cataloguePackages = listOf("com.phone.app", "com.chat.app", "com.video.app"),
+            heldArrivals = listOf(
+                com.example.data.StrongroomHeldArrivalEntity(
+                    id = 1,
+                    filingDateIso = "2026-11-02",
+                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CALL,
+                    line = "+919876543210",
+                    arrivedAtWallMillis = System.currentTimeMillis() - 3_600_000L
+                ),
+                com.example.data.StrongroomHeldArrivalEntity(
+                    id = 2,
+                    filingDateIso = "2026-11-02",
+                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CODE,
+                    line = "482916",
+                    arrivedAtWallMillis = System.currentTimeMillis() - 1_800_000L
+                )
+            )
+        )
+        var face by androidx.compose.runtime.mutableStateOf(0)
+        composeRule.setContent {
+            MyApplicationTheme(darkTheme = false) {
+                when (face) {
+                    0 -> com.example.ui.strongroom.SigningScreen(
+                        draft = draft,
+                        onDetent = {},
+                        onLatch = {},
+                        onLeave = {},
+                        onSigned = {}
+                    )
+                    1 -> com.example.ui.strongroom.SealedFaceScreen(
+                        state = com.example.ui.strongroom.SealedFaceState(
+                            liftingHour = "20:00",
+                            sentence = "Finish the chapter, then stop."
+                        ),
+                        onKnockReach = {},
+                        onAntechamberRequest = {}
+                    )
+                    2 -> com.example.ui.strongroom.AntechamberScreen(
+                        initialState = antechamber,
+                        readOnlyLines = com.example.ui.strongroom.StrongroomFlowModel
+                            .antechamberReadOnlyLines(signingRecord),
+                        onCrankOutcome = {},
+                        onSignedOpen = {},
+                        onShowingOutcome = {},
+                        onTakeCall = {},
+                        onReturned = {},
+                        onLeave = {}
+                    )
+                    else -> com.example.ui.strongroom.LiftingScreen(
+                        plate = null,
+                        handingBack = com.example.domain.LiftingPlate.HandingBack.prepare(
+                            listOf(
+                                com.example.domain.LiftingPlate.WaitingPerson(
+                                    displayName = "+919876543210",
+                                    ownListRef = "+919876543210"
+                                )
+                            )
+                        ),
+                        onHandedBack = {}
+                    )
+                }
+            }
+        }
+        settle(1200)
+        captureTo(File(shotsDir, "20_strongroom_signing.png"))
+        composeRule.runOnUiThread { face = 1 }
+        settle(1200)
+        captureTo(File(shotsDir, "21_strongroom_sealed_face.png"))
+        composeRule.runOnUiThread { face = 2 }
+        settle(1200)
+        captureTo(File(shotsDir, "22_strongroom_antechamber.png"))
+        composeRule.runOnUiThread { face = 3 }
+        settle(1200)
+        captureTo(File(shotsDir, "23_strongroom_lifting.png"))
+    }
+
     /** Truth Car 2's Drawer/Tasks proof renders: a stored detail
      *  WITH a historical estimate (the line prints — history is
      *  kept), a stored detail finished at 01:15 with NO estimate
@@ -891,6 +1020,19 @@ class ScreenshotHarnessTest {
         setRootApp()
         composeRule.runOnUiThread { viewModel.navigateTo(MonolithDestination.VAULT) }
         settle(900)
+        // BUILD-SR-28: the same #382 race this test already cures
+        // for the search row below, at the FIRST row: on the venue
+        // runner the drawer row is not always composed inside the
+        // fixed settle (three venue attempts failed at this click
+        // with "could not find node drawer_row_…", while the same
+        // head's targeted job passed — BUILD-SR-21's §L.34 flake).
+        // Wait for the row itself with the harness's own pumpUntil;
+        // the click and the capture are unchanged.
+        val firstRowShown = pumpUntil(15_000) {
+            composeRule.onAllNodesWithTag("drawer_row_$estimateRowId")
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        assertTrue("the drawer must surface the Estimate Kept As History row", firstRowShown)
         composeRule.onNodeWithTag("drawer_row_$estimateRowId").performClick()
         settle(700)
         captureTo(File(shotsDir, "tc_drawer_detail_estimate.png"))

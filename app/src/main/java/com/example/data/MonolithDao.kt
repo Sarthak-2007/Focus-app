@@ -616,4 +616,22 @@ interface MonolithDao {
      *  prior row is not necessarily the marker). */
     @Query("SELECT * FROM strongroom_crank_weeks WHERE weekAnchorMillis < :anchor AND sealBroken = 1 ORDER BY weekAnchorMillis DESC LIMIT 1")
     suspend fun getLatestSpentStrongroomCrankWeekBefore(anchor: Long): StrongroomCrankWeekEntity?
+
+    // BUILD-SR-28 (W-6 cure): the held pile's record — arrivals
+    // written at arrival, read back whole on every antechamber
+    // entry, and resolved per arrival by his own act only.
+    @Insert
+    suspend fun insertStrongroomHeldArrival(arrival: StrongroomHeldArrivalEntity): Long
+
+    @Query("SELECT * FROM strongroom_held_arrivals WHERE filingDateIso = :dateIso ORDER BY arrivedAtWallMillis ASC, id ASC")
+    suspend fun getStrongroomHeldArrivals(dateIso: String): List<StrongroomHeldArrivalEntity>
+
+    @Query("SELECT * FROM strongroom_held_arrivals WHERE id = :id LIMIT 1")
+    suspend fun getStrongroomHeldArrivalsById(id: Int): StrongroomHeldArrivalEntity?
+
+    @Query("SELECT * FROM strongroom_days ORDER BY filingDateIso ASC")
+    suspend fun getAllStrongroomDaysSnapshot(): List<StrongroomDayEntity>
+
+    @Update
+    suspend fun updateStrongroomHeldArrival(arrival: StrongroomHeldArrivalEntity)
 }
