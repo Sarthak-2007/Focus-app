@@ -451,7 +451,12 @@ jobs:
           ./gradlew --console=plain testDebugUnitTest --tests "com.example.ScreenshotHarnessTest"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: steps.screens.outcome == 'success'
+        # Upload on failure too: a shot that fails the gate is
+        # exactly the picture the eye needs to see — hiding it is
+        # how a broken opening screen shipped unreviewed
+        # (DESIGN-MOTION, 2026-11-03). The job still fails; only
+        # the evidence stops being destroyed with the runner.
+        if: always()
         with:
           name: screens-${{ github.sha }}
           path: app/build/outputs/screenshots

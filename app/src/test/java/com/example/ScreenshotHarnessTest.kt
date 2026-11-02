@@ -592,6 +592,27 @@ class ScreenshotHarnessTest {
     }
 
     @Test
+    fun signing_printBench_midGesture() {
+        // UNDER DRAG, as far as a still can swear to it: the
+        // wheel deep in its second pass at 118°, the ghost
+        // trail widened to 14° (a faster hand leaves a longer
+        // trail), the dial hand at 10:17 — two minutes off the
+        // 10:15 detent, the spring in flight — two seats
+        // standing. The harness draws settled compositions, so
+        // no still can show the drag itself; this is the drag's
+        // own frame, named as such.
+        shootBench(
+            "signing-print-bench-midgesture.png",
+            PrintBenchPose(
+                wheelDeg = 118f,
+                wheelGhostDeg = 14f,
+                dialHandMinute = 617,
+                seatsTaken = 2
+            )
+        )
+    }
+
+    @Test
     fun drawer_thresholdHandingBack() {
         shootDrawer("drawer-threshold.png") {
             Drawer(

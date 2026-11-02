@@ -112,10 +112,21 @@ import kotlin.math.sin
  * shadow and grain on the print, they hold the photo's world;
  * the seam is the light — the print's light is baked at one
  * instant, the mechanisms' relief is computed from the palette,
- * and a eye that hunts for it can find the join at the backplate's
- * edge. The bench also does not yet swap into [Signing]'s column:
- * it stands as the signing's door-plate surface on its own, and
- * the swap is a host change once the approach clears his eye.
+ * and an eye that hunts for it can find the join at the backplate's
+ * edge.
+ *
+ * THE SWAP (Sarthak's verdict, 2026-11-03: the print-as-face
+ * PASSED — "not toy" — and his demand is that it WORK and MOVE
+ * as a full app, not stand as a still): this bench now stands
+ * IN [Signing]'s column where the drawn dial and drawn wheel
+ * stood — both drawn mechanisms are deleted, and the dial and
+ * the wheel live here, on the door's own plate, in the order
+ * the signature itself works them: the hour is set on this
+ * plate's dial as the table's amendments reach it, and the
+ * signature is spun on this plate's wheel. The bench's actions
+ * are the signing's own ([SigningActions.onAmend] for the hour,
+ * [SigningActions.onSignature] at the third seat) — the swap
+ * changes where the mechanisms live, never what they command.
  *
  * The bench keeps the standing law whole: the combination is
  * never a value anywhere (the spin counts seats only, [SigningDial]
