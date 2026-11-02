@@ -123,14 +123,20 @@ class FoundationTokenTypeConformanceTest {
 
     @Test
     fun typeScale_theStyleSetIsExactlyTheFiledSet() {
-        // SCR-0..6 · ANON-0..4 · PRT-2..5 · ENG-1 · FRM-1 — nothing
+        // SCR-0..6 · ANON-0..4 · PRT-2..4 · ENG-1 · FRM-1 — nothing
         // missing, and nothing extra: an invented step added to
-        // MonolithType fails this test by name.
+        // MonolithType fails this test by name. PRT-5 is NOT here:
+        // on TYPE-SR-5's anchored cure D-01 (A-6.6, PR #842 head
+        // 69fb176e) it survives only as ENG-1's size-class CITATION
+        // — a StepDescriptor, never a consumable style; the seam
+        // was agreed by letter with BUILD-SR-1 and this census
+        // re-aimed the same act. It is censused with the
+        // descriptors below.
         assertEquals(
             setOf(
                 "Scr0", "Scr1", "Scr2", "Scr3", "Scr4", "Scr5", "Scr6",
                 "Anon0", "Anon1", "Anon2", "Anon3", "Anon4",
-                "Prt2", "Prt3", "Prt4", "Prt5", "Eng1", "Frm1"
+                "Prt2", "Prt3", "Prt4", "Eng1", "Frm1"
             ),
             declaredStyles().keys
         )
@@ -185,13 +191,20 @@ class FoundationTokenTypeConformanceTest {
         assertEquals("Atkinson Hyperlegible", MonolithType.Hld1.face)
         assertEquals(400, MonolithType.Hld1.weight)
         assertEquals("Locked until the hour", MonolithType.Hld1Wording)
+        // PRT-5 the citation (A-6.6): Anonymous Pro 700, the 48pt
+        // size-class ENG-1 binds to — and ENG-1 itself stands as
+        // the one consumable 48pt style.
+        assertEquals("PRT-5", MonolithType.Prt5.step)
+        assertEquals("Anonymous Pro", MonolithType.Prt5.face)
+        assertEquals(700, MonolithType.Prt5.weight)
+        assertEquals(48f, MonolithType.Eng1.fontSize.value)
         // The descriptor census is closed too: exactly PLT-1,
-        // PLT-2, HLD-1 are carried as descriptors.
+        // PLT-2, HLD-1, PRT-5 are carried as descriptors.
         val descriptors = MonolithType::class.java.declaredFields
             .filter { !it.name.startsWith("$") }
             .filter { it.type.simpleName == "StepDescriptor" }
             .map { it.name }
             .toSet()
-        assertEquals(setOf("Plt1", "Plt2", "Hld1"), descriptors)
+        assertEquals(setOf("Plt1", "Plt2", "Hld1", "Prt5"), descriptors)
     }
 }
