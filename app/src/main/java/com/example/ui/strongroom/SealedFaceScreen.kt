@@ -151,22 +151,45 @@ fun SealedFaceScreen(
                 // pair is carried in the same drawn figures, and
                 // NOTHING else on the face changes — no banner, no
                 // badge, no word of explanation, no route onward.
-                val bracket = state.sealGoneBracket
-                if (bracket != null) {
-                    BracketPairCanvas(
-                        bracket = bracket,
+                // Under rank 1 stands THE GREAT WHEEL, AT REST
+                // (ledger A-16, BUILD-SR-22 via PR #860 — composed
+                // here by BUILD-SR-23, step 5): the door's
+                // furniture, still, drawn by the face's own relief
+                // law, never a control while sealed (a touch
+                // anywhere on this face is the knock, the face's
+                // one event; the wheel invites nothing). Its
+                // resting angle is FIXED at the drawing's zero:
+                // the combination is never written anywhere (A-2),
+                // so no sealing-time position may stand on this
+                // face to be read back. It stands in the seal-gone
+                // form too — the fallen door keeps its furniture;
+                // the pair's own law (nothing between or around
+                // the pair) is untouched, the wheel stands below
+                // rank 1 as it does below the ring.
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val bracket = state.sealGoneBracket
+                    if (bracket != null) {
+                        BracketPairCanvas(
+                            bracket = bracket,
+                            lightState = lightState,
+                            modifier = Modifier
+                                .size(width = 300.dp, height = 168.dp)
+                                .testTag("sealed_face_bracket")
+                        )
+                    } else {
+                        RingCanvas(
+                            hour = state.liftingHour,
+                            lightState = lightState,
+                            modifier = Modifier
+                                .size(300.dp)
+                                .testTag("sealed_face_ring")
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    GreatWheelCanvas(
+                        angleDegrees = 0f,
                         lightState = lightState,
-                        modifier = Modifier
-                            .size(width = 300.dp, height = 168.dp)
-                            .testTag("sealed_face_bracket")
-                    )
-                } else {
-                    RingCanvas(
-                        hour = state.liftingHour,
-                        lightState = lightState,
-                        modifier = Modifier
-                            .size(300.dp)
-                            .testTag("sealed_face_ring")
+                        modifier = Modifier.size(148.dp)
                     )
                 }
             },

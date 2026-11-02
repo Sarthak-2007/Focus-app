@@ -1,6 +1,7 @@
 package com.example.ui.strongroom
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -12,14 +13,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -28,6 +33,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -95,7 +104,12 @@ fun SigningScreen(
     var flow by remember(draft) { mutableStateOf(SigningState(draft)) }
     // The combination — surface-local, unwritten, wiped at the
     // signature's completion. Never state that leaves this hand.
-    var dials by remember(draft) { mutableStateOf(listOf(0, 0, 0)) }
+    // A-16: it is worked THROUGH THE GREAT WHEEL — the wheel's
+    // turn (GreatWheel.kt) is the combination's only mechanism;
+    // the dials below are its tumbler, read by eye from the turn.
+    val wheel = remember(draft) { WheelTurn() }
+    var wheelVersion by remember(draft) { mutableStateOf(0) }
+    val dials = wheel.dials()
 
     val ink = InkGold.reliefHighlight(RelightState.SIGNING)
     val quietInk = InkGold.copy(alpha = 0.75f)
@@ -410,6 +424,7 @@ private fun HourChoice(
     flow: SigningState,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
+    onHourDetent: () -> Unit,
     onHour: (String) -> Unit,
     onContinue: () -> Unit
 ) {
@@ -467,20 +482,29 @@ private fun BreakChoice(
         modifier = Modifier.testTag("signing_break_value")
     )
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        SigningStepper("−10", quietInk, "signing_break_down10") {
-            onBreak((flow.breakMinutes - 10).coerceAtLeast(1))
+    // ADD-2 AT MAXIMUM (Stage 11 assembly, BUILD-SR-18): the break
+    // setter's grain is the deliberate opposite of the hour's —
+    // a continuous brush (micro-tick per minute, strengthening per
+    // five) on MaximumPresets.breakTrain with FREE resistance:
+    // preset notches are topography, not walls (they cost no
+    // travel). Release is silent; the drag rests on a whole minute
+    // via breakDrag's honest settle. Figures UNPROVEN-ON-DEVICE.
+    SetterDragStrip(
+        value = flow.breakMinutes.toFloat(),
+        minValue = 1f,
+        maxValue = 720f,
+        minutesPerDp = 1f,
+        wrap = false,
+        ink = ink,
+        quietInk = quietInk,
+        tag = "signing_break_drag",
+        train = MaximumPresets.breakTrain(rangeMinutes = 720, presetMinutes = listOf(10, 20, 30)),
+        onCrossing = { onHourDetent() },
+        onRelease = { released ->
+            val rested = MaximumPresets.breakDrag().release(SpringState(released, 0f))
+            onBreak(rested.finalValue.roundToInt().coerceIn(1, 720))
         }
-        SigningStepper("−1", quietInk, "signing_break_down1") {
-            onBreak((flow.breakMinutes - 1).coerceAtLeast(1))
-        }
-        SigningStepper("+1", quietInk, "signing_break_up1") {
-            onBreak((flow.breakMinutes + 1).coerceAtMost(720))
-        }
-        SigningStepper("+10", quietInk, "signing_break_up10") {
-            onBreak((flow.breakMinutes + 10).coerceAtMost(720))
-        }
-    }
+    )
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         listOf(10, 20, 30).forEach { preset ->
@@ -550,37 +574,107 @@ private fun CombinationClause(
 @Composable
 private fun CombinationSpin(
     flow: SigningState,
+    wheel: WheelTurn,
+    wheelVersion: Int,
     dials: List<Int>,
     ink: androidx.compose.ui.graphics.Color,
     quietInk: androidx.compose.ui.graphics.Color,
-    onDial: (Int, Int) -> Unit,
+    onWheelTurn: (List<Long>) -> Unit,
     onSign: () -> Unit
 ) {
     Spacer(Modifier.height(4.dp))
+    // THE WHEEL (A-16): the signer turns it; its turning works
+    // the combination's tumblers. Drag around its centre — the
+    // wheel answers under WheelPhysics (resistance rising,
+    // governed inertia, the seat at settle); every detent the
+    // travel crosses spends the surface's detent voice, keyed to
+    // position, so a slow turn and a fast turn speak the same
+    // sequence. wheelVersion is read so the drawing follows the
+    // mechanism's state.
+    @Suppress("UNUSED_EXPRESSION") wheelVersion
+    var lastAngle by remember { mutableStateOf<Float?>(null) }
+    var lastDelta by remember { mutableStateOf(0f) }
+    var lastMoveMs by remember { mutableStateOf(0L) }
+    fun angleOf(pos: androidx.compose.ui.geometry.Offset, size: androidx.compose.ui.unit.IntSize): Float {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        return Math.toDegrees(
+            kotlin.math.atan2((pos.y - cy).toDouble(), (pos.x - cx).toDouble())
+        ).toFloat()
+    }
+    fun wrappedDelta(from: Float, to: Float): Float {
+        var d = to - from
+        while (d > 180f) d -= 360f
+        while (d < -180f) d += 360f
+        return d
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("signing_wheel")
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { pos ->
+                        lastAngle = angleOf(pos, size)
+                        lastDelta = 0f
+                    },
+                    onDragEnd = {
+                        val now = System.currentTimeMillis()
+                        val dt = (now - lastMoveMs).coerceAtLeast(1L)
+                        val velocity = lastDelta / dt * 1000f
+                        onWheelTurn(wheel.release(velocity))
+                        lastAngle = null
+                    },
+                    onDragCancel = {
+                        wheel.interrupt()
+                        onWheelTurn(emptyList())
+                        lastAngle = null
+                    },
+                    onDrag = { change, _ ->
+                        val a = angleOf(change.position, size)
+                        val prev = lastAngle
+                        if (prev != null) {
+                            val d = wrappedDelta(prev, a)
+                            lastDelta = d
+                            lastMoveMs = System.currentTimeMillis()
+                            onWheelTurn(wheel.dragBy(d))
+                        }
+                        lastAngle = a
+                        change.consume()
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        GreatWheelCanvas(
+            angleDegrees = wheel.angleDegrees +
+                wheel.pendingFraction() * WheelPhysics.DETENT_DEGREES,
+            lightState = RelightState.SIGNING,
+            modifier = Modifier.size(232.dp)
+        )
+    }
+    Spacer(Modifier.height(14.dp))
+    // The tumbler, read by eye: three dials the wheel's turn
+    // carries (ones with the wheel, tens and hundreds by carry).
+    // They are a READOUT of the turn, never an input of their own.
     Row(
         horizontalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         dials.forEachIndexed { index, digit ->
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.testTag("signing_dial_$index")
-            ) {
-                SigningStepper("+", ink, "signing_dial_${index}_up") { onDial(index, 1) }
-                Text(
-                    text = digit.toString(),
-                    style = SigningDigitsStyle,
-                    color = ink,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .width(64.dp)
-                        .padding(vertical = 10.dp)
-                )
-                SigningStepper("−", ink, "signing_dial_${index}_down") { onDial(index, -1) }
-            }
+            Text(
+                text = digit.toString(),
+                style = SigningDigitsStyle,
+                color = ink,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .width(64.dp)
+                    .padding(vertical = 6.dp)
+                    .testTag("signing_dial_$index")
+            )
         }
     }
-    Spacer(Modifier.height(24.dp))
+    Spacer(Modifier.height(18.dp))
     SigningContinue(
         label = "SIGN — SET THE DAY",
         ink = ink,
@@ -613,6 +707,70 @@ private fun ReadyStep(
     // BUILD-SR-23 (step 3).
     Spacer(Modifier.height(20.dp))
     SigningContinue(label = "DONE", ink = ink, onClick = onDone, tag = "signing_done")
+}
+
+
+/**
+ * A maximum drag strip for the signing's setters (Stage 11
+ * assembly, BUILD-SR-18): horizontal drag accumulated in the
+ * setter's own units; every detent of [train] crossed fires
+ * [onCrossing] (position-keyed, never time-keyed); the release is
+ * handed to the caller, whose preset drag (hourDrag / breakDrag)
+ * decides the rest. The strip itself invents no physics.
+ */
+@Composable
+private fun SetterDragStrip(
+    value: Float,
+    minValue: Float,
+    maxValue: Float,
+    minutesPerDp: Float,
+    wrap: Boolean,
+    ink: Color,
+    quietInk: Color,
+    tag: String,
+    train: com.example.ui.maximum.DetentTrain,
+    onCrossing: () -> Unit,
+    onRelease: (Float) -> Unit
+) {
+    var current by remember { mutableFloatStateOf(value) }
+    LaunchedEffect(value) { current = value }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .border(1.dp, quietInk.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+            .testTag(tag)
+            .pointerInput(train, minValue, maxValue, wrap) {
+                detectDragGestures(
+                    onDragEnd = { onRelease(current) },
+                    onDragCancel = { onRelease(current) }
+                ) { change, _ ->
+                    val delta = (change.position.x - change.previousPosition.x) / density * minutesPerDp
+                    val before = current
+                    var next = before + delta
+                    if (!wrap) next = next.coerceIn(minValue, maxValue)
+                    current = next
+                    train.crossings(before, next).forEach { _ -> onCrossing() }
+                    change.consume()
+                }
+            }
+    ) {
+        val fraction = ((current - minValue) / (maxValue - minValue)).coerceIn(0f, 1f)
+        Box(
+            Modifier
+                .fillMaxWidth(fraction.coerceAtLeast(0.02f))
+                .height(54.dp)
+                .background(ink.copy(alpha = 0.25f))
+        )
+        Text(
+            text = "DRAG",
+            style = SigningQuietStyle,
+            color = quietInk,
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(horizontal = 10.dp)
+        )
+    }
 }
 
 @Composable
