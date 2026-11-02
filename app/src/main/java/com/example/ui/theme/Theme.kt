@@ -6,6 +6,7 @@ import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -163,6 +164,37 @@ val StrongroomColorScheme = darkColorScheme(
     outlineVariant = Color(0x75E2BC39),
     scrim = InkGraphite,
     surfaceTint = InkGold
+)
+
+
+/**
+ * The app's Material typography (P0): every slot IS a named Stage 5
+ * step from MonolithType (Type.kt) — a component reaching for a slot
+ * inherits the scale, never a stock Material size. This val lives in
+ * Theme.kt, not Type.kt, to keep class initialisation acyclic: Type.kt's
+ * families are read by MonolithType's styles, whose values this val
+ * reads; Theme.kt reads back into neither. (Venue-caught: with the val
+ * in Type.kt, a MonolithType-first touch built Typography from
+ * still-null styles.)
+ */
+// Material slots draw ONLY from the Stage 5 steps (P0): a component that
+// reaches for a slot inherits the scale, never a stock Material size.
+val Typography = Typography(
+    displayLarge = MonolithType.Scr6,
+    displayMedium = MonolithType.Scr5,
+    displaySmall = MonolithType.Scr4,
+    headlineLarge = MonolithType.Scr4,
+    headlineMedium = MonolithType.Scr3,
+    headlineSmall = MonolithType.Scr3,
+    titleLarge = MonolithType.Scr3,
+    titleMedium = MonolithType.Scr2,
+    titleSmall = MonolithType.Scr1,
+    bodyLarge = MonolithType.Scr2,
+    bodyMedium = MonolithType.Scr1,
+    bodySmall = MonolithType.Scr0,
+    labelLarge = MonolithType.Scr3,
+    labelMedium = MonolithType.Scr1,
+    labelSmall = MonolithType.Scr0
 )
 
 // (Issue #63: the three scheme aliases that duplicated these two

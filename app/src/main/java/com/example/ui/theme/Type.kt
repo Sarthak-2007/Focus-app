@@ -133,14 +133,23 @@ object MonolithType {
      *  longer sentence grows lines, never drops step. */
     val Prt4 = TextStyle(fontFamily = SoraFamily, fontWeight = FontWeight.SemiBold,
         fontSize = 32.sp, lineHeight = 40.sp, letterSpacing = 1.28.sp)
-    /** PRT-5 — survives ONLY as the 48pt size-class citation ENG-1 binds
-     *  to (A-6.6): the hour is engraved once; there is no printed twin
-     *  and no printed surface may cite this as an available step. */
-    val Prt5 = TextStyle(fontFamily = AnonymousProFamily, fontWeight = FontWeight.Bold,
-        fontSize = 48.sp, lineHeight = 50.sp, letterSpacing = 0.96.sp)
+    /** PRT-5 — a CITATION, not a step (A-6.6; TYPE-SR-5 cure D-01): it
+     *  survives only as the 48pt size-class ENG-1 binds to. The hour is
+     *  engraved once; there is no printed twin, and this citation is not
+     *  a consumable style — a surface reaching for the hour's figures
+     *  consumes Eng1. (First form shipped Prt5 as a full TextStyle twin
+     *  of Eng1; demoted on TYPE-SR-5's anchored cure.) */
+    val Prt5 = StepDescriptor("PRT-5", "Anonymous Pro", 700,
+        "The 48pt size-class citation ENG-1 binds to (48pt / 50 leading, +0.02em as filed for the " +
+        "figure hand). NOT an available printed step and not a style: no printed surface may cite it.")
     /** ENG-1 (STEP-RING) — the lifting hour on the ring: Anonymous Pro 700
      *  as engraved translation, at the PRT-5 figure class. Rank 1, the
-     *  face's first fact. KB01 UNPROBED rides it. */
+     *  face's first fact. KB01 UNPROBED rides it.
+     *  Provenance of its tracking (TYPE-SR-5 cure D-02): the 0.96sp below
+     *  is §5.3's printed hour-figure tracking (+0.02em) carried as the
+     *  IN-APP approximation only. Engraved law (EL-1/EL-2) files no
+     *  letterSpacing: the cut's tracking is the fixed cell advance, set
+     *  once per surface, opened one step over the flat on the curve. */
     val Eng1 = TextStyle(fontFamily = AnonymousProFamily, fontWeight = FontWeight.Bold,
         fontSize = 48.sp, lineHeight = 50.sp, letterSpacing = 0.96.sp)
 
@@ -149,19 +158,28 @@ object MonolithType {
      *  equivalence only (A-6.7): no screen law — tracking, rhythm, floor —
      *  reaches the forming kind through it; formation law is FL-1/FL-2
      *  (advance final from first appearance), owned by the record's lane. */
+    // Tracking (TYPE-SR-5 cure D-03): FL-2 — the tracking value is the
+    // completed-form value, set once; CF-1 — the completed record is
+    // indistinguishable from a statically set line of the same face,
+    // step, weight and tracking. The static body line at this size is
+    // SCR-2, whose tracking is +0.01em = 0.16sp: Frm1 carries exactly
+    // that, set once here; partial forms inherit it unchanged.
     val Frm1 = TextStyle(fontFamily = AtkinsonHyperlegibleFamily, fontWeight = FontWeight.Normal,
-        fontSize = 16.sp, lineHeight = 24.sp)
+        fontSize = 16.sp, lineHeight = 24.sp, letterSpacing = 0.16.sp)
 
     // ---- Steps carried as descriptors: the law is a relation or the
     // OS's own presentation, so no fixed style is honestly settable. ----
     /** PLT-2 (STEP-PLATE-LINE) — the plate's hours-held line. */
     val Plt2 = StepDescriptor("PLT-2", "Anonymous Pro", 400,
         "The day plate's hours-held line, read at arm's length; never below PLT-1. " +
-        "No absolute size is filed — the plate's cell is priced by Stage 6/7 (FIG-4: 5 cells, HH:MM).")
+        "No absolute size is filed — the plate's cell is priced by Stage 6/7 (FIG-4: 5 cells, HH:MM). " +
+        "Weight 400 is ASSUMED by P0 (TYPE-SR-5 D-04): no filing names the plate steps' weight; " +
+        "§6 lever 2 files equality of hand, which the shared assumed 400 honours — a filing naming the weight supersedes.")
     /** PLT-1 (STEP-BRACKET) — the bracket floor. */
     val Plt1 = StepDescriptor("PLT-1", "Anonymous Pro", 400,
         "One step above the smallest plate step — that +1 IS the margin, counted once (L-4 Lock Rule). " +
-        "Never lighter than the hours-held line: same face, same hand as PLT-2. FIG-5: 15 cells, [HH:MM — HH:MM]. KB07 UNPROBED.")
+        "Never lighter than the hours-held line: same face, same hand as PLT-2. FIG-5: 15 cells, [HH:MM — HH:MM]. KB07 UNPROBED. " +
+        "Weight: the assumed 400 of PLT-2 (see its note, TYPE-SR-5 D-04).")
     /** HLD-1 — the one plain notification. */
     val Hld1 = StepDescriptor("HLD-1", "Atkinson Hyperlegible", 400,
         "One plain notification on the plain lock screen, OS-presented size and tracking; " +
@@ -307,22 +325,10 @@ val TaskActiveTitleTextStyle = TextStyle(
     platformStyle = TightNumericPlatformStyle
 )
 
-// Material slots draw ONLY from the Stage 5 steps (P0): a component that
-// reaches for a slot inherits the scale, never a stock Material size.
-val Typography = Typography(
-    displayLarge = MonolithType.Scr6,
-    displayMedium = MonolithType.Scr5,
-    displaySmall = MonolithType.Scr4,
-    headlineLarge = MonolithType.Scr4,
-    headlineMedium = MonolithType.Scr3,
-    headlineSmall = MonolithType.Scr3,
-    titleLarge = MonolithType.Scr3,
-    titleMedium = MonolithType.Scr2,
-    titleSmall = MonolithType.Scr1,
-    bodyLarge = MonolithType.Scr2,
-    bodyMedium = MonolithType.Scr1,
-    bodySmall = MonolithType.Scr0,
-    labelLarge = MonolithType.Scr3,
-    labelMedium = MonolithType.Scr1,
-    labelSmall = MonolithType.Scr0
-)
+// The Material Typography val lives in Theme.kt, NOT here — on purpose:
+// its initialiser reads MonolithType's styles, and MonolithType's styles
+// read this file's font families. Two classes whose initialisers read
+// each other are a class-init cycle: whichever starts second hands the
+// first a field that is still null (the venue caught exactly this —
+// every Typography slot read null in the test JVM). Theme.kt's
+// initialisers never read back into this file, so the cycle cannot form.
