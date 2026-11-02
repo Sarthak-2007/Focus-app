@@ -1512,10 +1512,21 @@ private suspend fun loadLiftingState(
     val offset = finishE0Mono?.let {
         (android.os.SystemClock.elapsedRealtime() - it).toInt()
     } ?: com.example.ui.lifting.LiftingCeremony.ScoreEndMs
+    // The handing back's standing fact (LEAD-MOVES): how many
+    // people waited through the standing struck day — distinct
+    // lines still WAITING on its held-arrivals rows, each person
+    // once. A count only: the names stand at the Drawer's
+    // threshold, and the lifting surface draws wordless slips.
+    val waiting = store.heldArrivals(struckRows.first().filingDateIso)
+        .filter { it.state == StrongroomHeldArrivalEntity.STATE_WAITING }
+        .map { it.line }
+        .distinct()
+        .size
     LiftingState(
         plate = latest,
         pile = PlatePileView.fromPlates(views),
         isFailure = latest.isFailure,
+        waitingSlips = waiting,
         ceremonyStartOffsetMs = offset.coerceIn(
             0, com.example.ui.lifting.LiftingCeremony.ScoreEndMs
         )

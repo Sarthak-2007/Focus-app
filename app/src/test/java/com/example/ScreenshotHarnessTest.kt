@@ -30,6 +30,10 @@ import com.example.ui.`break`.Break
 import com.example.ui.`break`.BreakActions
 import com.example.ui.`break`.BreakClock
 import com.example.ui.`break`.BreakState
+import com.example.ui.lifting.Lifting
+import com.example.ui.lifting.LiftingState
+import com.example.ui.lifting.PlatePileView
+import com.example.ui.lifting.StruckPlateView
 import androidx.compose.ui.graphics.toArgb
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
@@ -405,6 +409,86 @@ class ScreenshotHarnessTest {
         // The span's last second and a half: the ease nearly off,
         // the bolts travelling home on the score.
         shootBreak("break-redriving.png", remainingMs = 1_500L, openPile = false)
+    }
+
+    // ── THE LIFTING + PLATE STRIKE (LEAD-MOVES) — the morning's
+    // act, rendered MID-MOTION ──
+    // The ceremony is a driven clock seeded at an offset; these
+    // shots seed it INSIDE its motions, not at its rests — the
+    // handing back mid-return, the door mid-swing on its weight
+    // body, the plate mid-fall — so the return carries proof the
+    // motions are real poses of real bodies, not end-state
+    // stills. Fixture plates are fabricated standings, named as
+    // such; the waiting slips stand for four people who waited.
+
+    private fun liftingPlate(iso: String): StruckPlateView =
+        StruckPlateView.fromPlateTruth(
+            LiftingPlate.PlateTruth(
+                filingDateIso = iso,
+                hoursHeldMillis = 11L * 3_600_000L + 24L * 60_000L,
+                punches = listOf(
+                    LiftingPlate.Punch(LiftingPlate.PunchKind.REACH, 3_600_000L),
+                    LiftingPlate.Punch(LiftingPlate.PunchKind.HELD, 10_800_000L),
+                    LiftingPlate.Punch(LiftingPlate.PunchKind.FLOOR, 19_800_000L),
+                    LiftingPlate.Punch(LiftingPlate.PunchKind.REACH, 30_600_000L)
+                ),
+                sealTruth = LiftingPlate.SealTruth.WHOLE,
+                crankSealBroken = false
+            )
+        )
+
+    private fun shootLifting(name: String, offsetMs: Int, waitingSlips: Int) {
+        val plate = liftingPlate("2026-08-31")
+        val pile = PlatePileView.fromPlates(
+            listOf(plate, liftingPlate("2026-08-30"), liftingPlate("2026-08-29"))
+        )
+        val bitmap = drawShot {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Box(Modifier.size(412.dp, 915.dp)) {
+                    Lifting(
+                        LiftingState(
+                            plate = plate,
+                            pile = pile,
+                            waitingSlips = waitingSlips,
+                            ceremonyStartOffsetMs = offsetMs
+                        )
+                    )
+                }
+            }
+        }
+        writeShot(name, bitmap)
+    }
+
+    @Test
+    fun lifting_handingBack_midReturn() {
+        // 1,500 ms in: the lock has tripped (600) and the four
+        // waiting slips are mid-return on their staggered bodies —
+        // handed back BEFORE the swing opens (2,680) and long
+        // before the plate is struck (5,574).
+        shootLifting("lifting-handing-back.png", offsetMs = 1_500, waitingSlips = 4)
+    }
+
+    @Test
+    fun lifting_midOpen_theDoorByWeight() {
+        // 4,200 ms in: the bolts home in their housings, the slips
+        // gone, the door MID-SWING on its driven weight body —
+        // neither shut nor at the stop.
+        shootLifting("lifting-mid-open.png", offsetMs = 4_200, waitingSlips = 4)
+    }
+
+    @Test
+    fun lifting_plateMidFall() {
+        // 120 ms after the strike (5,574): the plate is MID-FALL
+        // into the tray, dropped part-way on its landing body,
+        // still askew — not yet in the pile.
+        shootLifting("lifting-plate-mid-fall.png", offsetMs = 5_694, waitingSlips = 4)
+    }
+
+    @Test
+    fun lifting_struck_settled() {
+        // The score's end (6,300): the plate rests struck in the
+        // pile, the pile's own dip rung out, the door at its stop.
+        shootLifting("lifting-struck-settled.png", offsetMs = 6_300, waitingSlips = 4)
     }
 
     // ── THE DRAWER (BUILD-SR-41) — the kept days, rendered ─────

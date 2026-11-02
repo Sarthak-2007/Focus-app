@@ -48,6 +48,13 @@ import com.example.ui.foundation.StrongroomLight
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomRoles
 import com.example.ui.foundation.StrongroomType
+import com.example.ui.foundation.boltHead
+import com.example.ui.foundation.clubTooth
+import com.example.ui.foundation.grainAnnulus
+import com.example.ui.foundation.grainDisc
+import com.example.ui.foundation.grainRect
+import com.example.ui.foundation.lightVectorFor
+import com.example.ui.foundation.taperedSpoke
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -107,6 +114,16 @@ import kotlin.math.sin
  *     facts, and the seal stands whole again exactly as struck,
  *     with nothing renegotiated, nothing re-signed, no act of
  *     his anywhere in the return.
+ *
+ * LEAD-MOVES (2026-11-03): the firing machined solid — what
+ * read as a diagram (teeth as lines, spokes as lines, the rim
+ * a stroke circle, bolts as flat bars) is now drawn as mass
+ * through the foundation's machining kit: the escape wheel a
+ * grained steel rim with forty-eight solid club teeth and
+ * tapered spokes, its grain locked to its own turning; the
+ * pallet a solid anchor with gold stones; the bolts grained
+ * bars travelling in a machined frame strip. The mechanisms,
+ * the score and the law are untouched — only the metal grew.
  *
  * TEXTURE (intake §1): enamel, brass and steel grain derived
  * from each surface itself ([BreakTexture]); light is
@@ -314,23 +331,67 @@ private fun EasedLeaf(
             }
 
             // THE BOLTS, eased off their seats by their filed
-            // share: steel bars at the leaf's edge, their drawn
-            // length the home fraction — at the re-drive they
-            // travel home bolt by bolt on the score.
+            // share — machined (LEAD-MOVES): a grained steel
+            // frame strip stands at the leaf's edge, each bolt a
+            // grained bar travelling in its own housing slot,
+            // its drawn length the home fraction — at the
+            // re-drive they travel home bolt by bolt on the
+            // score, and the slot stands empty behind a bolt
+            // fully eased.
+            val stripW = 58.dp.toPx()
+            val stripX = w - inset - stripW
+            grainRect(
+                topLeft = Offset(stripX, inset),
+                size = Size(stripW, h - 2 * inset),
+                cellPx = BreakTexture.Species.STEEL.cellPx.dp.toPx()
+            ) { cx, cy ->
+                BreakTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    BreakTexture.Species.STEEL, cx, cy,
+                    seed = 47, state = lightState
+                )
+            }
+            drawRect(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Graphite, StrongroomInks.Violet, 0.8f, lightState
+                ),
+                topLeft = Offset(stripX, inset),
+                size = Size(2.5.dp.toPx(), h - 2 * inset)
+            )
             for (i in 0 until 3) {
                 val by = h * (0.24f + i * 0.26f)
                 val full = 40.dp.toPx()
                 val len = full * boltHome[i].toFloat()
+                // The housing slot the bolt travels in.
                 drawRect(
-                    color = StrongroomInks.Graphite,
-                    topLeft = Offset(w - inset - len, by - 5.dp.toPx()),
-                    size = Size(len, 10.dp.toPx())
+                    color = StrongroomLight.descend(StrongroomInks.Graphite, 2),
+                    topLeft = Offset(w - inset - full - 6.dp.toPx(), by - 7.5.dp.toPx()),
+                    size = Size(full + 6.dp.toPx(), 15.dp.toPx())
                 )
+                drawRect(
+                    color = StrongroomLight.shadowPartner(StrongroomInks.Graphite),
+                    topLeft = Offset(w - inset - full - 6.dp.toPx(), by - 7.5.dp.toPx()),
+                    size = Size(full + 6.dp.toPx(), 2.dp.toPx())
+                )
+                if (len <= 0.5f) continue
+                val boltX = w - inset - len
+                grainRect(
+                    topLeft = Offset(boltX, by - 5.dp.toPx()),
+                    size = Size(len, 10.dp.toPx()),
+                    cellPx = BreakTexture.Species.STEEL.cellPx.dp.toPx()
+                ) { cx, cy ->
+                    BreakTexture.cellTone(
+                        StrongroomInks.Graphite, StrongroomInks.Violet,
+                        BreakTexture.Species.STEEL,
+                        cx + (boltX / BreakTexture.Species.STEEL.cellPx.dp.toPx()).toInt(),
+                        cy, seed = 49 + i, state = lightState
+                    )
+                }
                 drawRect(
                     color = StrongroomLight.relief(
                         StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
                     ),
-                    topLeft = Offset(w - inset - len, by - 5.dp.toPx()),
+                    topLeft = Offset(boltX, by - 5.dp.toPx()),
                     size = Size(len, 2.dp.toPx())
                 )
             }
@@ -345,13 +406,53 @@ private fun EasedLeaf(
             // the time-lock's case, and what moves in it is the
             // clock's wheel alone.)
             drawCircle(color = StrongroomInks.Graphite, radius = winR, center = winC)
+            // The window's depth (LEAD-MOVES): the case is a
+            // cavity in the leaf — an inner shadow ring where
+            // the wall falls away, then a grained brass rim ring
+            // proud of the enamel, screwed down at six points as
+            // a case is screwed down.
+            val lightDir = lightVectorFor(lightState)
+            drawCircle(
+                color = StrongroomInks.Graphite, radius = winR * 0.97f,
+                center = winC, style = Stroke(width = winR * 0.07f)
+            )
+            drawCircle(
+                color = StrongroomLight.shadowPartner(StrongroomInks.Graphite),
+                radius = winR * 0.935f, center = winC, style = Stroke(width = 3.dp.toPx())
+            )
             drawCircle(
                 color = StrongroomLight.relief(
                     StrongroomInks.Graphite, StrongroomInks.Violet, 0.6f, lightState
                 ),
                 radius = winR, center = winC, style = Stroke(width = 5.dp.toPx())
             )
-            drawCircle(color = pin, radius = winR + 4.dp.toPx(), center = winC, style = Stroke(width = 3.dp.toPx()))
+            grainAnnulus(
+                center = winC, outerR = winR + 8.dp.toPx(), innerR = winR + 1.5.dp.toPx(),
+                cellPx = BreakTexture.Species.BRASS.cellPx.dp.toPx()
+            ) { cx, cy ->
+                BreakTexture.cellTone(
+                    StrongroomInks.Gold, StrongroomInks.Graphite,
+                    BreakTexture.Species.BRASS, cx, cy,
+                    seed = 71, state = lightState
+                )
+            }
+            for (s in 0 until 6) {
+                val a = Math.toRadians(s * 60.0 + 30.0)
+                boltHead(
+                    center = winC + Offset(
+                        cos(a).toFloat() * (winR + 4.75.dp.toPx()),
+                        sin(a).toFloat() * (winR + 4.75.dp.toPx())
+                    ),
+                    radius = 4.6.dp.toPx(),
+                    face = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.3f, lightState
+                    ),
+                    lit = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
+                    ),
+                    shadow = StrongroomLight.descend(StrongroomInks.Graphite, 2)
+                )
+            }
 
             // The teeth: 48 around the wheel, turning WITH it.
             // A tooth stands in GOLD while its travel to the
@@ -362,47 +463,125 @@ private fun EasedLeaf(
             // re-drive's end every tooth is graphite.
             val toothR = winR * 0.80f
             val stepDeg = 360.0 / Escapement.TEETH
+            // The wheel's rim FIRST (LEAD-MOVES): a solid grained
+            // steel band under the teeth, its grain locked to the
+            // wheel's own turning — sampled in the wheel's frame,
+            // so the skin turns with the iron and never swims.
+            val rimOut = toothR * 0.86f
+            val rimIn = winR * 0.58f
+            grainAnnulus(
+                center = winC, outerR = rimOut, innerR = rimIn,
+                cellPx = BreakTexture.Species.STEEL.cellPx.dp.toPx(),
+                rotationDeg = wheelAngle.toFloat()
+            ) { cx, cy ->
+                BreakTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    BreakTexture.Species.STEEL, cx, cy,
+                    seed = 53, state = lightState
+                )
+            }
+            drawCircle(
+                color = StrongroomLight.relief(
+                    StrongroomInks.Graphite, StrongroomInks.Violet, 0.5f, lightState
+                ),
+                radius = rimOut, center = winC, style = Stroke(width = 1.6.dp.toPx())
+            )
+            // The teeth: 48 SOLID CLUB TEETH around the wheel,
+            // turning WITH it — a root, a tip, two flanks lit and
+            // shadowed by the room's light. A tooth stands in GOLD
+            // while its travel to the pallet (the index at the
+            // window's top) still lies inside the remaining arc;
+            // behind the pallet it stands in machined steel — the
+            // span, spent tooth by tooth. At the firing every
+            // tooth is gold; at the re-drive's end every tooth is
+            // steel.
             for (i in 0 until Escapement.TEETH) {
                 val base = -90.0 + i * stepDeg
                 val theta = base + wheelAngle
-                val rad = Math.toRadians(theta).toFloat()
                 val travel = (270.0 - ((theta % 360.0) + 360.0) % 360.0 + 360.0) % 360.0
                 val gold = travel <= remainingArc + stepDeg / 2.0 && remainingArc > 0.0
-                val tone = if (gold) {
+                val fill = if (gold) {
                     BreakTexture.cellTone(
                         StrongroomInks.Gold, StrongroomInks.Graphite,
                         BreakTexture.Species.BRASS, i, 3, seed = 59, state = lightState
                     )
                 } else {
-                    StrongroomLight.descend(StrongroomInks.Graphite, 1)
+                    BreakTexture.cellTone(
+                        StrongroomInks.Graphite, StrongroomInks.Violet,
+                        BreakTexture.Species.STEEL, i, 5, seed = 67, state = lightState
+                    )
                 }
-                val inner = winC + Offset(cos(rad) * toothR * 0.86f, sin(rad) * toothR * 0.86f)
-                val outer = winC + Offset(cos(rad) * toothR, sin(rad) * toothR)
-                drawLine(color = tone, start = inner, end = outer, strokeWidth = 5.dp.toPx())
-            }
-            // The wheel's rim, under the teeth.
-            drawCircle(
-                color = StrongroomLight.descend(StrongroomInks.Graphite, 1),
-                radius = toothR * 0.84f, center = winC, style = Stroke(width = 7.dp.toPx())
-            )
-            // Its spokes + the throw cam at its heart: one lobe,
-            // turning with the wheel — when the lobe meets the
-            // pallet at the span's end, the bolts re-drive.
-            for (deg in listOf(0f, 120f, 240f)) {
-                val a = Math.toRadians(deg + wheelAngle).toFloat()
-                drawLine(
-                    color = StrongroomInks.Graphite, start = winC,
-                    end = winC + Offset(cos(a) * toothR * 0.80f, sin(a) * toothR * 0.80f),
-                    strokeWidth = 6.dp.toPx()
+                clubTooth(
+                    center = winC, angleDeg = theta,
+                    rootR = rimOut - 1.dp.toPx(), tipR = toothR * 1.13f,
+                    rootHalfPx = 5.2.dp.toPx(), tipHalfPx = 3.4.dp.toPx(),
+                    fill = fill,
+                    litEdge = if (gold) {
+                        StrongroomLight.relief(
+                            StrongroomInks.Gold, StrongroomInks.Graphite, 0.6f, lightState
+                        )
+                    } else {
+                        StrongroomLight.relief(
+                            StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
+                        )
+                    },
+                    shadowEdge = if (gold) {
+                        StrongroomLight.descend(StrongroomInks.Gold, 2)
+                    } else {
+                        StrongroomLight.descend(StrongroomInks.Graphite, 3)
+                    },
+                    lightDir = lightDir
                 )
             }
-            val camA = Math.toRadians(-90.0 + wheelAngle).toFloat()
+            // Its spokes — tapered castings, turning with the
+            // wheel — and the hub stack at its heart.
+            for (deg in listOf(0.0, 120.0, 240.0)) {
+                taperedSpoke(
+                    center = winC, angleDeg = deg + wheelAngle,
+                    fromR = winR * 0.13f, toR = rimIn,
+                    fromHalfPx = 8.dp.toPx(), toHalfPx = 5.dp.toPx(),
+                    fill = StrongroomLight.descend(StrongroomInks.Graphite, 1),
+                    litEdge = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
+                    ),
+                    shadowEdge = StrongroomLight.descend(StrongroomInks.Graphite, 3),
+                    lightDir = lightDir
+                )
+            }
+            grainDisc(
+                center = winC, radius = winR * 0.155f,
+                cellPx = BreakTexture.Species.STEEL.cellPx.dp.toPx(),
+                rotationDeg = wheelAngle.toFloat()
+            ) { cx, cy ->
+                BreakTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    BreakTexture.Species.STEEL, cx, cy,
+                    seed = 55, state = lightState
+                )
+            }
+            // The throw cam on the hub: one solid gold lobe,
+            // turning with the wheel — when the lobe meets the
+            // pallet at the span's end, the bolts re-drive.
+            val camA = Math.toRadians(-90.0 + wheelAngle)
             drawCircle(
-                color = StrongroomInks.Gold,
-                radius = winR * 0.13f,
-                center = winC + Offset(cos(camA) * winR * 0.30f, sin(camA) * winR * 0.30f)
+                color = BreakTexture.cellTone(
+                    StrongroomInks.Gold, StrongroomInks.Graphite,
+                    BreakTexture.Species.BRASS, 3, 3, seed = 61, state = lightState
+                ),
+                radius = winR * 0.115f,
+                center = winC + Offset(cos(camA).toFloat() * winR * 0.27f, sin(camA).toFloat() * winR * 0.27f)
             )
-            drawCircle(color = StrongroomInks.Gold, radius = winR * 0.10f, center = winC)
+            grainDisc(
+                center = winC, radius = winR * 0.095f,
+                cellPx = BreakTexture.Species.BRASS.cellPx.dp.toPx(),
+                rotationDeg = wheelAngle.toFloat()
+            ) { cx, cy ->
+                BreakTexture.cellTone(
+                    StrongroomInks.Gold, StrongroomInks.Graphite,
+                    BreakTexture.Species.BRASS, cx, cy,
+                    seed = 63, state = lightState
+                )
+            }
             drawCircle(color = StrongroomInks.Graphite, radius = winR * 0.045f, center = winC)
 
             // THE PALLET FORK, astride the index at the window's
@@ -411,19 +590,71 @@ private fun EasedLeaf(
             // at each release. Its arbor is the index: the one
             // fixed point of the window, in exact gold.
             val forkC = Offset(winC.x, winC.y - toothR)
-            val fa = Math.toRadians(palletAngle).toFloat()
-            val prong = toothR * 0.30f
-            for (sign in listOf(-1f, 1f)) {
-                val pa = Math.toRadians(-90.0 + sign * 24.0).toFloat() + fa
-                drawLine(
-                    color = StrongroomLight.relief(
-                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
-                    ),
-                    start = forkC,
-                    end = forkC + Offset(cos(pa) * prong, sin(pa) * prong),
-                    strokeWidth = 5.dp.toPx()
+            val palletRot = palletAngle.toFloat()
+            // The anchor's boss: a grained steel disc on the
+            // arbor, rocking with the fork.
+            grainDisc(
+                center = forkC, radius = 10.dp.toPx(),
+                cellPx = BreakTexture.Species.STEEL.cellPx.dp.toPx(),
+                rotationDeg = palletRot
+            ) { cx, cy ->
+                BreakTexture.cellTone(
+                    StrongroomInks.Graphite, StrongroomInks.Violet,
+                    BreakTexture.Species.STEEL, cx, cy,
+                    seed = 69, state = lightState
                 )
             }
+            // Its two arms: tapered steel, rocking ±24° about the
+            // arbor on the pallet's own angle, each ending in a
+            // GOLD PALLET STONE — the faces the teeth strike.
+            val prong = toothR * 0.30f
+            for (sign in listOf(-1.0, 1.0)) {
+                val armDeg = -90.0 + sign * 24.0 + palletAngle
+                taperedSpoke(
+                    center = forkC, angleDeg = armDeg,
+                    fromR = 7.dp.toPx(), toR = prong,
+                    fromHalfPx = 5.5.dp.toPx(), toHalfPx = 3.6.dp.toPx(),
+                    fill = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.35f, lightState
+                    ),
+                    litEdge = StrongroomLight.relief(
+                        StrongroomInks.Graphite, StrongroomInks.Violet, 0.7f, lightState
+                    ),
+                    shadowEdge = StrongroomLight.descend(StrongroomInks.Graphite, 3),
+                    lightDir = lightDir
+                )
+                val a = Math.toRadians(armDeg)
+                val stoneC = forkC + Offset(cos(a).toFloat() * prong, sin(a).toFloat() * prong)
+                drawCircle(
+                    color = BreakTexture.cellTone(
+                        StrongroomInks.Gold, StrongroomInks.Graphite,
+                        BreakTexture.Species.BRASS, 2, 2, seed = 73, state = lightState
+                    ),
+                    radius = 5.4.dp.toPx(), center = stoneC
+                )
+                drawArc(
+                    color = StrongroomLight.relief(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 0.6f, lightState
+                    ),
+                    startAngle = 180f, sweepAngle = 180f, useCenter = false,
+                    topLeft = Offset(stoneC.x - 5.4.dp.toPx(), stoneC.y - 5.4.dp.toPx()),
+                    size = Size(10.8.dp.toPx(), 10.8.dp.toPx()),
+                    style = Stroke(width = 1.4.dp.toPx())
+                )
+            }
+            // The counterweight tail below the arbor: the anchor
+            // is balanced, and the tail is how it shows.
+            taperedSpoke(
+                center = forkC, angleDeg = 90.0 + palletAngle,
+                fromR = 7.dp.toPx(), toR = toothR * 0.17f,
+                fromHalfPx = 4.5.dp.toPx(), toHalfPx = 6.5.dp.toPx(),
+                fill = StrongroomLight.descend(StrongroomInks.Graphite, 1),
+                litEdge = StrongroomLight.relief(
+                    StrongroomInks.Graphite, StrongroomInks.Violet, 0.5f, lightState
+                ),
+                shadowEdge = StrongroomLight.descend(StrongroomInks.Graphite, 3),
+                lightDir = lightDir
+            )
             drawCircle(color = pin, radius = 4.5.dp.toPx(), center = forkC)
         }
     }
