@@ -65,6 +65,10 @@ import com.example.ui.drawer.DrawerContents
 import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
 import com.example.ui.drawer.drawerSurfaceSecure
+import com.example.ui.lifting.Lifting
+import com.example.ui.lifting.LiftingState
+import com.example.ui.lifting.PlatePileView
+import com.example.ui.lifting.StruckPlateView
 import com.example.ui.sealed.DoorWordSetter
 import com.example.ui.sealed.SealedFace
 import com.example.ui.sealed.SealedFaceActions
@@ -443,6 +447,19 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // lawful exactly when the snapshot stands.
         viewModel.noteStrongroomSealStanding(facts.first != null)
     }
+    // BUILD-SR-40 (the Lifting + Plate Strike slice): the
+    // lifting's standing facts, read from the Strongroom store
+    // on the same tick — the newest struck day (its plate, struck
+    // once, re-read never re-struck) and the whole pile of struck
+    // rows behind it. The ceremony's clock offset is read from
+    // the finish's own elapsed zero when a finish stands; a
+    // surface entered after the day lifted stands at the score's
+    // end (the door open, the plate in the pile).
+    var liftingState by remember { mutableStateOf<LiftingState?>(null) }
+    val finishForLifting by viewModel.finishState.collectAsStateWithLifecycle()
+    LaunchedEffect(doorwayRefreshTick.value) {
+        liftingState = loadLiftingState(appContext, finishForLifting?.e0Mono)
+    }
     val sealedFaceActions = SealedFaceActions(
         // The knock's sound/haptic substance rides the Stage 13/14
         // slices through this seam; platform-edge reaches are
@@ -704,6 +721,14 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             sealedFaceState?.let { face ->
                 SealedFace(state = face, actions = sealedFaceActions)
             }
+        },
+        liftingContent = {
+            // The shell's LIFTING host (BUILD-SR-40): the lifting
+            // ceremony + the plate strike + the pile, derived
+            // whole from the store's struck rows. A fallen day
+            // stands here as the failure face (C-18). When no
+            // struck day stands, nothing stands (B-14).
+            liftingState?.let { state -> Lifting(state = state) }
         }
     )
 }
@@ -1432,6 +1457,70 @@ private suspend fun loadSealFacts(context: Context): Pair<SealedFaceState?, Bool
                 todayRow.state == StrongroomDayEntity.STATE_SIGNED)
         face to swingStanding
     }
+
+/**
+ * The lifting's standing facts (BUILD-SR-40) — the ONLY source
+ * of [LiftingState] in the composed app:
+ *
+ *  - **The struck days**: every Strongroom day row standing in a
+ *    struck state (LIFTED · BROKEN · AJAR), newest filing day
+ *    first. Each is re-read AS STRUCK from its stored held /
+ *    bracket facts and its punches (B-14: never re-struck), and
+ *    carried through [StruckPlateView.fromStruckPlate] — the
+ *    mapping that mints the struck forms the doorway's model
+ *    carries unrendered: the hours-held figure (TX-SHOW-10)
+ *    and the bracket pair (TX-SHOW-14), the pair's hours derived
+ *    from the stored sealing instant + the stored held/gap
+ *    lengths, and nothing else.
+ *  - **The pile**: those same struck plates in stack order —
+ *    the pile's facts are the store's struck rows (the same
+ *    pile the Drawer keeps; two views, one truth).
+ *  - **The ceremony offset**: read against the standing
+ *    finish's elapsed zero ([finishE0Mono], SystemClock basis —
+ *    the same clock the ceremony score runs on); with no finish
+ *    standing, the surface stands at the score's end.
+ *
+ * No struck day → null: the lifting does not stand (B-14).
+ */
+private suspend fun loadLiftingState(
+    context: Context,
+    finishE0Mono: Long?
+): LiftingState? = withContext(Dispatchers.IO) {
+    val appContext = context.applicationContext
+    val dao = AppContainer.dao(appContext)
+    val store = StrongroomStore(dao)
+    val struckRows = dao.getAllStrongroomDaysSnapshot()
+        .filter { it.state in StrongroomDayEntity.STRUCK_STATES }
+        .sortedByDescending { it.filingDateIso }
+    if (struckRows.isEmpty()) return@withContext null
+    val views = struckRows.map { row ->
+        StruckPlateView.fromStruckPlate(
+            plate = StrongroomDay.DayPlate(
+                filingDateIso = row.filingDateIso,
+                hoursHeldMillis = row.struckHeldMillis,
+                punches = store.punches(row.filingDateIso),
+                sealState = runCatching { StrongroomDay.SealState.valueOf(row.state) }
+                    .getOrDefault(StrongroomDay.SealState.BROKEN),
+                crankSealBroken = row.crankSealBroken,
+                bracketGapMillis = row.struckBracketGapMillis,
+                taskLine = row.taskLine
+            ),
+            sealedAtWallMillis = row.sealedAtWallMillis
+        )
+    }
+    val latest = views.first()
+    val offset = finishE0Mono?.let {
+        (android.os.SystemClock.elapsedRealtime() - it).toInt()
+    } ?: com.example.ui.lifting.LiftingCeremony.ScoreEndMs
+    LiftingState(
+        plate = latest,
+        pile = PlatePileView.fromPlates(views),
+        isFailure = latest.isFailure,
+        ceremonyStartOffsetMs = offset.coerceIn(
+            0, com.example.ui.lifting.LiftingCeremony.ScoreEndMs
+        )
+    )
+}
 
 // Issue #27 (finding 5): a FIX trip must never die silently.
 // Every Settings launch goes through here: the exact pane
