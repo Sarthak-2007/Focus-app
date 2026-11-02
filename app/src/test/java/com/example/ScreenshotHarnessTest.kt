@@ -824,6 +824,26 @@ class ScreenshotHarnessTest {
         writeShotSparse("setup-guard-device.png", bitmap)
     }
 
+    @Test
+    fun setup_day_deviceSpec() {
+        // The DAY panel with the hour standing set: the gold
+        // plate carries his 20:00, the steppers under it — the
+        // first-run screen build 5 proved the app needed.
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Setup(
+                    state = SetupState(
+                        section = SetupSection.DAY,
+                        liftingHour = 20,
+                        liftingMinute = 0
+                    ),
+                    actions = SetupActions()
+                )
+            }
+        }
+        writeShotSparse("setup-day-device.png", bitmap)
+    }
+
     // ── THE SIGNING PRINT BENCH (DESIGN-MOTION) ────────────────
     // The moving-parts-on-a-photograph prototype: the picked
     // print as the still world, the crafted wheel and dial

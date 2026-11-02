@@ -48,11 +48,20 @@ import java.time.ZoneId
  *    (composed, signed, sealed, struck) is returned as it stands,
  *    never recomposed. Re-ensuring is two reads and no writes.
  *  - No invented lifting hour: when his data holds no window end
- *    (no active session, no session window, no profile window),
- *    [LegacyCarry] returns null and NO day is born — the carry's
- *    own law (it never invents the day's most important number).
- *    The birth reports [Outcome.NotBorn] and the entry paths read
- *    the honest empty doorway until his data can carry a day.
+ *    (no active session, no session window, no profile window)
+ *    AND no standing lifting hour stands either, [LegacyCarry]
+ *    returns null and NO day is born — the carry's own law (it
+ *    never invents the day's most important number). The birth
+ *    reports [Outcome.NotBorn] and the entry paths read the
+ *    honest empty doorway until his data can carry a day.
+ *  - The standing lifting hour (SETUP-FLOW, 2026-11-03): the
+ *    hour he set by hand on setup's DAY panel, kept in
+ *    [SetupStore]. A session's window end outranks it (a running
+ *    day's own fact beats the standing order); when no session
+ *    stands it is the only source, and on a fresh install it is
+ *    what makes a first day able to be born at all — build 5's
+ *    doorway stood empty without it. It is his datum, set by
+ *    his hand: the carry's no-invention law is untouched.
  *  - No Guard shortcut: the allowance is read through
  *    [StrongroomStore.guardState], the Guard's own read verb —
  *    no verb is bypassed, tightened, or raised here.
@@ -86,7 +95,8 @@ object StrongroomDayBirth {
         store: StrongroomStore,
         dao: MonolithDao,
         nowMillis: Long,
-        zone: ZoneId = ZoneId.systemDefault()
+        zone: ZoneId = ZoneId.systemDefault(),
+        standingLiftingTime: LocalTime? = null
     ): Outcome {
         val todayIso = StrongroomDay.filingDateIso(nowMillis, zone)
         val tomorrowIso = LocalDate.parse(todayIso).plusDays(1).toString()
@@ -100,8 +110,9 @@ object StrongroomDayBirth {
             )
         }
 
-        val order = standingOrder(store, dao, todayIso, nowMillis, zone)
-            ?: return Outcome.NotBorn
+        val order = standingOrder(
+            store, dao, todayIso, nowMillis, zone, standingLiftingTime
+        ) ?: return Outcome.NotBorn
 
         // composeDay is idempotent per date: a day already standing
         // returns as it stands; only the missing one is born.
@@ -135,7 +146,8 @@ object StrongroomDayBirth {
         dao: MonolithDao,
         anyDateIso: String,
         nowMillis: Long,
-        zone: ZoneId
+        zone: ZoneId,
+        standingLiftingTime: LocalTime?
     ): StrongroomComposition.WeekStandingOrder? {
         val activeSession = dao.getActiveSessionSnapshot()
         val derived = LegacyCarry.deriveSigning(
@@ -144,11 +156,16 @@ object StrongroomDayBirth {
             guardSettings = dao.getGuardSettingsSnapshot(),
             activeSessionIntention = activeSession?.intention,
             guardAllowanceMinutes = store.guardState(nowMillis).allowanceMinutes,
+            // The lifting hour, resolved at this composition
+            // root from his own stores only: the active session's
+            // window end when one stands, else the standing hour
+            // he set in setup. Neither stands → null, and the
+            // carry refuses, by its law.
             activeSessionWindowEnd = activeWindowEnd(
                 session = activeSession,
                 profiles = dao.getAllProfilesSnapshot(),
                 zone = zone
-            )
+            ) ?: standingLiftingTime
         ) ?: return null
 
         val template = StrongroomComposition.DayTemplate(
