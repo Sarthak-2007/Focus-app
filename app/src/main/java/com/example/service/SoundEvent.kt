@@ -166,6 +166,7 @@ enum class SoundEvent {
     // -- The signing & the sealing (the Seal's act, first sitting) --
     COMBINATION_DETENT,
     COMBINATION_SETTLE,
+    COMBINATION_GATE_CLACK,
     DOOR_SWING_CLOSE,
     SEAL_CLUNK_1,
     SEAL_CLUNK_2,
@@ -183,11 +184,27 @@ enum class SoundEvent {
     // -- The antechamber: the drum & the governor's crank --
     DRUM_DETENT,
     DRUM_MINUTE_END,
+    DRUM_LAND_STRIKE,
+    DRUM_LAND_SEAT,
     DRUM_SPENT_REFUSAL,
     GOVERNOR_CRANK_TURN,
     LEAD_SEAL_SNAP,
     CRANK_SPENT_REFUSAL,
     CRANK_REDRIVE,
+
+    // -- The guard & the stretch (the pawl, the dawn rock, the
+    //    carve) and the drawer — the voice-debt set, specced by
+    //    the SOUND seat 2026-11-03 --
+    TIGHTEN_TICK_1,
+    TIGHTEN_TICK_2,
+    TIGHTEN_SEAT_CLICK,
+    RAISE_ROCK_1,
+    RAISE_ROCK_2,
+    RAISE_ROCK_3,
+    CARVE_SCRAPE,
+    CARVE_BLOW,
+    CARVE_CHIP,
+    DRAWER_SLIDE,
 
     // -- The break (a firing of the time-lock, invocable by no one) --
     BREAK_FIRING,
@@ -199,6 +216,7 @@ enum class SoundEvent {
     LIFT_BOLT_3,
     DOOR_OPEN_WEIGHT,
     PLATE_STRIKE,
+    PLATE_STRIKE_FAILURE,
     AJAR_DAY,
 
     // -- The legacy voices (pre-Strongroom surfaces; figures live
@@ -295,6 +313,17 @@ object SoundRegistry {
             latencyClass = LatencyClass.TOUCH_COINCIDENT,
             source = "PROVISIONAL — engine's firm-click class, for the " +
                 "combination's settle at the signature"
+        ),
+        row(
+            SoundEvent.COMBINATION_GATE_CLACK, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(340f, 30, 0.55f, 2.76f),
+            haptic = HapticSpec(listOf(0, 35, 28), listOf(0, 0, 165), 28),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (voice-debt clearance, 2026-11-03): " +
+                "FEEL-SR-3 C1.2's gate given its voice — one heavy steel " +
+                "clack where the felt void ends; 340 Hz sits under the " +
+                "station tick (680), chord 2.76 is the steel-bar partial"
         ),
         row(
             SoundEvent.DOOR_SWING_CLOSE, SoundFamily.ROOM_CEREMONY,
@@ -426,6 +455,26 @@ object SoundRegistry {
                 "recedes; a soft release, no negotiation voice (CRITIC W-7)"
         ),
         row(
+            SoundEvent.DRUM_LAND_STRIKE, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(185f, 34, 0.58f, 1.2f),
+            haptic = HapticSpec(listOf(0, 14), listOf(0, 200), 14),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (voice-debt clearance, 2026-11-03): " +
+                "ledger A-7's land, first half — the strike; brass- " +
+                "weighted (chord 1.2), the heaviest voice the drum has"
+        ),
+        row(
+            SoundEvent.DRUM_LAND_SEAT, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(148f, 42, 0.46f, 1.2f),
+            haptic = HapticSpec(listOf(0, 16, 10), listOf(0, 0, 130), 10),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (2026-11-03): the land's seat — lower " +
+                "and softer after the strike, across the felt row's own " +
+                "16 ms gap; strike + seat together are the drum landing"
+        ),
+        row(
             SoundEvent.DRUM_SPENT_REFUSAL, SoundFamily.PRIVATE_HAND,
             SoundDecision.FELT_ONLY, attended = true,
             haptic = HARD_STOP,
@@ -476,6 +525,123 @@ object SoundRegistry {
                 "the ceremony's shape); one representative registry voice " +
                 "for the re-drive family, PROVISIONAL until the Stage 13 " +
                 "spec set lands"
+        ),
+
+        // -- The guard, the stretch, the drawer (SOUND seat,
+        //    voice-debt clearance, 2026-11-03) ---------------------
+        row(
+            SoundEvent.TIGHTEN_TICK_1, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(700f, 26, 0.42f, 1.0f),
+            haptic = HapticSpec(listOf(0, 16), listOf(0, 140), 16),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (2026-11-03): FEEL-SR-3 C3.1's DOUBLE " +
+                "click, first click — its 26 ms body carries the click " +
+                "plus the felt row's 10 ms gap, so the pair dispatched " +
+                "back-to-back reads as one pawl act; loosest-step gain " +
+                "(the climb with tightness is the felt row's, caller's)"
+        ),
+        row(
+            SoundEvent.TIGHTEN_TICK_2, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(610f, 12, 0.34f, 1.0f),
+            haptic = HapticSpec(listOf(0, 10), listOf(0, 100), 10),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (2026-11-03): the double click's second " +
+                "click — lower and softer, the pawl falling home"
+        ),
+        row(
+            SoundEvent.TIGHTEN_SEAT_CLICK, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(840f, 14, 0.58f, 1.2f),
+            haptic = HapticSpec(listOf(0, 35), listOf(0, 210), 35),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (2026-11-03): FEEL-SR-3 C3.2's " +
+                "CLICK-LOCK — one hard snap on finger-lift, no tail, " +
+                "no settle; the brightest guard voice, spent once " +
+                "per tightening"
+        ),
+        row(
+            SoundEvent.RAISE_ROCK_1, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = false,
+            voice = VoiceSpec(165f, 40, 0.34f, 0.9f),
+            haptic = HapticSpec(listOf(0, 40), listOf(0, 85), 40),
+            latencyClass = LatencyClass.UNATTENDED_TIMELY,
+            source = "SOUND seat (2026-11-03): FEEL-SR-3 C4.2's Unseated " +
+                "Rock, first pulse — the disc rocks at the dawn the " +
+                "raise dies. The filing's grit is long-form noise the " +
+                "transient model cannot carry (cf. DOOR_SWING_CLOSE) — " +
+                "three dying knocks stand for it, named, not faked"
+        ),
+        row(
+            SoundEvent.RAISE_ROCK_2, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = false,
+            voice = VoiceSpec(150f, 34, 0.26f, 0.9f),
+            haptic = HapticSpec(listOf(0, 30), listOf(0, 55), 30),
+            latencyClass = LatencyClass.UNATTENDED_TIMELY,
+            source = "SOUND seat (2026-11-03): the rock's second pulse, dying"
+        ),
+        row(
+            SoundEvent.RAISE_ROCK_3, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = false,
+            voice = VoiceSpec(138f, 28, 0.18f, 0.9f),
+            haptic = HapticSpec(listOf(0, 18), listOf(0, 30), 18),
+            latencyClass = LatencyClass.UNATTENDED_TIMELY,
+            source = "SOUND seat (2026-11-03): the rock's last pulse — " +
+                "and nothing after it; a terminal accent would be a " +
+                "lie (FEEL-SR-3 C4.2: NO terminal event)"
+        ),
+        row(
+            SoundEvent.CARVE_SCRAPE, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(240f, 136, 0.30f, 5.40f),
+            haptic = HapticSpec(
+                listOf(
+                    0L, 100L, 100L, 100L, 100L, 100L, 100L,
+                    100L, 100L, 100L, 100L, 100L, 100L
+                ),
+                listOf(0, 60, 65, 69, 74, 78, 83, 87, 92, 96, 101, 105, 110),
+                40
+            ),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (2026-11-03): FEEL-SR-3 C6.2's scrape — " +
+                "the filed 1.2 s rising texture is long-form noise the " +
+                "transient voice model cannot carry (cf. DOOR_SWING_CLOSE); " +
+                "this voice is the scrape's opening at the synth's 136 ms " +
+                "ceiling, chord 5.40 (the steel set's harsh partial) for " +
+                "grit, gain low under the hold — the full render is " +
+                "MechanismSounds work, named, not faked"
+        ),
+        row(
+            SoundEvent.CARVE_BLOW, SoundFamily.ROOM_CEREMONY,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(175f, 80, 0.62f, 2.76f),
+            haptic = HapticSpec(listOf(0, 55), listOf(0, 240), 55),
+            latencyClass = LatencyClass.CEREMONY_STEP,
+            source = "SOUND seat (2026-11-03): FEEL-SR-3 C6.2's canonical " +
+                "cut, the blow — its 80 ms body carries blow + hush " +
+                "before the chip lands"
+        ),
+        row(
+            SoundEvent.CARVE_CHIP, SoundFamily.ROOM_CEREMONY,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(1350f, 14, 0.40f, 1.5f),
+            haptic = HapticSpec(listOf(0, 30), listOf(0, 120), 30),
+            latencyClass = LatencyClass.CEREMONY_STEP,
+            source = "SOUND seat (2026-11-03): the cut's chip — bright, " +
+                "brief, spent exactly once in a stretch's life"
+        ),
+        row(
+            SoundEvent.DRAWER_SLIDE, SoundFamily.PRIVATE_HAND,
+            SoundDecision.SOUNDS, attended = true,
+            voice = VoiceSpec(132f, 136, 0.30f, 0.9f),
+            haptic = HapticSpec(listOf(0, 34, 20), listOf(0, 110, 70), 10),
+            latencyClass = LatencyClass.TOUCH_COINCIDENT,
+            source = "SOUND seat (2026-11-03): DESIGNER-SR-5 §10's drawer " +
+                "slide — low, soft, unhurried, at the synth's ceiling; " +
+                "the wood's friction is long-form texture the transient " +
+                "model cannot carry (cf. DOOR_SWING_CLOSE) — this voice " +
+                "is the slide's low body, the full render named, not faked"
         ),
 
         // -- The break ----------------------------------------------
@@ -557,6 +723,22 @@ object SoundRegistry {
             source = "PROVISIONAL — the plate strike is the brightest " +
                 "sound in the app and is spent once a day (T46 Stage 13 " +
                 "composition law); struck brass, high and brief"
+        ),
+        row(
+            SoundEvent.PLATE_STRIKE_FAILURE, SoundFamily.ROOM_CEREMONY,
+            SoundDecision.SOUNDS, attended = false,
+            voice = VoiceSpec(690f, 88, 0.50f, 1.5f),
+            haptic = HapticSpec(
+                listOf(0, 24, 36, 50, 18), listOf(0, 190, 120, 0, 70), 24
+            ),
+            latencyClass = LatencyClass.CEREMONY_STEP,
+            source = "SOUND seat (voice-debt clearance, 2026-11-03): " +
+                "SOUND-SR-4's FAILURE-STRIKE given its voice — the " +
+                "strike's brass (chord 1.5) taken lower (690 against " +
+                "1180 Hz), damped (88 against 120 ms) and quieter " +
+                "(0.50 against 0.66); the filed dead gap cut into the " +
+                "resonance is a long-form detail the transient model " +
+                "cannot cut — named, not faked"
         ),
         row(
             SoundEvent.AJAR_DAY, SoundFamily.ROOM_CEREMONY,

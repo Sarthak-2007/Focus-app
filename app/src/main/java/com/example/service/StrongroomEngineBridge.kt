@@ -120,6 +120,19 @@ object StrongroomEngineBridge {
         }
     }
 
+    /**
+     * THE SURFACES' DOOR (SOUND seat, 2026-11-03): a surface
+     * fires its own event — a detent crossed, a seat taken, a
+     * drum landed, a drawer opened — through this same one bus,
+     * so felt + heard still come from the one registry row and
+     * no surface ever builds a second bus or touches the voice
+     * table directly. The ceremonies above keep their private
+     * path; this door is the same fire, opened to the rooms the
+     * hand actually works in. Never throws.
+     */
+    fun fireSurfaceEvent(context: Context, event: HapticEvent) =
+        fireSensory(context, event)
+
     /** The monotonic clock the seal's span is struck on. */
     fun nowElapsedMillis(): Long = SystemClock.elapsedRealtime()
 
