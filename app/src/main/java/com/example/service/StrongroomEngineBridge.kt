@@ -142,13 +142,13 @@ object StrongroomEngineBridge {
      * reach is punched onto the day and the decision returned —
      * the knock event and nothing else: this function starts no
      * activity, posts no notification, opens no surface.
-     * [allowedPackages] is the antechamber set (allowed + peek
-     * apps) as the caller's catalogue states it.
+     * The allowed set is read from the SEALED DAY's signed record
+     * (B-9: exactly as signed — never a caller-supplied catalogue,
+     * never a complement derived at read time).
      */
     suspend fun onLockedAppReach(
         context: Context,
-        packageName: String,
-        allowedPackages: Set<String>
+        packageName: String
     ): StrongroomRouting.ReachDecision {
         val appContext = context.applicationContext
         val store = store(appContext)
@@ -159,7 +159,7 @@ object StrongroomEngineBridge {
             sealed = true,
             packageName = packageName,
             lockedPackages = signing.lockedPackages,
-            allowedPackages = allowedPackages
+            allowedPackages = signing.allowedPackages.toSet()
         )
         if (decision == StrongroomRouting.ReachDecision.KNOCK) {
             val offset = (nowElapsedMillis() - row.sealedAtElapsedMillis).coerceAtLeast(0L)

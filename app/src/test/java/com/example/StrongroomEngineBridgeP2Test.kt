@@ -76,6 +76,7 @@ class StrongroomEngineBridgeP2Test {
             StrongroomDay.SigningRecord(
                 filingDateIso = dateIso,
                 lockedPackages = setOf("com.video.app"),
+                allowedPackages = listOf("com.notes.app"),
                 liftingTime = LocalTime.of(23, 59),
                 sentence = null,
                 breakLengthMinutes = 0,
@@ -97,7 +98,7 @@ class StrongroomEngineBridgeP2Test {
     fun reach_withNoSealedDay_isNotSealed() = runBlocking {
         assertEquals(
             StrongroomRouting.ReachDecision.NOT_SEALED,
-            StrongroomEngineBridge.onLockedAppReach(context, "com.video.app", emptySet())
+            StrongroomEngineBridge.onLockedAppReach(context, "com.video.app")
         )
     }
 
@@ -106,11 +107,13 @@ class StrongroomEngineBridgeP2Test {
         seedSealedDay("2026-11-03", bootCount = StrongroomEngineBridge.bootCount(context))
         assertEquals(
             StrongroomRouting.ReachDecision.KNOCK,
-            StrongroomEngineBridge.onLockedAppReach(context, "com.video.app", setOf("com.notes.app"))
+            StrongroomEngineBridge.onLockedAppReach(context, "com.video.app")
         )
+        // The allowed set is the day's SIGNED set (B-9) — read from
+        // the sealed record, never supplied by the caller.
         assertEquals(
             StrongroomRouting.ReachDecision.ANTECHAMBER,
-            StrongroomEngineBridge.onLockedAppReach(context, "com.notes.app", setOf("com.notes.app"))
+            StrongroomEngineBridge.onLockedAppReach(context, "com.notes.app")
         )
         // Exactly one punch: the knock, and nothing else.
         val punches = store().punches("2026-11-03")

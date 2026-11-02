@@ -123,7 +123,7 @@ class StrongroomMigrationP1Test {
             assertTrue(
                 columnsOf(db, "strongroom_days").containsAll(
                     listOf(
-                        "filingDateIso", "lockedPackagesCsv", "liftingHour", "liftingMinute",
+                        "filingDateIso", "lockedPackagesCsv", "allowedPackagesCsv", "liftingHour", "liftingMinute",
                         "sentence", "breakLengthMinutes", "breakFiresAtOffsetMillis",
                         "allowanceTotalMinutes", "allowanceSpentMinutes", "gapsEncoded",
                         "sealedAtWallMillis", "sealedAtElapsedMillis", "sealedBootCount",
@@ -372,6 +372,9 @@ class StrongroomMigrationP1Test {
         // Only the LOCKED tier enters the locked set — peek and open
         // apps are not locked, and gaps never enter it at all.
         assertEquals(setOf("com.video.app"), signing.lockedPackages)
+        // The allowed set as signed data: non-LOCKED rows, in the
+        // loadout's own order — carried, never derived at read time.
+        assertEquals(listOf("com.notes.app", "com.peek.app"), signing.allowedPackages)
         assertEquals(25, signing.breakLengthMinutes) // his current break length, carried
         assertNull(signing.sentence) // no session stands: the kept place stands
         assertEquals(LocalTime.of(21, 30), signing.liftingTime) // HIS hour, carried — never an invented one

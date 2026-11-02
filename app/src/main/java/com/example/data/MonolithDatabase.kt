@@ -563,6 +563,7 @@ abstract class MonolithDatabase : RoomDatabase() {
                     "CREATE TABLE IF NOT EXISTS `strongroom_days` (" +
                         "`filingDateIso` TEXT NOT NULL, " +
                         "`lockedPackagesCsv` TEXT NOT NULL, " +
+                        "`allowedPackagesCsv` TEXT NOT NULL, " +
                         "`liftingHour` INTEGER NOT NULL, " +
                         "`liftingMinute` INTEGER NOT NULL, " +
                         "`sentence` TEXT, " +

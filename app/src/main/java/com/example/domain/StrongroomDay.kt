@@ -98,6 +98,13 @@ object StrongroomDay {
     data class SigningRecord(
         val filingDateIso: String,
         val lockedPackages: Set<String>,
+        /** The allowed set AS SIGNED (B-9 / R-C3): the antechamber's
+         *  things, by name, IN SIGNED ORDER — a signed fact of the
+         *  day, distinct from the locked set and from the purse.
+         *  Never derived as a complement: what is not on this list
+         *  is not behind the door. Order is part of the fact (the
+         *  list renders exactly as signed), so this is a List. */
+        val allowedPackages: List<String> = emptyList(),
         val liftingTime: LocalTime,
         val sentence: String?,
         val breakLengthMinutes: Int,

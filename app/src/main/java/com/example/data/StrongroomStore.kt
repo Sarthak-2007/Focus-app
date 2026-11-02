@@ -81,6 +81,7 @@ class StrongroomStore(private val dao: MonolithDao) {
         dao.insertStrongroomDay(
             row.copy(
                 lockedPackagesCsv = StrongroomEncoding.encodePackages(amended.record.lockedPackages),
+                allowedPackagesCsv = StrongroomEncoding.encodeOrderedPackages(amended.record.allowedPackages),
                 liftingHour = amended.record.liftingTime.hour,
                 liftingMinute = amended.record.liftingTime.minute,
                 sentence = amended.record.sentence,
@@ -215,17 +216,40 @@ class StrongroomStore(private val dao: MonolithDao) {
      * standings are confessed as they stand, never backdated into
      * a second strike.
      */
+    /** Whether a strike landed fresh or the plate already stood —
+     *  the distinction a caller routes a late standing on (a fresh
+     *  strike is the day's truth arriving; an already-standing
+     *  plate confessed late is a confession, routed by the caller,
+     *  BUILD-SR-4's pattern). [strikePlate] keeps the plain plate
+     *  shape for its existing callers. */
+    sealed interface StrikeOutcome {
+        val plate: StrongroomDay.DayPlate
+        data class FreshlyStruck(override val plate: StrongroomDay.DayPlate) : StrikeOutcome
+        data class AlreadyStanding(override val plate: StrongroomDay.DayPlate) : StrikeOutcome
+    }
+
     suspend fun strikePlate(
         dateIso: String,
         nowElapsedMillis: Long,
         nowBootCount: Int,
         sealFailed: Boolean,
         zone: ZoneId = ZoneId.systemDefault()
-    ): StrongroomDay.DayPlate? {
+    ): StrongroomDay.DayPlate? = strikePlateWithStanding(
+        dateIso, nowElapsedMillis, nowBootCount, sealFailed, zone
+    )?.plate
+
+    suspend fun strikePlateWithStanding(
+        dateIso: String,
+        nowElapsedMillis: Long,
+        nowBootCount: Int,
+        sealFailed: Boolean,
+        zone: ZoneId = ZoneId.systemDefault()
+    ): StrikeOutcome? {
         val row = dao.getStrongroomDay(dateIso) ?: return null
         if (row.state in StrongroomDayEntity.STRUCK_STATES) {
             // The plate as struck, re-read — never re-struck (B-14).
-            return StrongroomDay.DayPlate(
+            return StrikeOutcome.AlreadyStanding(
+                StrongroomDay.DayPlate(
                 filingDateIso = dateIso,
                 hoursHeldMillis = row.struckHeldMillis,
                 punches = punches(dateIso),
@@ -233,7 +257,8 @@ class StrongroomStore(private val dao: MonolithDao) {
                     .getOrDefault(StrongroomDay.SealState.BROKEN),
                 crankSealBroken = row.crankSealBroken,
                 bracketGapMillis = row.struckBracketGapMillis,
-                taskLine = row.taskLine
+                    taskLine = row.taskLine
+                )
             )
         }
         val span = row.toSealSpan() ?: return null
@@ -256,7 +281,7 @@ class StrongroomStore(private val dao: MonolithDao) {
                 crankSealBroken = plate.crankSealBroken
             )
         )
-        return plate
+        return StrikeOutcome.FreshlyStruck(plate)
     }
 
     // ------------------------------------------------------------------
@@ -493,9 +518,16 @@ object LegacyCarry {
             .filter { it.resolvedTier == AppBlockTier.LOCKED }
             .map { it.packageName }
             .toSet()
+        // The signed allowed set, carried: every non-LOCKED row,
+        // in the catalogue's own order (the DAO's A–Z) — his
+        // loadout's order, not a complement computed at read time.
+        val allowed = blockedApps
+            .filter { it.resolvedTier != AppBlockTier.LOCKED }
+            .map { it.packageName }
         return StrongroomDay.SigningRecord(
             filingDateIso = filingDateIso,
             lockedPackages = locked,
+            allowedPackages = allowed,
             liftingTime = lifting,
             sentence = activeSessionIntention?.takeIf { it.isNotBlank() },
             breakLengthMinutes = guardSettings?.breakMinutes ?: 10,

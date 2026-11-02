@@ -36,6 +36,9 @@ import com.example.domain.StrongroomGuard
 data class StrongroomDayEntity(
     @PrimaryKey val filingDateIso: String,
     val lockedPackagesCsv: String = "",
+    /** The signed allowed set, IN SIGNED ORDER (B-9): a CSV whose
+     *  order is the fact — never sorted, never derived. */
+    val allowedPackagesCsv: String = "",
     val liftingHour: Int,
     val liftingMinute: Int,
     /** His sentence verbatim; null = the kept place stands. */
@@ -133,6 +136,14 @@ object StrongroomEncoding {
     fun decodePackages(csv: String): Set<String> =
         if (csv.isBlank()) emptySet() else csv.split(",").filter { it.isNotBlank() }.toSet()
 
+    /** The signed-order encoding: order is the fact, so nothing
+     *  sorts here — the list round-trips exactly as signed. */
+    fun encodeOrderedPackages(packages: List<String>): String =
+        packages.joinToString(",")
+
+    fun decodeOrderedPackages(csv: String): List<String> =
+        if (csv.isBlank()) emptyList() else csv.split(",").filter { it.isNotBlank() }
+
     fun encodeGaps(gaps: List<StrongroomDay.ShapedGap>): String =
         gaps.joinToString(";") { "${it.kind.name}|${it.startOffsetMillis}|${it.durationMillis}" }
 
@@ -156,6 +167,7 @@ fun StrongroomDay.SigningRecord.toEntity(
 ): StrongroomDayEntity = StrongroomDayEntity(
     filingDateIso = filingDateIso,
     lockedPackagesCsv = StrongroomEncoding.encodePackages(lockedPackages),
+    allowedPackagesCsv = StrongroomEncoding.encodeOrderedPackages(allowedPackages),
     liftingHour = liftingTime.hour,
     liftingMinute = liftingTime.minute,
     sentence = sentence,
@@ -171,6 +183,7 @@ fun StrongroomDay.SigningRecord.toEntity(
 fun StrongroomDayEntity.toSigningRecord(): StrongroomDay.SigningRecord = StrongroomDay.SigningRecord(
     filingDateIso = filingDateIso,
     lockedPackages = StrongroomEncoding.decodePackages(lockedPackagesCsv),
+    allowedPackages = StrongroomEncoding.decodeOrderedPackages(allowedPackagesCsv),
     liftingTime = java.time.LocalTime.of(liftingHour, liftingMinute),
     sentence = sentence,
     breakLengthMinutes = breakLengthMinutes,

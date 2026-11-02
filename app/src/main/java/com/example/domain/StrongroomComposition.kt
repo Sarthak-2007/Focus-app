@@ -36,6 +36,7 @@ object StrongroomComposition {
      */
     data class DayTemplate(
         val lockedPackages: Set<String>,
+        val allowedPackages: List<String> = emptyList(),
         val liftingTime: LocalTime,
         val breakLengthMinutes: Int,
         val breakFiresAtOffsetMillis: Long,
@@ -92,6 +93,7 @@ object StrongroomComposition {
             record = StrongroomDay.SigningRecord(
                 filingDateIso = filingDateIso,
                 lockedPackages = template.lockedPackages,
+                allowedPackages = template.allowedPackages,
                 liftingTime = template.liftingTime,
                 sentence = null, // the composition carries the kept place; a sentence is the signing's word
                 breakLengthMinutes = template.breakLengthMinutes,
@@ -113,6 +115,7 @@ object StrongroomComposition {
      */
     data class SigningAmendment(
         val lockedPackages: Set<String>? = null,
+        val allowedPackages: List<String>? = null,
         val liftingTime: LocalTime? = null,
         val sentence: String? = null,
         val breakLengthMinutes: Int? = null,
@@ -127,6 +130,7 @@ object StrongroomComposition {
         return day.copy(
             record = r.copy(
                 lockedPackages = amendment.lockedPackages ?: r.lockedPackages,
+                allowedPackages = amendment.allowedPackages ?: r.allowedPackages,
                 liftingTime = amendment.liftingTime ?: r.liftingTime,
                 sentence = amendment.sentence ?: r.sentence,
                 breakLengthMinutes = amendment.breakLengthMinutes ?: r.breakLengthMinutes,
