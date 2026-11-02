@@ -799,12 +799,23 @@ class ScreenshotHarnessTest {
 
     @Test
     fun setup_guard_deviceSpec() {
+        // The panel's fullest lawful face: a raise standing
+        // pending (its gold line + the note it prints) over the
+        // default allowance — the bare-default standing rendered
+        // too flat for the sparse gate (<=25 sampled colours on
+        // run 41544911878), the drawer's lawful-flat class; the
+        // furniture is the cure, not a gate edit.
         val bitmap = drawShotDevice {
             StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
                 Setup(
                     state = SetupState(
                         section = SetupSection.GUARD,
-                        guard = StrongroomGuard.GuardState(allowanceMinutes = 30)
+                        guard = StrongroomGuard.GuardState(
+                            allowanceMinutes = 30,
+                            pendingAllowanceMinutes = 45
+                        ),
+                        guardNote = "Raise to 45 min is set — it starts " +
+                            "at the next day-start (03:30), never today."
                     ),
                     actions = SetupActions()
                 )
