@@ -163,7 +163,12 @@ data class SigningActions(
     val onAllowanceMove: (targetMinutes: Int) -> Unit,
     /** The signature is whole. Carries nothing — by construction
      *  there is no combination value to carry. */
-    val onSignature: () -> Unit
+    val onSignature: () -> Unit,
+    /** A felt event the wheel's mechanism earned (FEEL-SEAT):
+     *  the surface authors no waveform — it names the event and
+     *  the host fires it through the one SensoryBus, so the
+     *  felt, heard and seen halves stay one registry row. */
+    val onFeelEvent: (com.example.service.haptics.HapticEvent) -> Unit = {}
 )
 
 @Composable

@@ -184,6 +184,7 @@ fun SigningPrintBench(
             // THE GREAT WHEEL — crafted, over the print's hub.
             PrintBenchWheel(
                 spin = spin,
+                actions = actions,
                 pose = pose,
                 lightState = lightState,
                 onSeatTaken = { seats = spin.seatsTaken },
@@ -232,6 +233,7 @@ fun SigningPrintBench(
 @Composable
 private fun PrintBenchWheel(
     spin: CombinationSpin,
+    actions: SigningActions,
     pose: PrintBenchPose,
     lightState: StrongroomLightState,
     onSeatTaken: () -> Unit,
@@ -239,6 +241,12 @@ private fun PrintBenchWheel(
 ) {
     val scope = rememberCoroutineScope()
     val wheel = remember { Animatable(pose.wheelDeg) }
+    // THE FEEL (FEEL-SR-3's SigningFeel, ported from the drawn
+    // wheel at the swap's merge — main had wired the feel into
+    // the mechanism this bench replaces, and the swap carries
+    // it whole: station ticks on travel, the seat's thud, the
+    // flat wall of an attempt against the seated dial).
+    val feel = remember { SigningFeel() }
     var handVelocity by remember { mutableStateOf(0.0) }
     Box(
         modifier = modifier.pointerInput(Unit) {
@@ -249,8 +257,15 @@ private fun PrintBenchWheel(
                 onDragEnd = {
                     val v = handVelocity
                     val clockwise = v > 0.0
-                    if (spin.attemptSeat(wheel.value.toDouble(), v, clockwise)) {
+                    if (spin.isComplete) {
+                        // A seat attempt against the seated dial:
+                        // its flat wall (SigningFeel).
+                        feel.onAttemptAgainstSeatedDial()
+                            .forEach(actions.onFeelEvent)
+                    } else if (spin.attemptSeat(wheel.value.toDouble(), v, clockwise)) {
                         onSeatTaken()
+                        feel.onSeatTaken(finalSeat = spin.isComplete)
+                            .forEach(actions.onFeelEvent)
                         // THE DETENT SETTLE: spring to the station.
                         val station = spin.stationAt(wheel.value.toDouble()) *
                             StrongroomMaximum.SPIN_STATION_SPACING_DEG
@@ -301,6 +316,11 @@ private fun PrintBenchWheel(
                         if (velocity < -ceiling) velocity = -ceiling
                         handVelocity = velocity
                         val next = wheel.value + (velocity * dt).toFloat()
+                        // The travel's feel: a station tick for
+                        // every station the hand crosses
+                        // (SigningFeel's travel train).
+                        feel.onTravel(next.toDouble())
+                            .forEach(actions.onFeelEvent)
                         scope.launch { wheel.snapTo(next) }
                     }
                     lastAngle = angle

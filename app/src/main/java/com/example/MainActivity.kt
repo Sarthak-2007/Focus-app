@@ -644,6 +644,19 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                         )
                     )
                 } else {
+                androidx.compose.foundation.layout.Box(
+                    modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                ) {
+                // THE FACE (LEAD-DOORFIX, 2026-11-03): the
+                // seven-ink print stands behind the whole doorway
+                // place — the door IS this surface, edge to edge;
+                // the Doorway's furniture, the swing act, the
+                // signing table and the drawer's front all stand
+                // on it. (Before this, the place stood on the bare
+                // field and the Doorway's drawn leaf — 26% of the
+                // room's width — read on Sarthak's phone as a tiny
+                // door floating in a void.)
+                com.example.ui.doorway.DoorFace()
                 androidx.compose.foundation.layout.Column(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
@@ -687,6 +700,7 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                     // The drawer's shut front — the room's
                     // furniture at the foot of the signing place.
                     DrawerFront(onOpen = { drawerOpen = true })
+                }
                 }
                 }
             }
@@ -1254,6 +1268,11 @@ private fun SigningHost(viewModel: MonolithViewModel) {
                                 .sign(standing.record, amended = true)
                         }
                     }
+                },
+                onFeelEvent = { event ->
+                    // The wheel's earned felt events, fired
+                    // through the bridge's one bus (FEEL-SEAT).
+                    StrongroomEngineBridge.fireSurfaceEvent(appContext, event)
                 }
             ),
             modifier = androidx.compose.ui.Modifier.weight(1f)
