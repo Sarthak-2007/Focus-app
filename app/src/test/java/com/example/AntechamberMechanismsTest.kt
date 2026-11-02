@@ -3,8 +3,12 @@ package com.example
 import com.example.data.StrongroomHeldArrivalEntity
 import com.example.domain.StrongroomDay
 import com.example.ui.antechamber.AntechamberModel
+import com.example.ui.antechamber.AntechamberTexture
 import com.example.ui.antechamber.HeldSlip
 import com.example.ui.antechamber.RevolvingDrum
+import com.example.ui.foundation.StrongroomInkLaw
+import com.example.ui.foundation.StrongroomInks
+import com.example.ui.foundation.StrongroomLightState
 import java.time.Instant
 import java.time.LocalTime
 import java.time.ZoneId
@@ -295,6 +299,39 @@ class AntechamberMechanismsTest {
         )
         assertTrue(room.crankAvailable)
         assertFalse(room.snappedSealKept)
+    }
+
+    // ── Texture — grain from the surface itself (intake §1) ────
+
+    @Test
+    fun texture_grainIsDeterministicPerPosition_andInRange() {
+        // The same point of brass carries the same grain on every
+        // frame: a pile that re-grains between looks is a screen.
+        val a = AntechamberTexture.grainAt(3, 5, seed = 31)
+        val b = AntechamberTexture.grainAt(3, 5, seed = 31)
+        assertEquals(a, b)
+        assertTrue(a >= 0f && a <= 1f)
+        assertEquals(
+            AntechamberTexture.gradientAt(3, 5, seed = 31),
+            AntechamberTexture.gradientAt(3, 5, seed = 31)
+        )
+    }
+
+    @Test
+    fun texture_cellTonesStayInsideTheSevenInksLaw() {
+        // Every grained tone of the room's three species is a
+        // RELIGHT partner of its own ink — never green, never an
+        // eighth ink introduced by the grain.
+        for (species in AntechamberTexture.Species.entries) {
+            for (ink in listOf(StrongroomInks.Gold, StrongroomInks.Graphite)) {
+                val tone = AntechamberTexture.cellTone(
+                    ink, StrongroomInks.Violet, species,
+                    cellX = 2, cellY = 4, seed = 53,
+                    state = StrongroomLightState.SEALED
+                )
+                assertTrue(StrongroomInkLaw.isNeverGreen(tone))
+            }
+        }
     }
 
     @Test
