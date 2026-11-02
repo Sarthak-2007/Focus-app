@@ -12,6 +12,9 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -644,6 +647,82 @@ class ScreenshotHarnessTest {
                 actions = DrawerActions()
             )
         }
+    }
+
+    // ── DEVICE-TRUTH: THE EMPTY DRAWER AT HIS PHONE'S SPEC ────
+    // The state Sarthak's phone actually carries (build 4 photo,
+    // 2026-11-03 04:13 IST): a migrated install whose Strongroom
+    // drawer is EMPTY — no struck plates, no stored tasks — opened
+    // full-screen. The harness never shot it: every drawer fixture
+    // is seeded rich, every shot is composed in DAY light (where
+    // the wood grain's lit partner vanishes and the body renders
+    // flat by construction), and the frame is 412x915dp. On the
+    // phone the doorway place lives in SIGNING light at
+    // 1440x3168 / density 3.1875 (OnePlus 13, 510dpi class), and
+    // there the old WOOD grain (13dp cells, 6:1 stretch) stood as
+    // hard-edged violet bars wall-to-wall. This shot renders that
+    // exact state at that exact spec in the production light, so
+    // the bars can never hide behind the harness again. The gate
+    // is the sparse gate (non-blank, real variance); the render
+    // itself is the witness — it ships in the screens artifact.
+    @Test
+    fun drawer_openEmpty_deviceSpec() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SIGNING) {
+                Drawer(
+                    state = DrawerState(
+                        contents = DrawerContents.Empty,
+                        handingBack = LiftingPlate.HandingBack(emptyList()),
+                        handingBackDelivered = true
+                    ),
+                    actions = DrawerActions()
+                )
+            }
+        }
+        writeShotSparse("drawer-open-empty-device.png", bitmap)
+    }
+
+    /** The capture at a real device's spec: the bitmap IS the
+     *  device's pixel grid (1440x3168) and the composition runs
+     *  under the device's own density (510 / 160 = 3.1875), so
+     *  every dp lands where his phone puts it. Same hand-drawn
+     *  discipline as [drawShot] — measured, laid out, drawn. */
+    private fun drawShotDevice(
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ): Bitmap {
+        val activity = composeRule.activity
+        val view = androidx.compose.ui.platform.ComposeView(activity)
+        val w = 1440
+        val h = 3168
+        composeRule.runOnUiThread {
+            view.setContent {
+                CompositionLocalProvider(
+                    LocalDensity provides Density(3.1875f)
+                ) { content() }
+            }
+            activity.setContentView(view)
+        }
+        composeRule.waitForIdle()
+        composeRule.runOnUiThread {
+            view.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    w, android.view.View.MeasureSpec.EXACTLY
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    h, android.view.View.MeasureSpec.EXACTLY
+                )
+            )
+            view.layout(0, 0, w, h)
+        }
+        composeRule.waitForIdle()
+        val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+        composeRule.runOnUiThread {
+            view.layout(0, 0, w, h)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bmp))
+            holder.set(bmp)
+        }
+        return holder.get()
     }
 
     // ── THE SIGNING PRINT BENCH (DESIGN-MOTION) ────────────────

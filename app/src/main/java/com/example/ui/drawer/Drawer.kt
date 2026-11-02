@@ -606,9 +606,13 @@ private fun DrawerBody(lightState: StrongroomLightState) {
         // at both edges — machinery at the furniture's flank.
         // A runner is a rail: a grained steel member with a lit
         // inner edge where the drawer body bears on it, bolted
-        // to the carcass along its run.
+        // to the carcass along its run. The lit gradient is a
+        // breath (0.3), not a blaze: at 0.85 the SIGNING light
+        // drove the relief 7/8 toward violet and the runners
+        // stood on Sarthak's phone as neon edge strips
+        // (DEVICE-TRUTH, 2026-11-03).
         val runner = StrongroomLight.relief(
-            StrongroomInks.Graphite, StrongroomInks.Violet, 0.85f, lightState
+            StrongroomInks.Graphite, StrongroomInks.Violet, 0.3f, lightState
         )
         drawRect(
             color = runner, topLeft = Offset(0f, 0f),
