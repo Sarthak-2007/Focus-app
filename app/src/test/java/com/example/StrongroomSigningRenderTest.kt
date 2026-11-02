@@ -129,13 +129,19 @@ class StrongroomSigningRenderTest {
         }
         val r = (240f - 120f) / (countedA - countedB)
         val s = 240f - countedA * r
+        val telemetry = StringBuilder(
+            "calibration: break $b0 -> $b1 -> $b2 " +
+                "(counted $countedA / $countedB), R=$r px/dp, S=$s px; hour passes:"
+        )
         repeat(3) { pass ->
             val delta = wrappedDelta(minutesOf(hourText()), minutesOf(target))
             if (delta == 0) return
             val nudge = (if (delta > 0) 1f else -1f) * (2f + pass * 5f)
-            dragStrip("signing_hour_drag", delta / 2f * r + s + nudge)
+            val px = delta / 2f * r + s + nudge
+            dragStrip("signing_hour_drag", px)
+            telemetry.append(" [$pass] sent ${px}px -> ${hourText()};")
         }
-        assertEquals(target, hourText())
+        assertEquals("hour drag telemetry:$telemetry", target, hourText())
     }
 
     @Test
