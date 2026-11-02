@@ -344,13 +344,12 @@ private fun TokenTray(
  *  the direction's projection onto the state's light direction. */
 private fun lightGradient(angleRad: Double, state: StrongroomLightState): Float {
     val p = StrongroomLight.paramsFor(state)
-    val len = sqrt(
-        (p.lightDirectionX * p.lightDirectionX +
-            p.lightDirectionY * p.lightDirectionY).toDouble()
-    )
+    val dx = p.lightDirectionX.toDouble()
+    val dy = p.lightDirectionY.toDouble()
+    val len = sqrt(dx * dx + dy * dy)
     if (len == 0.0) return 0f
-    return (cos(angleRad) * p.lightDirectionX / len +
-        sin(angleRad) * p.lightDirectionY / len).toFloat()
+    return (cos(angleRad) * dx / len +
+        sin(angleRad) * dy / len).toFloat()
 }
 
 /** A machined ring, relieved segment by segment: each segment's
@@ -369,7 +368,7 @@ private fun DrawScope.reliefRing(
     val sweep = 360f / segments
     for (i in 0 until segments) {
         val start = i * sweep
-        val mid = Math.toRadians((start + sweep / 2.0).toDouble())
+        val mid = Math.toRadians((start + sweep / 2f).toDouble())
         drawArc(
             color = StrongroomLight.relief(base, field, lightGradient(mid, state), state),
             startAngle = start,
@@ -399,13 +398,12 @@ private fun DrawScope.boltHead(
         radius = radius, center = center
     )
     val p = StrongroomLight.paramsFor(state)
-    val len = sqrt(
-        (p.lightDirectionX * p.lightDirectionX +
-            p.lightDirectionY * p.lightDirectionY).toDouble()
-    )
+    val ldx = p.lightDirectionX.toDouble()
+    val ldy = p.lightDirectionY.toDouble()
+    val len = sqrt(ldx * ldx + ldy * ldy)
     if (len > 0.0) {
-        val lx = (p.lightDirectionX / len).toFloat()
-        val ly = (p.lightDirectionY / len).toFloat()
+        val lx = (ldx / len).toFloat()
+        val ly = (ldy / len).toFloat()
         drawCircle(
             color = StrongroomLight.relief(StrongroomInks.Graphite, field, 1f, state),
             radius = radius * 0.42f,
@@ -529,15 +527,14 @@ internal fun SigningDialSurface(
                 // The shadow's fall, from the state's own lamp:
                 // every cut on this face throws its shadow this way.
                 val lp = StrongroomLight.paramsFor(lightState)
-                val llen = sqrt(
-                    (lp.lightDirectionX * lp.lightDirectionX +
-                        lp.lightDirectionY * lp.lightDirectionY).toDouble()
-                )
+                val ldx = lp.lightDirectionX.toDouble()
+                val ldy = lp.lightDirectionY.toDouble()
+                val llen = sqrt(ldx * ldx + ldy * ldy)
                 val shx = if (llen > 0.0) {
-                    (-lp.lightDirectionX / llen * 1.2.dp.toPx()).toFloat()
+                    (-ldx / llen * 1.2.dp.toPx()).toFloat()
                 } else 0f
                 val shy = if (llen > 0.0) {
-                    (-lp.lightDirectionY / llen * 1.2.dp.toPx()).toFloat()
+                    (-ldy / llen * 1.2.dp.toPx()).toFloat()
                 } else 0f
                 // THE ENAMEL FACE, grained: the dial's deep-violet
                 // enamel carries fine grain from its own ink — the
