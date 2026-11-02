@@ -1,8 +1,6 @@
 package com.example.ui.strongroom
 
 import android.graphics.Paint
-import android.graphics.Typeface
-import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
+import androidx.core.content.res.ResourcesCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -245,13 +244,17 @@ private fun RingCanvas(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    // The figures' hand is the bundled Anonymous Pro Bold, from
+    // the app's own font file — and there is no silent substitute
+    // (CRITIC-SR-3, charge 3a, cured in the rethink): if the kept
+    // face cannot load, this composition fails loudly rather than
+    // shipping the face's first fact in a generic monospace.
     val typeface = remember {
-        val fromFile = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            runCatching { context.resources.getFont(R.font.anonymous_pro_bold) }.getOrNull()
-        } else {
-            null
-        }
-        fromFile ?: Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+        ResourcesCompat.getFont(context, R.font.anonymous_pro_bold)
+            ?: error(
+                "The bundled Anonymous Pro Bold failed to load — " +
+                    "the ring does not render in a substitute hand"
+            )
     }
     val gold = StrongroomGold
     val bandTone = StrongroomGround.reliefShade(lightState)
