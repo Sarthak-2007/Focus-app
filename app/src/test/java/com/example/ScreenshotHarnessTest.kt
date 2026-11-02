@@ -880,6 +880,34 @@ class ScreenshotHarnessTest {
             spentDay = false,
             firstSigning = true
         )
+        val antechamber = com.example.ui.strongroom.StrongroomFlowModel.antechamberState(
+            signing = signingRecord,
+            purseRemainingMinutes = 29,
+            nameOf = { pkg ->
+                mapOf(
+                    "com.phone.app" to "Phone",
+                    "com.chat.app" to "Chat",
+                    "com.video.app" to "Video"
+                )[pkg] ?: pkg
+            },
+            cataloguePackages = listOf("com.phone.app", "com.chat.app", "com.video.app"),
+            heldArrivals = listOf(
+                com.example.data.StrongroomHeldArrivalEntity(
+                    id = 1,
+                    filingDateIso = "2026-11-02",
+                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CALL,
+                    line = "+919876543210",
+                    arrivedAtWallMillis = System.currentTimeMillis() - 3_600_000L
+                ),
+                com.example.data.StrongroomHeldArrivalEntity(
+                    id = 2,
+                    filingDateIso = "2026-11-02",
+                    kind = com.example.data.StrongroomHeldArrivalEntity.KIND_CODE,
+                    line = "482916",
+                    arrivedAtWallMillis = System.currentTimeMillis() - 1_800_000L
+                )
+            )
+        )
         var face by androidx.compose.runtime.mutableStateOf(0)
         composeRule.setContent {
             MyApplicationTheme(darkTheme = false) {
