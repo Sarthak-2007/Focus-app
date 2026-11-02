@@ -77,9 +77,19 @@ class StrongroomSigningRenderTest {
         composeRule.onNodeWithTag(tag).performTouchInput {
             val startX = if (travelPx >= 0) center.x - 120f else center.x + 120f
             down(Offset(startX, center.y))
-            repeat(10) {
-                moveBy(Offset(travelPx / 10f, 0f))
+            // Event time advances between every step, and once
+            // more before the up: with every move stamped at the
+            // same instant, this harness batches them, and the
+            // batch that carries the up eats its movement
+            // (measured on PR #865's targeted runs: identical
+            // gestures lost 0 / 12 / 13.6 px). Stamped apart —
+            // the venue's own idiom, cf. DeskClockLivedTest's
+            // hand-injected hold — each step is its own change.
+            repeat(20) {
+                moveBy(Offset(travelPx / 20f, 0f))
+                advanceEventTime(16L)
             }
+            advanceEventTime(60L)
             up()
         }
         composeRule.waitForIdle()
