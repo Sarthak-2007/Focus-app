@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomComposition
+import com.example.domain.StrongroomDay
 import com.example.ui.foundation.DrivenDoor
 import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
@@ -127,11 +128,85 @@ data class DoorwayState(
 ) {
     companion object {
         /** The doorway with nothing standing in it: the door open,
-         *  the place empty. The shell's standing form until the
-         *  host wires the day's facts (composition glue, named on
-         *  this slice's PR). */
+         *  the place empty. Since the composition onto BUILD-SR-34's
+         *  shell, this is a DERIVED result, never a hardcoded host
+         *  state: it stands exactly when no composed day stands,
+         *  nothing waits, and no plate rests at the doorway. */
         val AtRest = DoorwayState()
+
+        /**
+         * THE COMPOSITION (BUILD-SR-35, second act): the doorway's
+         * state from the standing engine facts — the composed day
+         * (mapped through [DoorwayComposition.fromComposedDay]),
+         * the held-waiting fact, and yesterday's struck plate.
+         * The plain line's fraction has no standing engine fact
+         * behind it yet (its record is the desk clock's, in-session),
+         * so it stands unformed rather than invented; the pencil-grey
+         * loosening likewise has no standing source and stays absent.
+         */
+        fun fromFacts(
+            composedDay: StrongroomComposition.ComposedDay?,
+            waitingSlipPresent: Boolean,
+            plate: LiftingPlate.PlateTruth?
+        ): DoorwayState = DoorwayState(
+            composition = composedDay?.let { DoorwayComposition.fromComposedDay(it) },
+            plainLineFormedFraction = 0f,
+            waitingSlipPresent = waitingSlipPresent,
+            plate = plate
+        )
     }
+}
+
+/**
+ * Yesterday's struck plate, re-expressed as the doorway strip's
+ * truth ([LiftingPlate.PlateTruth]) from the store's plate shape
+ * ([StrongroomDay.DayPlate]) — the two types mirror each other
+ * field for field (P6's header), and this is the one mapping
+ * between them at the doorway.
+ *
+ * Two named resolutions:
+ *  - SHOWING punches (a code-showing handed a price, R7-2) strike
+ *    at the HELD grade in P1's kind set and have no kind of their
+ *    own in P6's: they map to HELD, their grade — the hole the
+ *    strip draws is unchanged.
+ *  - The bracket gap is NOT carried: the day row persists the
+ *    gap's length but neither bracket hour, and [LiftingPlate
+ *    .PlateTruth] forbids a gap without both hours — inventing
+ *    them would fake a strike. The strip renders holes + the seal
+ *    line only; the bracket pair in its struck form rides the
+ *    plate strike's own slice, as this slice's first leg recorded.
+ *    The held-hours figure rides with it, likewise unrendered here.
+ */
+fun plateTruthForDoorway(plate: StrongroomDay.DayPlate): LiftingPlate.PlateTruth {
+    // A plate exists only once struck: a still-sealed day has no
+    // plate truth to carry (B-14), and no seal state is invented here.
+    require(plate.sealState != StrongroomDay.SealState.SEALED) {
+        "a sealed day's plate is not struck yet"
+    }
+    return LiftingPlate.PlateTruth(
+        filingDateIso = plate.filingDateIso,
+        hoursHeldMillis = plate.hoursHeldMillis,
+        punches = plate.punches.map { punch ->
+            LiftingPlate.Punch(
+                kind = when (punch.kind) {
+                    StrongroomDay.PunchKind.REACH -> LiftingPlate.PunchKind.REACH
+                    StrongroomDay.PunchKind.HELD,
+                    StrongroomDay.PunchKind.SHOWING -> LiftingPlate.PunchKind.HELD
+                    StrongroomDay.PunchKind.FLOOR -> LiftingPlate.PunchKind.FLOOR
+                },
+                atOffsetMillis = punch.atOffsetMillis,
+                packageName = punch.packageName
+            )
+        },
+        sealTruth = when (plate.sealState) {
+            StrongroomDay.SealState.LIFTED -> LiftingPlate.SealTruth.WHOLE
+            StrongroomDay.SealState.BROKEN -> LiftingPlate.SealTruth.BROKEN
+            StrongroomDay.SealState.AJAR -> LiftingPlate.SealTruth.AJAR
+            StrongroomDay.SealState.SEALED -> error("unreachable: guarded above")
+        },
+        crankSealBroken = plate.crankSealBroken,
+        bracketGapMillis = 0L
+    )
 }
 
 /** The Composition as the Doorway's sheet carries it (C-13). */

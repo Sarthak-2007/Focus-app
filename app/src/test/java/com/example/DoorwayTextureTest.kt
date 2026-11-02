@@ -1,8 +1,13 @@
 package com.example
 
 import androidx.compose.ui.graphics.Color
+import com.example.domain.LiftingPlate
+import com.example.domain.StrongroomComposition
+import com.example.domain.StrongroomDay
+import com.example.ui.doorway.DoorwayState
 import com.example.ui.doorway.DoorwaySwing
 import com.example.ui.doorway.DoorwayTexture
+import com.example.ui.doorway.plateTruthForDoorway
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
 import com.example.ui.foundation.StrongroomLightState
@@ -95,6 +100,101 @@ class DoorwayTextureTest {
         assertTrue("entry starts at the end-stop band, was $start", start >= 73.0)
         val rest = DoorwaySwing.angleAt(DoorwaySwing.DurationMs)
         assertEquals(82.09, rest, 0.35)
+    }
+
+    // --------------------------------------------------------------
+    // The composition (second act): state from the engine facts
+    // --------------------------------------------------------------
+
+    private fun composedDay(): StrongroomComposition.ComposedDay =
+        StrongroomComposition.ComposedDay(
+            filingDateIso = "2026-11-03",
+            shape = StrongroomComposition.DayShape.TEST,
+            record = StrongroomDay.SigningRecord(
+                filingDateIso = "2026-11-03",
+                lockedPackages = setOf("com.locked.one", "com.locked.two"),
+                liftingTime = java.time.LocalTime.of(21, 30),
+                sentence = null,
+                breakLengthMinutes = 10,
+                breakFiresAtOffsetMillis = -1L,
+                allowanceMinutes = 30,
+                gaps = emptyList(),
+                taskLine = "finish the chapter"
+            ),
+            amendedBySigning = false
+        )
+
+    @Test
+    fun composedState_atRestStandsOnlyWhenNothingStands() {
+        val empty = DoorwayState.fromFacts(
+            composedDay = null, waitingSlipPresent = false, plate = null
+        )
+        assertEquals(DoorwayState.AtRest, empty)
+    }
+
+    @Test
+    fun composedState_mapsTheComposedDayThroughTheDoorwaysOwnMapper() {
+        val state = DoorwayState.fromFacts(
+            composedDay = composedDay(), waitingSlipPresent = true, plate = null
+        )
+        val sheet = state.composition
+        assertTrue("the sheet must stand when a composed day stands", sheet != null)
+        assertEquals("test day", sheet!!.dayShapeWord)
+        assertEquals("finish the chapter", sheet.taskLine)
+        assertEquals("21:30", sheet.liftingHourText)
+        assertEquals(2, sheet.lockedThings)
+        assertTrue(state.waitingSlipPresent)
+        // No standing engine fact behind the plain line or a
+        // pencil-grey loosening: both stand unformed/absent.
+        assertEquals(0f, state.plainLineFormedFraction)
+        assertEquals(null, sheet.pencilGreyProposal)
+    }
+
+    @Test
+    fun plateTruth_liftedDayReadsWhole_holesKeepTheirGrades() {
+        val truth = plateTruthForDoorway(
+            StrongroomDay.DayPlate(
+                filingDateIso = "2026-11-02",
+                hoursHeldMillis = 3_600_000L,
+                punches = listOf(
+                    StrongroomDay.Punch(StrongroomDay.PunchKind.REACH, 100L),
+                    StrongroomDay.Punch(StrongroomDay.PunchKind.SHOWING, 200L),
+                    StrongroomDay.Punch(StrongroomDay.PunchKind.FLOOR, 300L)
+                ),
+                sealState = StrongroomDay.SealState.LIFTED,
+                crankSealBroken = false
+            )
+        )
+        assertEquals(LiftingPlate.SealTruth.WHOLE, truth.sealTruth)
+        assertEquals(3_600_000L, truth.hoursHeldMillis)
+        // SHOWING strikes at the HELD grade and maps to it.
+        assertEquals(
+            listOf(
+                LiftingPlate.PunchKind.REACH,
+                LiftingPlate.PunchKind.HELD,
+                LiftingPlate.PunchKind.FLOOR
+            ),
+            truth.punchesInOrder.map { it.kind }
+        )
+    }
+
+    @Test
+    fun plateTruth_bracketGapIsNotCarried_withoutItsHours() {
+        val truth = plateTruthForDoorway(
+            StrongroomDay.DayPlate(
+                filingDateIso = "2026-11-02",
+                hoursHeldMillis = 1_000L,
+                punches = emptyList(),
+                sealState = StrongroomDay.SealState.BROKEN,
+                crankSealBroken = true,
+                bracketGapMillis = 900_000L
+            )
+        )
+        assertEquals(LiftingPlate.SealTruth.BROKEN, truth.sealTruth)
+        assertTrue(truth.crankSealBroken)
+        assertEquals(0L, truth.bracketGapMillis)
+        assertEquals(null, truth.bracketStandingHour)
+        assertEquals(null, truth.bracketFallenHour)
     }
 
     @Test
