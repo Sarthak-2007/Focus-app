@@ -242,6 +242,20 @@ class StrongroomBeatBoundaryDeathTestSr3Test {
     }
 
     @Test
+    fun boundary_neverSwung_strikesNoPlate_nothingWasHeldNothingIsOwed() = runBlocking {
+        // R4-3 (rulings round 4): a day whose seal never stood
+        // strikes NO plate, whatever its shape.
+        val store = newStore()
+        store.composeDay(standingOrder(), dateIso)
+        val plate = store.strikePlate(dateIso, 500_000L, 3, sealFailed = false, zone = utc)
+        assertNull("a never-swung day strikes no plate", plate)
+        assertEquals("COMPOSED", store.day(dateIso)!!.state)
+        // Boot death on a never-swung day changes nothing either:
+        // there is no seal to die.
+        assertNull(store.sealedDay())
+    }
+
+    @Test
     fun boundary_amendmentAfterSealing_isRefused_theSealedDayIsAmendedByNoOne() = runBlocking {
         val store = newStore()
         composeAndSeal(store)

@@ -182,4 +182,28 @@ class StrongroomRebootTestSr3Test {
         assertEquals(plate.bracketGapMillis, restruck.bracketGapMillis)
         assertEquals(StrongroomDay.SealState.AJAR, restruck.sealState)
     }
+
+    @Test
+    fun sealDeath_releasesThePhone_theFailureFaceIsTestimonyNeverAGate() = runBlocking {
+        // R2-3 (rulings round 2 — "TEST-SR-3 asserts it"): at seal
+        // death the block's hold ENDS at that moment; the phone is
+        // his in full by any ordinary route; the failure face is
+        // testimony shown at next open, never a gate.
+        val (store, _) = sealedStore()
+        val plate = store.strikePlate("2026-11-03", 150_000L, 3, sealFailed = true, zone = utc)
+        assertNotNull(plate)
+        assertEquals(StrongroomDay.SealState.BROKEN, plate!!.sealState)
+        // The hold has ended: no sealed day stands for any surface
+        // or service to enforce against.
+        assertNull(newStore().sealedDay())
+        assertEquals("BROKEN", newStore().day("2026-11-03")!!.state)
+        // The testimony carries facts only — held, bracket gap,
+        // the seal's state — and (R4-8) NO cause: the plate type
+        // has no cause field, by construction.
+        assertTrue(plate.bracketGapMillis > 0L)
+        val causeFields = StrongroomDay.DayPlate::class.java.declaredFields
+            .map { it.name.lowercase() }
+            .filter { it.contains("cause") || it.contains("reason") || it.contains("why") }
+        assertTrue("the plate must never state why a seal fell (R4-8)", causeFields.isEmpty())
+    }
 }
