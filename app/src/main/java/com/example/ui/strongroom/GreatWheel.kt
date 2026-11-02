@@ -6,6 +6,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import com.example.ui.theme.Relight
 import com.example.ui.theme.RelightState
 import com.example.ui.theme.RelightSurface
