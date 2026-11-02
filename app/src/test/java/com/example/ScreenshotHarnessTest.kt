@@ -31,6 +31,14 @@ import com.example.ui.`break`.BreakActions
 import com.example.ui.`break`.BreakClock
 import com.example.ui.`break`.BreakState
 import androidx.compose.ui.graphics.toArgb
+import com.example.ui.lifting.Lifting
+import com.example.ui.lifting.LiftingCeremony
+import com.example.ui.lifting.LiftingState
+import com.example.ui.lifting.PlatePileView
+import com.example.ui.lifting.StruckPlateView
+import com.example.ui.sealed.SealedFace
+import com.example.ui.sealed.SealedFaceActions
+import com.example.ui.sealed.SealedFaceState
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
@@ -541,5 +549,254 @@ class ScreenshotHarnessTest {
                 actions = DrawerActions()
             )
         }
+    }
+
+    // ── THE LIFTING + THE PLATE STRIKE (BUILD-SR-40) and THE
+    // SEALED FACE'S LAWFUL VARIANTS (BUILD-SR-37), joined by
+    // TEST-SEAT — the blind spots LEAD-LIFT named: until here
+    // the harness carried no Lifting face at all and no sealed
+    // face. The three seal-truth states stand each on the
+    // surface the law gives them, honestly labelled:
+    //   · SEAL WHOLE — the sealed face standing as struck (the
+    //     face is printed ONCE at the closing and never alters
+    //     while the seal stands, so no variant of truth can
+    //     stand ON it), and the ceremony's end: the door open,
+    //     today's plate struck WHOLE on the pile.
+    //   · SEAL BROKEN — never a defaced face (damage imagery is
+    //     dead law): a broken day stands as the host derives it
+    //     — the failure face (LiftingState.isFailure follows the
+    //     plate's own truth, as loadLiftingState derives it),
+    //     its plate's seal line reading "seal broken".
+    //   · DOOR AJAR — the fallen day's failure face: the door
+    //     ajar in a dark room, the plate struck WITH THE GAP
+    //     (the bracket pair in its settled form).
+    // Ceremony shots freeze the compose test clock
+    // (mainClock.autoAdvance = false): the pose drawn is the
+    // pose at the state's own ceremony offset, never a drifted
+    // frame. Fixture plates are fabricated standings, named as
+    // such, built through the very mappings the host uses
+    // (StruckPlateView.fromStruckPlate · PlatePileView.fromPlates).
+
+    private fun liftingPlate(
+        iso: String,
+        heldMillis: Long,
+        seal: StrongroomDay.SealState,
+        kinds: List<StrongroomDay.PunchKind>,
+        crank: Boolean = false,
+        gapMillis: Long = 0L,
+        task: String? = null
+    ) = StrongroomDay.DayPlate(
+        filingDateIso = iso,
+        hoursHeldMillis = heldMillis,
+        punches = kinds.mapIndexed { i, kind ->
+            StrongroomDay.Punch(kind, (i + 1) * (heldMillis / (kinds.size + 1)))
+        },
+        sealState = seal,
+        crankSealBroken = crank,
+        bracketGapMillis = gapMillis,
+        taskLine = task
+    )
+
+    private fun plateView(plate: StrongroomDay.DayPlate) =
+        StruckPlateView.fromStruckPlate(plate, sealedAtWallMillis = 1_788_000_000_000L)
+
+    private fun wholePlateView() = plateView(
+        liftingPlate(
+            "2026-11-02", 26_400_000L, StrongroomDay.SealState.LIFTED,
+            listOf(
+                StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                StrongroomDay.PunchKind.SHOWING, StrongroomDay.PunchKind.FLOOR,
+                StrongroomDay.PunchKind.REACH
+            ),
+            task = "finish the optics one-shot"
+        )
+    )
+
+    private fun restingViews(): List<StruckPlateView> = listOf(
+        plateView(
+            liftingPlate(
+                "2026-11-01", 21_600_000L, StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                    StrongroomDay.PunchKind.FLOOR
+                ),
+                crank = true
+            )
+        ),
+        plateView(
+            liftingPlate(
+                "2026-10-31", 19_800_000L, StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.HELD, StrongroomDay.PunchKind.REACH,
+                    StrongroomDay.PunchKind.FLOOR, StrongroomDay.PunchKind.FLOOR
+                )
+            )
+        ),
+        plateView(
+            liftingPlate(
+                "2026-10-30", 2_520_000L, StrongroomDay.SealState.BROKEN,
+                listOf(
+                    StrongroomDay.PunchKind.FLOOR, StrongroomDay.PunchKind.HELD
+                )
+            )
+        )
+    )
+
+    private fun shootLifting(name: String, state: LiftingState) {
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val bitmap = drawShot {
+                StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                    Box(Modifier.size(412.dp, 915.dp)) {
+                        Lifting(state = state)
+                    }
+                }
+            }
+            writeShot(name, bitmap)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    private fun ceremonyState(offsetMs: Int): LiftingState {
+        val whole = wholePlateView()
+        return LiftingState(
+            plate = whole,
+            pile = PlatePileView.fromPlates(listOf(whole) + restingViews()),
+            isFailure = false,
+            ceremonyStartOffsetMs = offsetMs
+        )
+    }
+
+    @Test
+    fun lifting_doorMidOpen_byWeight() {
+        // Half the swing-open's travel on the ceremony's own
+        // clock: bolts withdrawn, the door mid-travel BY WEIGHT,
+        // the plate not yet struck.
+        val midOpen = LiftingCeremony.SwingOpenMs +
+            (LiftingCeremony.StrikeMs - LiftingCeremony.SwingOpenMs) / 2
+        shootLifting("lifting-door-mid-open.png", ceremonyState(midOpen))
+    }
+
+    @Test
+    fun lifting_plateStrike_theLanding() {
+        // 250 ms past the strike: the door's travel has met its
+        // stop, the day is struck, the brass is mid-landing into
+        // the tray (PlateLanding's own fraction at this offset).
+        shootLifting(
+            "lifting-plate-strike.png",
+            ceremonyState(LiftingCeremony.StrikeMs + 250)
+        )
+    }
+
+    @Test
+    fun lifting_platePile_theDayStruckWhole() {
+        // The score's end: the door rests open, today's plate
+        // stands landed on the pile — seal line "seal whole".
+        shootLifting(
+            "lifting-plate-pile.png",
+            ceremonyState(LiftingCeremony.ScoreEndMs)
+        )
+    }
+
+    @Test
+    fun lifting_failureFace_sealBroken() {
+        val broken = plateView(
+            liftingPlate(
+                "2026-11-02", 11_700_000L, StrongroomDay.SealState.BROKEN,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.FLOOR,
+                    StrongroomDay.PunchKind.FLOOR
+                )
+            )
+        )
+        shootLifting(
+            "lifting-failure-seal-broken.png",
+            LiftingState(
+                plate = broken,
+                pile = PlatePileView.fromPlates(listOf(broken) + restingViews().take(2)),
+                isFailure = broken.isFailure,
+                ceremonyStartOffsetMs = LiftingCeremony.ScoreEndMs
+            )
+        )
+    }
+
+    @Test
+    fun lifting_failureFace_ajarFallenDay() {
+        val ajar = plateView(
+            liftingPlate(
+                "2026-11-02", 18_120_000L, StrongroomDay.SealState.AJAR,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                    StrongroomDay.PunchKind.FLOOR
+                ),
+                gapMillis = 5_400_000L
+            )
+        )
+        shootLifting(
+            "lifting-failure-ajar.png",
+            LiftingState(
+                plate = ajar,
+                pile = PlatePileView.fromPlates(listOf(ajar) + restingViews().take(1)),
+                isFailure = ajar.isFailure,
+                ceremonyStartOffsetMs = LiftingCeremony.ScoreEndMs
+            )
+        )
+    }
+
+    // ── THE SEALED FACE (BUILD-SR-37) — the face standing ──────
+    // The face stands ONLY from a standing seal
+    // (SealedFaceState.standing on a sealed day's record), in
+    // its own sealed light, which the composable itself
+    // provides. Two lawful standings: the printings cut whole
+    // (his sentence engraved, his door-word set), and the kept
+    // places standing (sentence and door-word both unset — the
+    // blanks are the form, never placeholders).
+
+    private fun sealedSigning(sentence: String?): StrongroomDay.SigningRecord =
+        StrongroomDay.SigningRecord(
+            filingDateIso = "2026-08-31",
+            lockedPackages = emptySet(),
+            allowedPackages = labels.keys.toList(),
+            liftingTime = LocalTime.of(20, 0),
+            sentence = sentence,
+            breakLengthMinutes = 30,
+            breakFiresAtOffsetMillis = -1L,
+            allowanceMinutes = 30,
+            gaps = emptyList()
+        )
+
+    private fun shootSealedFace(name: String, state: SealedFaceState) {
+        composeRule.mainClock.autoAdvance = false
+        try {
+            val bitmap = drawShot {
+                StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                    Box(Modifier.size(412.dp, 915.dp)) {
+                        SealedFace(
+                            state = state,
+                            actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {})
+                        )
+                    }
+                }
+            }
+            writeShot(name, bitmap)
+        } finally {
+            composeRule.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun sealedFace_standing_sealWhole() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        shootSealedFace("sealed-face-standing.png", state)
+    }
+
+    @Test
+    fun sealedFace_keptPlaces() {
+        val state = SealedFaceState.standing(sealedSigning(null), doorWord = null)!!
+        shootSealedFace("sealed-face-kept-places.png", state)
     }
 }
