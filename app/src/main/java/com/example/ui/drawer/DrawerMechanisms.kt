@@ -58,17 +58,10 @@ import com.example.ui.foundation.SettleSpec
  *    own shape at the lifting. It prints nothing new, announces
  *    nothing, counts nobody (C-11: no announcement, summary, or
  *    count of who waited is lawful).
- *  - R-6 · FLAG_SECURE RE-EARNED HERE, BY NAME: the old VAULT's
- *    archive law (issue #264 B-264-31: `archiveSurfaceSecure`
- *    + its window effect — while the archive stood, the window
- *    was FLAG_SECURE: no screenshot, no Recents thumbnail of
- *    his history) DIED with the MonolithDestination enum in
- *    BUILD-SR-34, which named this slice as its re-earn home.
- *    [drawerSurfaceSecure] is that law's successor predicate:
- *    the drawer — the room where every finished day is kept —
- *    is the archive now, and while it stands open the window
- *    is secure. The host's effect stands in MainActivity,
- *    beside this predicate's name.
+ *  - SCREENSHOTS ALLOWED (Sarthak's order, Nov 3, 2026): the
+ *    old R-6 FLAG_SECURE predicate that lived here is deleted
+ *    whole. The drawer — like every surface — is screenshottable
+ *    and thumbnails in Recents normally.
  *  - THE SLIDE, in physics vocabulary: the drawer runs on a
  *    heavy body ([DrawerSlide.Body] — mass 2.4, ζ 0.92,
  *    unit-stiffness 260: under-damped by a breath, so the
@@ -242,19 +235,6 @@ object HandingBackGate {
     fun platesRevealed(handingBack: LiftingPlate.HandingBack, delivered: Boolean): Boolean =
         delivered || handingBack.isEmpty
 }
-
-/**
- * R-6 · THE FLAG_SECURE RE-EARN (named obligation, from
- * BUILD-SR-34's enum-death accounting): the successor of the
- * dead `archiveSurfaceSecure(destination) = destination ==
- * VAULT`. The drawer is a furniture standing inside the
- * DOORWAY place, not a place of its own — so the predicate
- * keys on the drawer's own standing: while the drawer stands
- * OPEN, the window is secure; the doorway around it, the
- * signing table, and every sealed surface stay capturable
- * exactly as before (the old law's matrix, preserved).
- */
-fun drawerSurfaceSecure(drawerOpen: Boolean): Boolean = drawerOpen
 
 /**
  * THE SLIDE — the drawer's travel as a body, not an animation.
