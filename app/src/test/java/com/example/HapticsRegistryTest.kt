@@ -72,23 +72,83 @@ class HapticsRegistryTest {
     }
 
     @Test
-    fun doorSeal_isFeelsSr1sAtomic1204_withMassAscendingClunks() {
+    fun doorSeal_isFeelsSr1sCanonical1204_withMassAscendingClunks() {
         val seal = SensoryRegistry.row(HapticEvent.DOOR_SEAL).haptic
         assertEquals(1204L, seal.totalDurationMs)
         assertEquals(WaveformKind.CEREMONY, seal.kind)
-        val strikes = seal.amplitudes.filter { it >= 200 }
-        assertEquals(listOf(235, 245, 255), strikes)
+        // The three bolt strikes (the swing's own peak, 200,
+        // stays below them by FEEL-SR-1's L-3).
+        val strikes = seal.amplitudes.filter { it >= 235 }
+        assertEquals(listOf(235, 250, 255), strikes)
+        // Strikes land at the filed sync onsets 670 / 860 / 1074.
+        val onsets = mutableListOf<Long>()
+        var t = 0L
+        seal.timingsMs.zip(seal.amplitudes).forEach { (timing, amp) ->
+            if (amp >= 235) onsets += t
+            t += timing
+        }
+        assertEquals(listOf(670L, 860L, 1074L), onsets)
     }
 
     @Test
-    fun doorLift_isFeelsSr1sAtomic1197_andEndsWithoutTerminalImpact() {
+    fun doorLift_isFeelsSr1sCanonical1197_andEndsWithoutTerminalImpact() {
         val lift = SensoryRegistry.row(HapticEvent.DOOR_LIFT).haptic
         assertEquals(1197L, lift.totalDurationMs)
         assertEquals(WaveformKind.CEREMONY, lift.kind)
         // Opening ends in stillness: the last felt segment is the
         // swell's lowest step, far under the waveform's peak.
         assertTrue(lift.amplitudes.last() < lift.peakAmplitude)
-        assertEquals(60, lift.amplitudes.last())
+        assertEquals(30, lift.amplitudes.last())
+    }
+
+    @Test
+    fun feelSr3ControlTables_areCarriedVerbatim() {
+        // The tighten pawl is the app's only double-pulse detent.
+        val pawl = SensoryRegistry.row(HapticEvent.GUARD_TIGHTEN_DETENT).haptic
+        assertEquals(listOf(0L, 16L, 10L, 10L), pawl.timingsMs)
+        assertEquals(listOf(0, 140, 0, 100), pawl.amplitudes)
+        // The click-lock: one hard snap, no tail.
+        val lock = SensoryRegistry.row(HapticEvent.GUARD_TIGHTEN_SEAT).haptic
+        assertEquals(listOf(0L, 35L), lock.timingsMs)
+        assertEquals(listOf(0, 210), lock.amplitudes)
+        // The Unseated Rock dies out — no terminal event.
+        val rock = SensoryRegistry.row(HapticEvent.GUARD_RAISE_ROCK).haptic
+        assertEquals(listOf(0, 85, 0, 55, 0, 30), rock.amplitudes)
+        // The carve's cut is the last thing the stretch ever says.
+        val carve = SensoryRegistry.row(HapticEvent.STRETCH_CARVE).haptic
+        assertEquals(listOf(0L, 55L, 30L, 30L), carve.timingsMs)
+        assertEquals(listOf(0, 240, 0, 120), carve.amplitudes)
+    }
+
+    @Test
+    fun breakRedrive_isThreeSeatingsDescendingToTheSoftest() {
+        val redrive = SensoryRegistry.row(HapticEvent.BOLTS_REDRIVE).haptic
+        assertTrue(redrive.totalDurationMs > 4_900L)
+        val strikes = redrive.amplitudes.filter { it >= 150 }
+        assertEquals(listOf(200, 180, 155), strikes)
+    }
+
+    @Test
+    fun breakArrival_isADrawnTwoSeconds_neverAPulse() {
+        // FEEL-SR-4 C-04: duration, not amplitude, is the wall
+        // between the break's easing and the knock.
+        val arrival = SensoryRegistry.row(HapticEvent.BREAK_ARRIVAL).haptic
+        assertTrue(arrival.totalDurationMs in 1_900L..2_100L)
+        val knock = SensoryRegistry.row(HapticEvent.KNOCK).haptic
+        assertTrue(arrival.totalDurationMs > knock.totalDurationMs * 10)
+        assertTrue(arrival.peakAmplitude < knock.peakAmplitude)
+    }
+
+    @Test
+    fun codeCrankFamily_isCensused_withItsSpendAndItsZeroTravelStop() {
+        val arm = SensoryRegistry.row(HapticEvent.CODE_CRANK_ARM).haptic
+        assertEquals(arm.amplitudes.sorted(), arm.amplitudes)
+        val spend = SensoryRegistry.row(HapticEvent.CODE_DETENT_SPEND).haptic
+        assertEquals(listOf(0L, 12L), spend.timingsMs)
+        assertEquals(220, spend.peakAmplitude)
+        val stop = SensoryRegistry.row(HapticEvent.CODE_HARD_STOP).haptic
+        assertEquals(WaveformKind.RESISTANCE, stop.kind)
+        assertTrue(stop.totalDurationMs <= 30L)
     }
 
     @Test

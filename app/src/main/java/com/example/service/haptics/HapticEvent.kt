@@ -45,11 +45,65 @@ enum class HapticEvent(val family: Family, val weightRank: Int) {
      *  the engine's rotary voice, spent by the spin in P4. */
     ROTARY_DETENT(Family.SIGNING, 40),
 
-    /** The combination's final detent: the signature lands. */
+    /** One station of the combination spin — one tick per
+     *  number, at the pass's weight (FEEL-SR-3 C1.1's ladder
+     *  70 → 95 → 120 across passes; the row carries pass 1, the
+     *  ladder is the caller's pass count, as the seat knock's
+     *  weight is its caller's). A wrong combination completed
+     *  produces THIS tick and nothing else — no error event
+     *  exists for the spin, by spec. */
+    COMBINATION_STATION(Family.SIGNING, 30),
+
+    /** A spin gate, at a direction reversal: a felt void, then
+     *  one heavy tick (FEEL-SR-3 C1.2). */
+    COMBINATION_GATE(Family.SIGNING, 48),
+
+    /** The combination's final detent: the signature lands —
+     *  ramp, thud, settle (FEEL-SR-3 C1.3, finality shape 1). */
     COMBINATION_FINAL_SEAT(Family.SIGNING, 62),
+
+    /** A reverse attempt against the seated dial: one flat
+     *  wall, no tick, identical every time (FEEL-SR-3 C1.3). */
+    COMBINATION_END_STOP(Family.SIGNING, 56),
 
     /** A firm click for heavy controls — the signing's latch. */
     SIGNATURE_LATCH(Family.SIGNING, 58),
+
+    /** The lifting-hour setter's quarter detent: the lightest
+     *  firm tick on any setting control (FEEL-SR-3 C2.1). */
+    HOUR_DETENT_QUARTER(Family.SIGNING, 14),
+
+    /** The hour setter's whole-hour crossing — one size up, so
+     *  a fast drag can be counted in hours by feel (C2.1). */
+    HOUR_DETENT_WHOLE(Family.SIGNING, 20),
+
+    /** SILENCE by spec — an hour release away from a quarter
+     *  places the hour and fires nothing; only the spin locks
+     *  (FEEL-SR-3 C2.2). */
+    HOUR_RELEASED(Family.SIGNING, 0),
+
+    /** The break setter's per-minute grain — the quietest
+     *  recurring event in the app (FEEL-SR-3 C5.1). */
+    BREAK_GRAIN_MINUTE(Family.SIGNING, 6),
+
+    /** The break grain at a 5-minute mark (C5.1). */
+    BREAK_GRAIN_FIVE(Family.SIGNING, 10),
+
+    /** Crossing a break preset: one soft swell — topography,
+     *  never a wall (D-6 · FEEL-SR-3 C5.2). */
+    BREAK_PRESET_NOTCH(Family.SIGNING, 16),
+
+    /** Resting on a preset (≥400 ms dwell) is answered, once
+     *  (C5.2's resting pulse). */
+    BREAK_PRESET_REST(Family.SIGNING, 15),
+
+    /** Arriving at the break setter's zero end: a flat floor
+     *  (C5.2's end-stop). */
+    BREAK_ZERO_STOP(Family.SIGNING, 34),
+
+    /** SILENCE by spec — a non-zero break release fires
+     *  nothing; the break is priced at the spin (C5.2). */
+    BREAK_RELEASED(Family.SIGNING, 0),
 
     // ── The sealed face (its ONLY felt event is the knock) ─────
     /** A reach for a locked app: one dull heavy thud, felt more
@@ -105,6 +159,24 @@ enum class HapticEvent(val family: Family, val weightRank: Int) {
      *  silent in shape every time (H-3). */
     GOVERNOR_HARD_STOP(Family.ANTECHAMBER, 68),
 
+    /** Bolts re-drive after the governor's minute is spent —
+     *  the seal whole again (FEEL-SR-4 F-13; its figures are
+     *  that seat's C-05 PROPOSAL, unruled, carried as such). */
+    GOVERNOR_BOLTS_REDRIVE(Family.ANTECHAMBER, 88),
+
+    /** Arming a code showing: rising resistance, deliberately
+     *  heavier than the drum's first movement, no click
+     *  (B-18 · FEEL-SR-4 F-10). */
+    CODE_CRANK_ARM(Family.ANTECHAMBER, 44),
+
+    /** THE SPEND: past the resistance, one hard detent click —
+     *  the purse spends one minute at that instant (F-11). */
+    CODE_DETENT_SPEND(Family.ANTECHAMBER, 58),
+
+    /** The code crank spent: zero travel, from the first
+     *  pressure (F-17). */
+    CODE_HARD_STOP(Family.ANTECHAMBER, 60),
+
     // ── The Guard (tighten / raise / carve) ────────────────────
     /** One detent of the tightening ratchet (D-1: tighten is
      *  instant, and the hand knows it). */
@@ -113,12 +185,36 @@ enum class HapticEvent(val family: Family, val weightRank: Int) {
     /** The tightening lands: one hard seat-click. */
     GUARD_TIGHTEN_SEAT(Family.GUARD, 60),
 
-    /** A raise is filed: the seat that never lands — it takes
-     *  effect at the next day-start (D-1 · FEEL-SR-3). */
-    GUARD_RAISE_FILED(Family.GUARD, 44),
+    /** A raise detent: late, soft-attacked, under-weight —
+     *  a notch not yet cut (D-1 · FEEL-SR-3 C4.1, the Hollow
+     *  Seat's first half). */
+    GUARD_RAISE_DETENT(Family.GUARD, 12),
 
-    /** The stretch's end-date is carved: scrape, one cut, then
-     *  silence (D-3 · FEEL-SR-3). */
+    /** Lifting after a raise: three dying pulses and NO
+     *  terminal event — the withheld seat is the deferral
+     *  (FEEL-SR-3 C4.2, the Unseated Rock). */
+    GUARD_RAISE_ROCK(Family.GUARD, 18),
+
+    /** Cancelling a resting raise: one soft release (C4.2). */
+    GUARD_RAISE_CANCEL(Family.GUARD, 10),
+
+    /** SILENCE by law — the 03:30 boundary fires nothing: a
+     *  raise seats, a purse renews, loosenings take hold, all
+     *  unwatched and unfelt (R-C1 · FEEL-SR-4 N-05). */
+    DAY_START_BOUNDARY(Family.GUARD, 0),
+
+    /** One day-step of the stretch's end-date stepper: the
+     *  heaviest recurring detent in the app, rising with
+     *  distance (D-3 · FEEL-SR-3 C6.1). */
+    STRETCH_DAY_STEP(Family.GUARD, 50),
+
+    /** The carve's scrape: ~1.2 s of rising texture under a
+     *  press-and-hold; a released hold gives nothing else
+     *  (FEEL-SR-3 C6.2). */
+    STRETCH_SCRAPE(Family.GUARD, 24),
+
+    /** The stretch's end-date is carved: one cut, then
+     *  silence (D-3 · FEEL-SR-3 C6.2). */
     STRETCH_CARVE(Family.GUARD, 64),
 
     // ── The break (the time-lock's own firing) ─────────────────
