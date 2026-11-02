@@ -989,6 +989,22 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
     // ------------------------------------------------------------------
     val setupStore = remember { com.example.data.SetupStore(context.applicationContext) }
     var setupStamped by remember { mutableStateOf(setupStore.isCompleted()) }
+
+    // STAGE 15 (BUILD-SR-21) — THE STRONGROOM ROOT: the integrated
+    // day flow (ui/strongroom/StrongroomFlow.kt) owns the root
+    // whenever its gate stands — a Strongroom seal standing
+    // (containment: the launcher is everything while sealed,
+    // Nov 1), an unpresented struck plate (the lifting is owed
+    // its offering first), the first run unstamped (UX-SR-5's
+    // ≤10-minute run is the first run now; the legacy reception
+    // sheet keeps its PARK re-open route and no longer auto-opens),
+    // or his own entry through the doorway chip. While the
+    // Strongroom root stands, the legacy destinations below are
+    // not composed at all — containment by construction, not by
+    // covering.
+    val strongroomGate = com.example.ui.strongroom.rememberStrongroomGate()
+    var strongroomEntered by rememberSaveable { mutableStateOf(false) }
+    val strongroomActive = strongroomGate.forced || strongroomEntered || !setupStamped
     var receptionOpen by remember {
         mutableStateOf(
             com.example.ui.components.receptionInitiallyOpen(setupStore.isCompleted())
@@ -1470,6 +1486,17 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                     com.example.data.NightDimMath.saturationForDim(breakDimAlpha)
                 )
         ) {
+            // STAGE 15 (BUILD-SR-21): the Strongroom root, when its
+            // gate stands — the legacy rooms are not composed
+            // beneath it (containment by construction).
+            if (strongroomActive) {
+                com.example.ui.strongroom.StrongroomFlowHost(
+                    allApps = allApps,
+                    onExit = { strongroomEntered = false },
+                    onSetupStamped = { setupStamped = true }
+                )
+            }
+            if (!strongroomActive) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // The header band (chrome C2): brand + Guard line.
                 MonolithPullDownHeader(
@@ -2191,6 +2218,24 @@ fun MonolithRootApp(viewModel: MonolithViewModel) {
                 }
             )
 
+            // The doorway chip — his standing way into the
+            // Strongroom from the legacy rooms (Stage 15 host
+            // chrome; plain words, the door is the way in).
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 76.dp)
+                    .background(com.example.ui.theme.StrongroomGround)
+                    .clickable { strongroomEntered = true }
+                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                    .testTag("strongroom_entry")
+            ) {
+                androidx.compose.material3.Text(
+                    text = "The door",
+                    color = com.example.ui.theme.StrongroomGold
+                )
+            }
+            }
         }
     }
 }
