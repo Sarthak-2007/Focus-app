@@ -8,6 +8,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.domain.LiftingPlate
+import com.example.ui.strongroom.grade.asComposeColor
+import com.example.ui.strongroom.grade.asHoleKind
 
 /**
  * PLATE TOKENS — BUILD-SR-4's lane-local token file for the plate
@@ -58,20 +60,24 @@ object PlateTokens {
 // THE BRASS PLATE (E-9: the brass day plate KEPT by his eye)
 // ---------------------------------------------------------------------
 
-/** The plate's brass field: the gold ink, deepened toward the
- *  line ink so the punched holes and the line-work read on it as
- *  struck metal, not as print on a yellow card. A lerp inside the
- *  palette — brass is the gold ink at working depth. */
-val PlateBrass = lerp(PlateInkGold, PlateInkLine, 0.18f)
+/** The plate's brass field — DESIGNER-SR-4's ladder (BR-06),
+ *  consumed from BUILD-SR-10's grade pipeline at Stage 10
+ *  composition (BUILD-SR-16): gold toward the line ink at 0.18,
+ *  struck as data in [com.example.ui.strongroom.grade.PlateGradeRender]
+ *  and bridged here. Brass renders in the gold ink ALONE — every
+ *  tone is a descent toward the line ink, never a second hue. */
+val PlateBrass =
+    com.example.ui.strongroom.grade.PlateGradeRender.BRASS_FIELD
+        .asComposeColor()
 
-/** The brass at its raised edge (relief from its own luminance:
- *  the gold ink moved toward the warm ember ink, its palette
- *  neighbour in the warm family). */
-val PlateBrassHigh = lerp(PlateInkGold, PlateInkEmber, 0.22f)
-
-/** The brass descended — a fallen day's plate, struck in a dark
- *  room: the gold ink carried halfway to the line ink. */
-val PlateBrassDark = lerp(PlateInkGold, PlateInkLine, 0.52f)
+/** The brass descended — a fallen day's plate. DESIGNER-SR-4 §4's
+ *  cap stands: the field descends to 0.34 and no further (§MB-BRASS
+ *  L-DARK: the plate stays the frame's lightest object, its bracket
+ *  pair at full contrast). Slice 1's flat 0.52 descent is RETIRED —
+ *  it buried the bracket pair it had to be read against. */
+val PlateBrassDark =
+    com.example.ui.strongroom.grade.PlateGradeRender.BRASS_FAILURE_FIELD
+        .asComposeColor()
 
 /** The plate's engraved line-work: the dark ink, as kept (E-8). */
 val PlateLineWork = PlateInkLine
@@ -86,16 +92,20 @@ val PlateDoorGround = PlateInkViolet
 val PlateDarkRoom = PlateInkLine
 
 // ---------------------------------------------------------------------
-// GRADED HOLE FIGURES (Audit A §2.6 design figures — UNPROVEN,
-// build record U-4: the graded ORDER is settled; these diameters
-// are this lane's rendering of "sizes a finger could learn")
+// GRADED HOLE FIGURES — DESIGNER-SR-4's corrected ladder, consumed
+// from the grade pipeline at Stage 10 composition (BUILD-SR-16).
+// Figures (§MB-NUMBERS N-4, DESIGN values, UNPROVEN G-4): REACH
+// Ø 2.8 mm · HELD Ø 2.0 mm · FLOOR Ø 1.5 mm at Stage 5's conversion
+// 1 mm ≈ 6.3 dp → 17.6 / 12.6 / 9.5 dp. The ratios 1.87 : 1.33 : 1
+// ARE the grading (the consistency law: no kind re-scales alone).
+// Slice 1's 20/13/8 dp are RETIRED — their wider steps (1.54 · 1.63,
+// floor at 0.40 of reach against the figure's 0.54) taught a
+// different grading than the sittings settled.
 // ---------------------------------------------------------------------
 
-fun punchDiameter(grade: LiftingPlate.PunchGrade): Dp = when (grade) {
-    LiftingPlate.PunchGrade.LARGE -> 20.dp
-    LiftingPlate.PunchGrade.MEDIUM -> 13.dp
-    LiftingPlate.PunchGrade.SMALL -> 8.dp
-}
+fun punchDiameter(grade: LiftingPlate.PunchGrade): Dp =
+    com.example.ui.strongroom.grade.PlateGradeRender
+        .punchDiameterDp(grade.asHoleKind()).dp
 
 // ---------------------------------------------------------------------
 // THE PLATE'S PRINT — Stage 5's PLT scale, carried to screen at

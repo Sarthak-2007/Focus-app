@@ -39,6 +39,14 @@ import com.example.ui.theme.StrongroomGround
 import com.example.ui.theme.StrongroomLineWork
 import com.example.ui.theme.reliefHighlight
 import com.example.ui.theme.reliefShade
+import com.example.ui.strongroom.grade.FaceHeightfield
+import com.example.ui.strongroom.grade.GradeColour
+import com.example.ui.strongroom.grade.GradeInk
+import com.example.ui.strongroom.grade.GradeSurface
+import com.example.ui.strongroom.grade.RelightFieldCanvas
+import com.example.ui.strongroom.grade.asGradeState
+import com.example.ui.strongroom.grade.gradeGround
+import com.example.ui.strongroom.layout.FaceFieldLayout
 
 /**
  * P3 — THE SEALED FACE (Slice 1).
@@ -80,18 +88,26 @@ fun SealedFaceScreen(
     onAntechamberRequest: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val groundHigh = StrongroomGround.reliefHighlight(lightState)
-    val groundDeep = StrongroomGround.reliefShade(lightState)
+    // STAGE 10 COMPOSITION (BUILD-SR-16): the face's ground is
+    // struck through BUILD-SR-10's grade pipeline — the state's
+    // mass descent on the enamel ink as data (GradePipeline's
+    // stateSurface, P0's table mirrored value-for-value), and the
+    // relief layer is the pipeline's own working form
+    // (RelightFieldCanvas over a FaceHeightfield: the ring groove
+    // and the pinstripe cut into the ground's own luminance, so
+    // the light belongs to the surface as drawn). The token
+    // bridge's flat gradient of Slice 1 is retired from this face.
+    val gradeState = lightState.asGradeState()
+    val groundStruck = gradeGround(GradeInk.VIOLET, lightState, GradeSurface.FACE)
+    val groundBase = remember {
+        Array(36) { Array(24) { GradeColour.of(GradeInk.VIOLET) } }
+    }
     val knockSource = remember { MutableInteractionSource() }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(groundHigh, StrongroomGround, groundDeep)
-                )
-            )
+            .background(groundStruck)
             .clickable(
                 interactionSource = knockSource,
                 indication = null,
@@ -99,101 +115,110 @@ fun SealedFaceScreen(
             )
             .testTag("sealed_face")
     ) {
+        RelightFieldCanvas(
+            base = groundBase,
+            state = gradeState,
+            surface = GradeSurface.FACE,
+            heightfield = FaceHeightfield(),
+            modifier = Modifier.fillMaxSize()
+        )
         PinstripeField(lightState)
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 28.dp, vertical = 36.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Spacer(Modifier.height(10.dp))
-
-            // RANK 1 — the lifting hour on the fresh ring.
-            RingCanvas(
-                hour = state.liftingHour,
-                lightState = lightState,
-                modifier = Modifier
-                    .size(300.dp)
-                    .testTag("sealed_face_ring")
-            )
-
-            Spacer(Modifier.height(34.dp))
-
-            // RANK 2 — the door-word slot as its KEPT PLACE
-            // (G-1): an empty, sized place — the slot's measure
-            // (PRT-3's line) held by a hairline rule, no word.
-            Box(
-                modifier = Modifier
-                    .width(200.dp)
-                    .height(FaceDoorWordStyle.lineHeight.value.dp)
-                    .testTag("door_word_kept_place"),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(1.dp)
-                        .background(StrongroomGold.copy(alpha = 0.55f))
-                )
-            }
-
-            Spacer(Modifier.height(26.dp))
-
-            // RANK 3 — his sentence, or its kept place (PRT-4):
-            // the kept place holds the same block — three lines
-            // at the sentence's own leading — sized like the
-            // presence it replaces.
-            if (state.hasSentence) {
-                Text(
-                    text = state.sentence.orEmpty(),
-                    style = FaceSentenceStyle,
-                    color = StrongroomLineWork,
-                    textAlign = TextAlign.Center,
-                    maxLines = 3,
-                    modifier = Modifier.testTag("face_sentence")
-                )
-            } else {
-                Column(
+        // STAGE 8 COMPOSITION (BUILD-SR-16): the four printings
+        // stand in BUILD-SR-7's FaceFieldLayout — Stage 5 §3.3's
+        // hierarchy as structure (hour · door-word slot · sentence
+        // or kept place · held-mark slot, FACE_BAND apart), not a
+        // surface's own column of spacers. The grille plate is not
+        // a printing: it stands at the door's foot, over the field.
+        FaceFieldLayout(
+            liftingHour = {
+                // RANK 1 — the lifting hour on the fresh ring.
+                RingCanvas(
+                    hour = state.liftingHour,
+                    lightState = lightState,
                     modifier = Modifier
-                        .width(260.dp)
-                        .height(120.dp)
-                        .testTag("sentence_kept_place")
+                        .size(300.dp)
+                        .testTag("sealed_face_ring")
+                )
+            },
+            doorWordSlot = {
+                // RANK 2 — the door-word slot as its KEPT PLACE
+                // (G-1): an empty, sized place — the slot's measure
+                // (PRT-3's line) held by a hairline rule, no word.
+                Box(
+                    modifier = Modifier
+                        .width(200.dp)
+                        .height(FaceDoorWordStyle.lineHeight.value.dp)
+                        .testTag("door_word_kept_place"),
+                    contentAlignment = Alignment.BottomCenter
                 ) {
-                    repeat(3) { line ->
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(40.dp)
-                                .padding(top = 39.dp)
-                        ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(StrongroomGold.copy(alpha = 0.55f))
+                    )
+                }
+            },
+            sentenceOrKeptPlace = {
+                // RANK 3 — his sentence, or its kept place (PRT-4):
+                // the kept place holds the same block — three lines
+                // at the sentence's own leading — sized like the
+                // presence it replaces.
+                if (state.hasSentence) {
+                    Text(
+                        text = state.sentence.orEmpty(),
+                        style = FaceSentenceStyle,
+                        color = StrongroomLineWork,
+                        textAlign = TextAlign.Center,
+                        maxLines = 3,
+                        modifier = Modifier.testTag("face_sentence")
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .width(260.dp)
+                            .height(120.dp)
+                            .testTag("sentence_kept_place")
+                    ) {
+                        repeat(3) { line ->
                             Box(
                                 Modifier
                                     .fillMaxWidth()
-                                    .height(1.dp)
-                                    .background(
-                                        StrongroomLineWork.copy(
-                                            alpha = if (line == 2) 0.10f else 0.18f
+                                    .height(40.dp)
+                                    .padding(top = 39.dp)
+                            ) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(
+                                            StrongroomLineWork.copy(
+                                                alpha = if (line == 2) 0.10f else 0.18f
+                                            )
                                         )
-                                    )
-                            )
+                                )
+                            }
                         }
                     }
                 }
+            },
+            heldMarkSlot = {
+                // RANK 4 — the held-mark slot as its kept place
+                // (G-2): a quiet struck empty place — a shallow
+                // punch with no glyph in it.
+                HeldMarkKeptPlace(
+                    lightState = lightState,
+                    modifier = Modifier.testTag("held_mark_kept_place")
+                )
             }
-
-            Spacer(Modifier.weight(1f))
-
-            // RANK 4 — the held-mark slot as its kept place
-            // (G-2): a quiet struck empty place — a shallow
-            // punch with no glyph in it.
-            HeldMarkKeptPlace(
-                lightState = lightState,
-                modifier = Modifier.testTag("held_mark_kept_place")
-            )
-
-            Spacer(Modifier.height(22.dp))
-
-            // The grille plate — the antechamber's second touch.
+        )
+        // The grille plate — the antechamber's second touch, at
+        // the foot of the door.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 28.dp)
+        ) {
             GrillePlate(onClick = onAntechamberRequest)
         }
     }
@@ -205,13 +230,18 @@ fun SealedFaceScreen(
  *  struck at the test-condition fineness and judged at Slice 4. */
 @Composable
 private fun PinstripeField(lightState: RelightState) {
-    val gold = StrongroomGold
-    val goldHigh = gold.reliefHighlight(lightState)
+    // DESIGNER-SR-1's FaceCraft, consumed at Stage 10 composition
+    // (BUILD-SR-16): the pinstripe pair is FaceCraftFallback's —
+    // in SEALED the two promoted reads stand (exact gold held; its
+    // lip warmed exactly one eighth — the same pair the grade
+    // pipeline files as sealedPinstripe / sealedPinstripeLitLip);
+    // in other states the lip is P0's relief at full gradient.
+    val (gold, goldLip) = FaceCraftFallback.pinstripe(lightState)
     Canvas(Modifier.fillMaxSize()) {
         val outerInset = 14.dp.toPx()
         val innerInset = 20.dp.toPx()
         drawRect(
-            color = goldHigh,
+            color = goldLip,
             topLeft = Offset(outerInset, outerInset),
             size = Size(size.width - outerInset * 2, size.height - outerInset * 2),
             style = Stroke(width = 2.dp.toPx())
@@ -243,7 +273,9 @@ private fun RingCanvas(
 ) {
     val gold = StrongroomGold
     val bandTone = StrongroomGround.reliefShade(lightState)
-    val groove = StrongroomLineWork
+    // FaceCraft's groove floor (DESIGNER-SR-1, consumed BUILD-SR-16):
+    // in SEALED this is promoted read (i) — exact graphite, held.
+    val groove = FaceCraftFallback.grooveFloor(lightState)
     val edgeLight = StrongroomGround.reliefHighlight(lightState)
 
     Canvas(modifier) {
@@ -306,18 +338,29 @@ private fun RingCanvas(
             cap = StrokeCap.Square,
             join = StrokeJoin.Round
         )
-        val catchShift = -16f * s
         RingGeometry.placements(hour).forEach { p ->
             val glyph = HourFigures.glyphFor(p.char)
             val gx = center.x + (p.unitX * baselinePx).toFloat()
             val gy = center.y + (p.unitY * baselinePx).toFloat()
+            // FaceCraft's per-glyph lip (DESIGNER-SR-1, consumed
+            // BUILD-SR-16): the catch edge's offset is the state's
+            // light direction ROTATED BY THIS GLYPH'S OWN ARC
+            // POSITION — two glyphs at opposite ends of the arc
+            // catch light differently. Slice 1's single uniform
+            // offset (-16s, -16s for every glyph) was the failed
+            // species the soul panel named; it is retired here.
+            val (lipX, lipY) = FaceCraftFallback.glyphLipOffsetPx(
+                glyphOffsetDeg = p.rotationDeg,
+                state = lightState,
+                grooveDepthPx = 16f * s
+            )
             withTransform({
                 translate(gx, gy)
                 rotate(p.rotationDeg.toFloat(), pivot = Offset.Zero)
             }) {
                 glyph.strokes.forEach { cmds ->
                     drawPath(
-                        glyphPath(cmds, s, catchShift, catchShift),
+                        glyphPath(cmds, s, lipX, lipY),
                         color = edgeLight,
                         style = graverStroke
                     )
@@ -334,7 +377,7 @@ private fun RingCanvas(
                     val top = -(punch.y + punch.h - HourFigures.CENTRE_Y) * s
                     drawRect(
                         color = edgeLight,
-                        topLeft = Offset(left + catchShift, top + catchShift),
+                        topLeft = Offset(left + lipX, top + lipY),
                         size = Size(w, h)
                     )
                     drawRect(
