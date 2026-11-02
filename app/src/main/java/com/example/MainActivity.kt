@@ -1268,6 +1268,11 @@ private fun SigningHost(viewModel: MonolithViewModel) {
                                 .sign(standing.record, amended = true)
                         }
                     }
+                },
+                onFeelEvent = { event ->
+                    // The wheel's earned felt events, fired
+                    // through the bridge's one bus (FEEL-SEAT).
+                    StrongroomEngineBridge.fireSurfaceEvent(appContext, event)
                 }
             ),
             modifier = androidx.compose.ui.Modifier.weight(1f)

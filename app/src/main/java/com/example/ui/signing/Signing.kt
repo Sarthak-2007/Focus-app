@@ -152,7 +152,12 @@ data class SigningActions(
     val onAllowanceMove: (targetMinutes: Int) -> Unit,
     /** The signature is whole. Carries nothing — by construction
      *  there is no combination value to carry. */
-    val onSignature: () -> Unit
+    val onSignature: () -> Unit,
+    /** A felt event the wheel's mechanism earned (FEEL-SEAT):
+     *  the surface authors no waveform — it names the event and
+     *  the host fires it through the one SensoryBus, so the
+     *  felt, heard and seen halves stay one registry row. */
+    val onFeelEvent: (com.example.service.haptics.HapticEvent) -> Unit = {}
 )
 
 @Composable
@@ -772,6 +777,7 @@ private fun GreatWheelSignature(
     lightState: StrongroomLightState
 ) {
     val spin = remember { CombinationSpin() }
+    val feel = remember { SigningFeel() }
     var rotation by remember { mutableStateOf(0.0) }
     var lastVelocity by remember { mutableStateOf(0.0) }
     var seats by remember { mutableStateOf(0) }
@@ -791,9 +797,19 @@ private fun GreatWheelSignature(
                     detectDragGestures(
                         onDragStart = { lastAngle = null },
                         onDragEnd = {
-                            val clockwise = lastVelocity > 0.0
-                            if (spin.attemptSeat(rotation, lastVelocity, clockwise)) {
-                                seats = spin.seatsTaken
+                            if (spin.isComplete) {
+                                // A seat attempt against the
+                                // seated dial: its flat wall
+                                // (FEEL-SR-3 C1.3, via SigningFeel).
+                                feel.onAttemptAgainstSeatedDial()
+                                    .forEach(actions.onFeelEvent)
+                            } else {
+                                val clockwise = lastVelocity > 0.0
+                                if (spin.attemptSeat(rotation, lastVelocity, clockwise)) {
+                                    seats = spin.seatsTaken
+                                    feel.onSeatTaken(finalSeat = spin.isComplete)
+                                        .forEach(actions.onFeelEvent)
+                                }
                             }
                         },
                         onDrag = { change, _ ->
@@ -816,6 +832,12 @@ private fun GreatWheelSignature(
                                 if (velocity < -240.0) velocity = -240.0
                                 lastVelocity = velocity
                                 rotation += velocity * dt
+                                // The travel the mechanism accepted
+                                // is the travel the hand feels:
+                                // station notches and gates, read
+                                // off the governed rotation itself.
+                                feel.onTravel(rotation)
+                                    .forEach(actions.onFeelEvent)
                             }
                             lastAngle = angle
                             lastMs = change.uptimeMillis
