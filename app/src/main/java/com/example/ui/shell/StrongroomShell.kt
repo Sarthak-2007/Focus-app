@@ -58,10 +58,11 @@ fun StrongroomShell(
     val finish by viewModel.finishState.collectAsStateWithLifecycle()
     val standingPlace by viewModel.currentPlace.collectAsStateWithLifecycle()
 
+    val finishNow = finish
     val place = deriveShellPlace(
         sealed = session?.isActive == true,
         onBreak = session?.isInSafeBreak == true,
-        lifting = finish != null && !finish.issued,
+        lifting = finishNow != null && !finishNow.issued,
         atAntechamber = standingPlace == StrongroomPlace.ANTECHAMBER
     )
 
