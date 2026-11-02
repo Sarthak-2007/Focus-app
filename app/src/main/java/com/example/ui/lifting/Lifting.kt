@@ -117,7 +117,17 @@ data class LiftingState(
      *  zero; a surface entered after the day has lifted stands
      *  at the score's end — the door open, the plate in the pile. */
     val ceremonyStartOffsetMs: Int = LiftingCeremony.ScoreEndMs,
-    val reducedMotion: Boolean = false
+    val reducedMotion: Boolean = false,
+    /** THE HANDING BACK, as the store stands it for the landing
+     *  day (PLACES): the people who waited, prepared by P6's own
+     *  preparation, and [handingBackDelivered] — the proof the
+     *  lift's precondition stood (their rows resolved
+     *  HANDED_BACK before the plate was struck). Carried as a
+     *  fact, presented as nothing: this surface shows no list of
+     *  those who waited (R2-7) — they are in HIS phone's list
+     *  again, which is the whole act. */
+    val handingBack: LiftingPlate.HandingBack = LiftingPlate.HandingBack(emptyList()),
+    val handingBackDelivered: Boolean = false
 )
 
 @Composable

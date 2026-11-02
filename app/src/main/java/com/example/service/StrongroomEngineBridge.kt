@@ -50,6 +50,14 @@ import com.example.service.haptics.StrongroomSoundAdapter
  *  - HELD CALLS: the notification listener's call handling reads
  *    [StrongroomRouting.routeCall] through [callDecision] — a
  *    CONTACT rings through, an UNKNOWN is held quietly.
+ *  - THE HANDING BACK (PLACES): as the lift fires — and on a
+ *    fallen day's boot strike, where the seal's death is the
+ *    day's end — the waited people are delivered BEFORE the
+ *    plate is struck ([StrongroomStore.deliverHandingBack]:
+ *    every WAITING row resolved HANDED_BACK). It is the
+ *    lifting's execution precondition (R2-7), presented
+ *    nowhere: his phone's own list simply has its people again
+ *    before the plate is read.
  *  - THE ONE NOTIFICATION (E-4; wiring landed by BUILD-SR-14,
  *    the residue BUILD-SR-13's composition record §Cures.6 left
  *    standing): P8's [SessionNotification] is the sealed
@@ -428,6 +436,12 @@ object StrongroomEngineBridge {
             armFirings(appContext, dateIso)
             return false
         }
+        // THE HANDING BACK, FIRST (B-13 / R2-7): the lift has
+        // fired, so the people who waited are returned to his
+        // phone's own list BEFORE the plate below is struck and
+        // read — the ceremony's execution precondition, executed
+        // here, presented nowhere.
+        store.deliverHandingBack(dateIso)
         store.strikePlate(dateIso, nowElapsed, boot, sealFailed = false)
         // THE LIFTING, felt + heard (the union, BUILD-SR-23):
         // bolts withdrawing + the door opening on its own weight
@@ -467,6 +481,10 @@ object StrongroomEngineBridge {
         val boot = bootCount(appContext)
         when (StrongroomRouting.classifyIntegrity(span, boot, sidewaysKillObserved)) {
             StrongroomRouting.SealIntegrity.AJAR_BOOT_DEATH -> {
+                // The day ended by death: its waited people are
+                // handed back in the same act, before the strike
+                // (the release is whole — R2-3 with B-13).
+                store.deliverHandingBack(row.filingDateIso)
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = false)
                 // A fallen day's strike is felt as such — lower,
                 // damped (the registry's failure row).
@@ -476,6 +494,9 @@ object StrongroomEngineBridge {
                 SessionNotification.cancel(appContext)
             }
             StrongroomRouting.SealIntegrity.BROKEN_TAMPER -> {
+                // A broken day hands its people back too: the
+                // seal's death ends the wait, whatever killed it.
+                store.deliverHandingBack(row.filingDateIso)
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = true)
                 fireSensory(appContext, HapticEvent.PLATE_STRIKE_FAILURE)
                 MonolithShieldService.stopShield(appContext)
