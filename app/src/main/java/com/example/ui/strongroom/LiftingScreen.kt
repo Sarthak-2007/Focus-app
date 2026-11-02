@@ -111,6 +111,10 @@ fun LiftingScreen(
         )
     }
     var doorSettledFired by remember { mutableStateOf(false) }
+
+    fun fire(event: LiftingPlate.LiftEvent) {
+        ceremony = LiftingPlate.advance(ceremony, event)
+    }
     var plateStrikeFired by remember { mutableStateOf(false) }
 
     // THE MOTION CLOCK (Stage 12, BUILD-SR-18): one frame clock for
@@ -156,9 +160,6 @@ fun LiftingScreen(
         }
     }
 
-    fun fire(event: LiftingPlate.LiftEvent) {
-        ceremony = LiftingPlate.advance(ceremony, event)
-    }
 
     // THE PRECONDITION, executed first: as the lift fires, the
     // waiting people are handed back (the wiring performs the

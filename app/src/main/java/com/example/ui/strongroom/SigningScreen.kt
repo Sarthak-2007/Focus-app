@@ -743,7 +743,7 @@ private fun SetterDragStrip(
                     onDragEnd = { onRelease(current) },
                     onDragCancel = { onRelease(current) }
                 ) { change, _ ->
-                    val delta = change.positionChange().x / density * minutesPerDp
+                    val delta = (change.position.x - change.previousPosition.x) / density * minutesPerDp
                     val before = current
                     var next = before + delta
                     if (!wrap) next = next.coerceIn(minValue, maxValue)
