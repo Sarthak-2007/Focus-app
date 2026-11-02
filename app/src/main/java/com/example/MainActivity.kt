@@ -55,9 +55,16 @@ import com.example.service.StrongroomEngineBridge
 import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
+import com.example.domain.LiftingPlate
 import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
 import com.example.ui.doorway.plateTruthForDoorway
+import com.example.ui.drawer.Drawer
+import com.example.ui.drawer.DrawerActions
+import com.example.ui.drawer.DrawerContents
+import com.example.ui.drawer.DrawerFront
+import com.example.ui.drawer.DrawerState
+import com.example.ui.drawer.drawerSurfaceSecure
 import com.example.ui.sealed.DoorWordSetter
 import com.example.ui.sealed.SealedFace
 import com.example.ui.sealed.SealedFaceActions
@@ -92,6 +99,11 @@ import kotlinx.coroutines.withContext
 // with the enum in this act — its successor surface is the
 // drawer's room inside the doorway, whose own slice (R-6)
 // re-earns FLAG_SECURE when the drawer stands.
+// BUILD-SR-41 (the Drawer slice): R-6 DISCHARGED in this act —
+// ShellHost now holds the re-earned effect beside its predicate
+// (com.example.ui.drawer.drawerSurfaceSecure): while the drawer
+// stands open, the window is FLAG_SECURE, exactly as the old
+// archive law held it for the VAULT.
 // ==================================================================
 
 /** Issue #78 (Audit R2, ipc-intents): the system Settings app's
@@ -379,6 +391,9 @@ class MainActivity : ComponentActivity() {
  * the old standing destination died with the enum (BUILD-SR-34;
  * named in the file head) — no place in the new order IS the
  * archive; the drawer's slice re-earns the flag when it stands.
+ * BUILD-SR-41: the re-earn stands below — the effect keyed on
+ * the drawer's own standing ([drawerSurfaceSecure]), beside the
+ * doorway furniture it protects.
  *
  * BUILD-SR-35 (composition, second act): the shell's DOORWAY
  * place-host carries the Doorway surface itself, its state read
@@ -438,6 +453,50 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             viewModel.moveToPlace(com.example.session.StrongroomPlace.ANTECHAMBER)
         }
     )
+
+    // BUILD-SR-41 (the Drawer slice): the drawer's standing in
+    // the doorway place. Shut, it is furniture under the signing
+    // table (DrawerFront); his hand opens it and it stands in
+    // the place's whole reach, its contents read from the store
+    // at the opening ([loadDrawerState]) — re-derived on every
+    // opening, never held stale across openings.
+    var drawerOpen by remember { mutableStateOf(false) }
+    var drawerState by remember { mutableStateOf(DrawerState()) }
+    LaunchedEffect(drawerOpen) {
+        if (drawerOpen) drawerState = loadDrawerState(appContext)
+    }
+
+    // R-6 · FLAG_SECURE, RE-EARNED (BUILD-SR-41, named obligation
+    // from BUILD-SR-34's enum-death accounting): the old VAULT's
+    // archive law (issue #264 B-264-31 — archiveSurfaceSecure +
+    // its effect: while the archive stood, no screenshot and no
+    // Recents thumbnail of his history) died with the enum. Its
+    // successor surface is this drawer — the room where every
+    // finished day is kept — and its successor predicate is
+    // [drawerSurfaceSecure]. While the drawer stands open the
+    // window is secure; every other standing clears the flag,
+    // exactly the old law's matrix. The flag is also cleared
+    // when this host leaves composition, so a secure standing
+    // can never leak past the drawer's own life.
+    val drawerWindow = (context as? android.app.Activity)?.window
+    LaunchedEffect(drawerOpen) {
+        if (drawerSurfaceSecure(drawerOpen)) {
+            drawerWindow?.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        } else {
+            drawerWindow?.clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            drawerWindow?.clearFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
+    }
 
     // Watch Store residency (census §2c, re-carried): the old
     // composition stamped residency on DECK entry; the host has
@@ -534,6 +593,40 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                 // bridge's activateSeal (its fresh host, per the
                 // Caller-Orphan Register: until this slice it had
                 // no production caller).
+                // BUILD-SR-41: THE DRAWER stands in this same
+                // place as its furniture (census C-22, doorway
+                // furniture per BUILD-SR-34's accounting). Shut,
+                // its front stands under the signing table; open,
+                // it stands in the place's whole reach — one
+                // place, never a destination (GAP-R01). It exists
+                // only in this unsealed branch: while a seal
+                // stands, the face above owns the place whole
+                // (ledger D-7).
+                if (drawerOpen) {
+                    Drawer(
+                        state = drawerState,
+                        actions = DrawerActions(
+                            onHandingBack = {
+                                // C-11 at the drawer's threshold:
+                                // the waiting people are returned
+                                // to his phone's own list — the
+                                // delivery itself is the wiring
+                                // layer's act (P6's seam: the lift's
+                                // engine path returns them; the
+                                // drawer keeps no list of its own)
+                                // and this host confirms the standing
+                                // the gate waits on. No row is
+                                // resolved TAKEN or LEFT here: that
+                                // choice is the held surface's, per
+                                // call, never a browsing act.
+                                drawerState = drawerState.copy(
+                                    handingBackDelivered = true
+                                )
+                            },
+                            onClose = { drawerOpen = false }
+                        )
+                    )
+                } else {
                 androidx.compose.foundation.layout.Column(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
@@ -574,6 +667,10 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                     ) {
                         SigningHost(viewModel = viewModel)
                     }
+                    // The drawer's shut front — the room's
+                    // furniture at the foot of the signing place.
+                    DrawerFront(onOpen = { drawerOpen = true })
+                }
                 }
             }
         },
@@ -584,6 +681,15 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // and the host below renders nothing when no sealed
             // day stands (no dead route, route-book Law R-2).
             AntechamberHost(viewModel = viewModel)
+        },
+        breakContent = {
+            // The Break (BUILD-SR-39): the shell stands the BREAK
+            // place only while the engine's break span runs — the
+            // host below renders the firing from the standing
+            // facts and nothing when no break stands. The surface
+            // invokes nothing: there is no act in it that can
+            // start, stop or extend a break (census C-16).
+            BreakHost(viewModel = viewModel)
         },
         sealedFaceContent = {
             // The shell's own SEALED_FACE host: the face from THE
@@ -783,6 +889,173 @@ private fun AntechamberHost(viewModel: MonolithViewModel) {
             onReturnToFace = {
                 viewModel.moveToPlace(com.example.session.StrongroomPlace.SEALED_FACE)
             }
+        )
+    )
+}
+
+/**
+ * BUILD-SR-39 composition glue — THE BREAK (census C-16) in the
+ * shell's BREAK place.
+ *
+ * The host renders THE FIRING and invokes nothing. The break's
+ * clock is re-derived from the engine's standing facts on every
+ * engine tick: first the Strongroom day's own firing (the
+ * signing's offset + priced length against the seal's elapsed
+ * span, through the domain's breakFiring), else the kept
+ * session's standing break facts (its length in force + its
+ * remaining seconds — the same facts the shell's place
+ * derivation stands on). Between ticks the surface interpolates
+ * on the monotonic clock alone; the wall clock is never
+ * consulted. When neither clock stands, the host renders
+ * nothing — a break that is not firing has no surface, and a
+ * legacy session break on a day no Strongroom signing stands
+ * for is the old engine's business, not this room's.
+ *
+ * The interior's acts are the held room's own, through the same
+ * store verbs the antechamber host uses: a within-reach launch
+ * (no spend — the break was priced whole at signing), a code's
+ * showing (one minute + a SHOWING punch, B-18), a held slip
+ * resolved or a held call taken. There is deliberately NO act
+ * here — and none in the surface — that starts, stops, extends
+ * or shortens the break.
+ */
+@Composable
+private fun BreakHost(viewModel: MonolithViewModel) {
+    val context = LocalContext.current
+    val appContext = context.applicationContext
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val apps by viewModel.apps.collectAsStateWithLifecycle()
+    val session by viewModel.activeSession.collectAsStateWithLifecycle()
+
+    var breakState by remember {
+        mutableStateOf<com.example.ui.`break`.BreakState?>(null)
+    }
+    var revealed by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var refreshTick by remember { mutableStateOf(0) }
+    var nowElapsed by remember {
+        mutableStateOf(android.os.SystemClock.elapsedRealtime())
+    }
+
+    // The escapement's frame clock: monotonic readings only.
+    LaunchedEffect(Unit) {
+        while (true) {
+            androidx.compose.runtime.withFrameMillis {
+                nowElapsed = android.os.SystemClock.elapsedRealtime()
+            }
+        }
+    }
+
+    val sessionOnBreak = session?.isInSafeBreak == true
+    val sessionRemaining = session?.safeBreakSecondsRemaining ?: 0
+    LaunchedEffect(sessionOnBreak, sessionRemaining, refreshTick, apps) {
+        val facts = withContext(Dispatchers.IO) {
+            val store = StrongroomStore(AppContainer.dao(appContext))
+            val row = store.sealedDay() ?: return@withContext null
+            val nowE = android.os.SystemClock.elapsedRealtime()
+            val firingClock = if (
+                row.spanDurationMillis > 0L && row.sealedBootCount >= 0
+            ) {
+                val span = StrongroomDay.SealSpan(
+                    row.sealedAtElapsedMillis,
+                    row.sealedBootCount,
+                    row.spanDurationMillis
+                )
+                StrongroomDay.breakFiring(row.toSigningRecord(), span)
+                    ?.let { firing ->
+                        com.example.ui.`break`.BreakClock.fromFiring(firing, nowE)
+                    }
+            } else null
+            val sessionClock = session?.takeIf { it.isInSafeBreak }?.let { s ->
+                com.example.ui.`break`.BreakClock.fromSession(
+                    s.effectiveBreakSeconds, s.safeBreakSecondsRemaining, nowE
+                )
+            }
+            val clock = firingClock ?: sessionClock ?: return@withContext null
+            val heldRows = store.heldArrivals(row.filingDateIso)
+            val waiting = com.example.ui.antechamber.AntechamberModel.waitingPile(heldRows)
+            Triple(row.toSigningRecord(), clock, waiting)
+        }
+        breakState = facts?.let { (signing, clock, waiting) ->
+            com.example.ui.`break`.BreakState(
+                signing = signing,
+                clock = clock,
+                tokens = apps.map {
+                    com.example.ui.antechamber.AntechamberToken(it.packageName, it.appName)
+                },
+                waiting = waiting,
+                quietDot = com.example.ui.antechamber.AntechamberModel
+                    .quietDotVisible(waiting),
+                revealedCodeIds = revealed
+            )
+        }
+    }
+
+    val standing = breakState ?: return
+    com.example.ui.`break`.Break(
+        state = standing,
+        nowElapsedMillis = nowElapsed,
+        actions = com.example.ui.`break`.BreakActions(
+            onLaunchAllowed = { pkg ->
+                // Within reach is within reach: the phone's own
+                // launcher entry, nothing spent, nothing struck.
+                runCatching {
+                    val launchIntent = appContext.packageManager
+                        .getLaunchIntentForPackage(pkg)
+                        ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    if (launchIntent != null) {
+                        appContext.startActivity(launchIntent)
+                    }
+                }
+            },
+            onShowCode = { slip ->
+                scope.launch {
+                    val shown = withContext(Dispatchers.IO) {
+                        val store = StrongroomStore(AppContainer.dao(appContext))
+                        val row = store.sealedDay() ?: return@withContext false
+                        store.spendAllowance(
+                            row.filingDateIso,
+                            com.example.ui.antechamber.RevolvingDrum.MINUTES_PER_TAKING
+                        ) ?: return@withContext false
+                        val offset = (android.os.SystemClock.elapsedRealtime() -
+                            row.sealedAtElapsedMillis).coerceAtLeast(0L)
+                        store.punch(
+                            row.filingDateIso,
+                            StrongroomDay.Punch(
+                                StrongroomDay.PunchKind.SHOWING, offset, ""
+                            )
+                        )
+                        true
+                    }
+                    if (shown) revealed = revealed + slip.id
+                    refreshTick++
+                }
+            },
+            onResolveHeld = { slip, taken ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .resolveHeldArrival(slip.id, taken)
+                    }
+                    revealed = revealed - slip.id
+                    refreshTick++
+                }
+            },
+            onTakeCall = { slip ->
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        StrongroomStore(AppContainer.dao(appContext))
+                            .resolveHeldArrival(slip.id, taken = true)
+                    }
+                    runCatching {
+                        appContext.startActivity(
+                            Intent(Intent.ACTION_DIAL, Uri.parse("tel:${slip.line}"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                    refreshTick++
+                }
+            },
+            onKnock = {}
         )
     )
 }
@@ -1054,6 +1327,75 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
             plate = plate
         )
     }
+/**
+ * The drawer's standing (BUILD-SR-41) — the ONLY source of
+ * [DrawerState] in the composed app, read at each opening:
+ *
+ *  - **The plates**: every Strongroom day row standing STRUCK
+ *    (LIFTED / BROKEN / AJAR), re-read as struck (B-14: never
+ *    re-struck) from its stored held/bracket facts and its
+ *    punches — the same row the doorway's press reads for
+ *    yesterday, here for the whole season. The bracket pair is
+ *    NOT carried: the day row persists the gap's length but not
+ *    its hours, and [DrawerContents]' mapping forbids inventing
+ *    them (the doorway composition's named resolution, carried).
+ *  - **The stored tasks**: the store's drawerPage rows (legacy
+ *    COMPLETED tasks), paged until a short page — the drawer's
+ *    older keeping, in his own words.
+ *  - **The handing back**: every arrival still WAITING under a
+ *    struck day, oldest day first, arrival order within the
+ *    day, each person once — P6's preparation
+ *    ([LiftingPlate.HandingBack.prepare]) over the store's rows.
+ *    A WAITING row is the record that someone waited; delivery
+ *    is confirmed at the threshold (see the DrawerActions glue),
+ *    and no row is resolved by this read.
+ */
+private suspend fun loadDrawerState(context: Context): DrawerState =
+    withContext(Dispatchers.IO) {
+        val dao = AppContainer.dao(context.applicationContext)
+        val store = StrongroomStore(dao)
+        val days = dao.getAllStrongroomDaysSnapshot()
+        val struckRows = days
+            .filter { it.state in StrongroomDayEntity.STRUCK_STATES }
+            .sortedBy { it.filingDateIso }
+        val plates = struckRows.map { row ->
+            StrongroomDay.DayPlate(
+                filingDateIso = row.filingDateIso,
+                hoursHeldMillis = row.struckHeldMillis,
+                punches = store.punches(row.filingDateIso),
+                sealState = runCatching {
+                    StrongroomDay.SealState.valueOf(row.state)
+                }.getOrDefault(StrongroomDay.SealState.BROKEN),
+                crankSealBroken = row.crankSealBroken,
+                bracketGapMillis = row.struckBracketGapMillis,
+                taskLine = row.taskLine
+            )
+        }
+        val stored = mutableListOf<StrongroomDay.DrawerEntry>()
+        var offset = 0
+        while (true) {
+            val page = store.drawerPage(0L, Long.MAX_VALUE, 100, offset)
+            stored += page
+            if (page.size < 100) break
+            offset += page.size
+        }
+        val waiting = struckRows.flatMap { row ->
+            store.heldArrivals(row.filingDateIso)
+                .filter { it.state == StrongroomHeldArrivalEntity.STATE_WAITING }
+                .map { arrival ->
+                    LiftingPlate.WaitingPerson(
+                        displayName = arrival.line,
+                        ownListRef = "held:${arrival.id}"
+                    )
+                }
+        }
+        DrawerState(
+            contents = DrawerContents.derive(plates, stored),
+            handingBack = LiftingPlate.HandingBack.prepare(waiting),
+            handingBackDelivered = false
+        )
+    }
+
 /**
  * The seal's standing facts (BUILD-SR-37) — the ONLY source of the
  * sealed face and the swing's invocability in the composed app:

@@ -13,14 +13,27 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import com.example.data.StrongroomHeldArrivalEntity
+import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomDay
+import com.example.ui.drawer.Drawer
+import com.example.ui.drawer.DrawerActions
+import com.example.ui.drawer.DrawerContents
+import com.example.ui.drawer.DrawerFront
+import com.example.ui.drawer.DrawerState
 import com.example.ui.antechamber.Antechamber
 import com.example.ui.antechamber.AntechamberActions
 import com.example.ui.antechamber.AntechamberModel
 import com.example.ui.antechamber.AntechamberState
 import com.example.ui.antechamber.AntechamberToken
 import com.example.ui.antechamber.HeldSlip
+import com.example.ui.`break`.Break
+import com.example.ui.`break`.BreakActions
+import com.example.ui.`break`.BreakClock
+import com.example.ui.`break`.BreakState
 import com.example.ui.foundation.StrongroomLightState
 import com.example.ui.foundation.StrongroomTheme
 import org.junit.Assert.assertTrue
@@ -218,5 +231,272 @@ class ScreenshotHarnessTest {
             state(StrongroomDay.AllowancePurse(30, 30), spentCrank()),
             openPile = false
         )
+    }
+
+    // ── THE BREAK (BUILD-SR-39) — the firing, rendered ─────────
+    // The break's faces are phases of ONE span (30 minutes,
+    // priced at the harness signing above): the firing's first
+    // seconds (the door easing, every tooth gold), the span at
+    // rest (half the wheel graphite, the rack dressed, the pile
+    // standing with its dot), the pile's second step, and the
+    // re-drive (the seam nearly shut, the bolts travelling home).
+    // The clock is a fabricated standing, named as such — the
+    // surface renders it exactly as it renders the engine's.
+
+    private fun breakState(remainingMs: Long): BreakState {
+        val signing = signing()
+        val waiting = AntechamberModel.waitingPile(arrivals())
+        return BreakState(
+            signing = signing,
+            clock = BreakClock(
+                totalMillis = 1_800_000L,
+                remainingAtAnchorMillis = remainingMs,
+                anchorElapsedMillis = 0L
+            ),
+            tokens = signing.allowedPackages.map {
+                AntechamberToken(it, labels[it] ?: it)
+            },
+            waiting = waiting,
+            quietDot = AntechamberModel.quietDotVisible(waiting)
+        )
+    }
+
+    private fun breakActions() = BreakActions(
+        onLaunchAllowed = {},
+        onShowCode = { _: HeldSlip -> },
+        onResolveHeld = { _: HeldSlip, _: Boolean -> },
+        onTakeCall = { _: HeldSlip -> },
+        onKnock = {}
+    )
+
+    private fun shootBreak(name: String, remainingMs: Long, openPile: Boolean) {
+        val state = breakState(remainingMs)
+        val now = state.clock.totalMillis - remainingMs
+        composeRule.setContent {
+            StrongroomTheme(lightState = StrongroomLightState.SEALED) {
+                Box(Modifier.size(412.dp, 915.dp).testTag("shot")) {
+                    Break(state = state, actions = breakActions(), nowElapsedMillis = now)
+                }
+            }
+        }
+        composeRule.waitForIdle()
+        if (openPile) {
+            val clickables = composeRule.onAllNodes(hasClickAction())
+            val nodes = clickables.fetchSemanticsNodes()
+            assertTrue("the break must carry clickables", nodes.isNotEmpty())
+            val lowest = nodes.indices.maxByOrNull { nodes[it].boundsInRoot.top }!!
+            clickables[lowest].performClick()
+            composeRule.waitForIdle()
+        }
+        val bitmap = composeRule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        assertTrue(
+            "shot must be a rich render, not a blank field (${file.length()} bytes)",
+            file.length() > 15_000
+        )
+        val colors = HashSet<Int>()
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                colors.add(bitmap.getPixel(x, y))
+                y += 7
+            }
+            x += 7
+        }
+        assertTrue(
+            "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
+            colors.size > 40
+        )
+    }
+
+    @Test
+    fun break_easing_theFiringArrives() {
+        // 900 ms into the span: the ease mid-rise on its cam, the
+        // seam opening, every tooth still gold.
+        shootBreak("break-easing.png", remainingMs = 1_799_100L, openPile = false)
+    }
+
+    @Test
+    fun break_running_theRoomAtRest() {
+        // Half the span run: half the wheel graphite, the rack
+        // dressed, the pile standing with its dot.
+        shootBreak("break-running.png", remainingMs = 900_000L, openPile = false)
+    }
+
+    @Test
+    fun break_heldPile_secondStep() {
+        shootBreak("break-held-pile.png", remainingMs = 900_000L, openPile = true)
+    }
+
+    @Test
+    fun break_redriving_theSealRestored() {
+        // The span's last second and a half: the ease nearly off,
+        // the bolts travelling home on the score.
+        shootBreak("break-redriving.png", remainingMs = 1_500L, openPile = false)
+    }
+
+    // ── THE DRAWER (BUILD-SR-41) — the kept days, rendered ─────
+    // The drawer's faces (census C-22 + C-07/C-19 + C-11): the
+    // shut wood front as it stands in the doorway room; the
+    // drawer open RICH — six struck plates in their pile (the
+    // eye-candy condition: a drawer with plates in it, not an
+    // empty state), kept crank seals in the tray, stored task
+    // slips below; and the threshold standing, where the
+    // handing back stands between his hand and the plates.
+    // Fixture plates are fabricated standings, named as such.
+
+    private fun drawerPlate(
+        iso: String,
+        seal: StrongroomDay.SealState,
+        kinds: List<StrongroomDay.PunchKind>,
+        crank: Boolean = false,
+        task: String? = null
+    ) = StrongroomDay.DayPlate(
+        filingDateIso = iso,
+        hoursHeldMillis = 6L * 3_600_000L,
+        punches = kinds.mapIndexed { i, kind ->
+            StrongroomDay.Punch(kind, (i + 1) * 900_000L)
+        },
+        sealState = seal,
+        crankSealBroken = crank,
+        taskLine = task
+    )
+
+    private fun drawerContents(): DrawerContents = DrawerContents.derive(
+        struckRows = listOf(
+            drawerPlate(
+                "2026-11-02", StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.REACH,
+                    StrongroomDay.PunchKind.HELD, StrongroomDay.PunchKind.FLOOR,
+                    StrongroomDay.PunchKind.SHOWING, StrongroomDay.PunchKind.REACH,
+                    StrongroomDay.PunchKind.FLOOR
+                ),
+                task = "finish the optics one-shot"
+            ),
+            drawerPlate(
+                "2026-11-01", StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.HELD,
+                    StrongroomDay.PunchKind.HELD, StrongroomDay.PunchKind.FLOOR
+                ),
+                crank = true,
+                task = "mock test — full syllabus so far"
+            ),
+            drawerPlate(
+                "2026-10-31", StrongroomDay.SealState.BROKEN,
+                listOf(
+                    StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.FLOOR,
+                    StrongroomDay.PunchKind.FLOOR
+                )
+            ),
+            drawerPlate(
+                "2026-10-30", StrongroomDay.SealState.LIFTED,
+                listOf(
+                    StrongroomDay.PunchKind.HELD, StrongroomDay.PunchKind.REACH,
+                    StrongroomDay.PunchKind.FLOOR, StrongroomDay.PunchKind.FLOOR,
+                    StrongroomDay.PunchKind.FLOOR
+                )
+            ),
+            drawerPlate(
+                "2026-10-29", StrongroomDay.SealState.LIFTED,
+                listOf(StrongroomDay.PunchKind.REACH, StrongroomDay.PunchKind.FLOOR),
+                crank = true
+            ),
+            drawerPlate(
+                "2026-10-28", StrongroomDay.SealState.LIFTED,
+                listOf(StrongroomDay.PunchKind.FLOOR, StrongroomDay.PunchKind.HELD)
+            )
+        ),
+        storedEntries = listOf(
+            StrongroomDay.DrawerEntry(3, "revise thermodynamics notes", 3_000L),
+            StrongroomDay.DrawerEntry(2, "plant kingdom one-shot", 2_000L),
+            StrongroomDay.DrawerEntry(1, "write the week's errors into the copy", 1_000L)
+        )
+    )
+
+    private fun shootDrawer(name: String, content: @androidx.compose.runtime.Composable () -> Unit) {
+        composeRule.setContent {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Box(Modifier.size(412.dp, 915.dp).testTag("shot")) { content() }
+            }
+        }
+        composeRule.waitForIdle()
+        val bitmap = composeRule.onNodeWithTag("shot").captureToImage().asAndroidBitmap()
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        assertTrue(
+            "shot must be a rich render, not a blank field (${file.length()} bytes)",
+            file.length() > 15_000
+        )
+        val colors = HashSet<Int>()
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                colors.add(bitmap.getPixel(x, y))
+                y += 7
+            }
+            x += 7
+        }
+        assertTrue(
+            "shot must carry real colour variance (distinct sampled colours: ${colors.size})",
+            colors.size > 40
+        )
+    }
+
+    @Test
+    fun drawer_frontShut() {
+        shootDrawer("drawer-front.png") {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 20.dp, vertical = 24.dp)
+            ) {
+                Box(modifier = Modifier.weight(1f)) {}
+                DrawerFront(onOpen = {})
+            }
+        }
+    }
+
+    @Test
+    fun drawer_openRich() {
+        shootDrawer("drawer-open-rich.png") {
+            Drawer(
+                state = DrawerState(
+                    contents = drawerContents(),
+                    handingBack = LiftingPlate.HandingBack(emptyList()),
+                    handingBackDelivered = true
+                ),
+                actions = DrawerActions()
+            )
+        }
+    }
+
+    @Test
+    fun drawer_thresholdHandingBack() {
+        shootDrawer("drawer-threshold.png") {
+            Drawer(
+                state = DrawerState(
+                    contents = drawerContents(),
+                    handingBack = LiftingPlate.HandingBack.prepare(
+                        listOf(
+                            LiftingPlate.WaitingPerson("+91 98220 44513", "held:1"),
+                            LiftingPlate.WaitingPerson("482916", "held:3")
+                        )
+                    ),
+                    handingBackDelivered = false
+                ),
+                actions = DrawerActions()
+            )
+        }
     }
 }
