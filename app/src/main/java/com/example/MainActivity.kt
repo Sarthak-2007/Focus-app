@@ -519,6 +519,60 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         sealedFaceState == null &&
         liftingState?.plate?.filingDateIso ==
             StrongroomDay.filingDateIso(System.currentTimeMillis())
+
+    // NAV-ALL (VERIFY-SCREENS additions — the two engine-without-
+    // a-surface states, now faced): the DESK CLOCK and the
+    // AIRLOCK both stand as overlays over the shell. The VM's
+    // machines were always the law (the desk clock's settle
+    // machine raises isAlwaysOnDeskClockVisible after 20 s
+    // untouched in-session; the airlock mints on a legacy
+    // session's intercept); the surfaces render them.
+    val deskClockVisible by
+        viewModel.isAlwaysOnDeskClockVisible
+            .collectAsStateWithLifecycle()
+    val deskClockKeepAwake by
+        viewModel.deskClockKeepAwake.collectAsStateWithLifecycle()
+    val clockSession by viewModel.activeSession
+        .collectAsStateWithLifecycle()
+    val hostActivity = androidx.compose.ui.platform.LocalContext
+        .current as? android.app.Activity
+    // The keep-awake half of the clock's standing: the VM's flag
+    // holds the window awake while the face stands (its battery
+    // surrender clears the flag, and the screen with it).
+    LaunchedEffect(deskClockKeepAwake) {
+        val window = hostActivity?.window ?: return@LaunchedEffect
+        if (deskClockKeepAwake) {
+            window.addFlags(
+                android.view.WindowManager.LayoutParams
+                    .FLAG_KEEP_SCREEN_ON
+            )
+        } else {
+            window.clearFlags(
+                android.view.WindowManager.LayoutParams
+                    .FLAG_KEEP_SCREEN_ON
+            )
+        }
+    }
+    // The lock-screen half: while a session stands, a power
+    // press shows the app (and with it the raised desk clock)
+    // over the lock screen — read-only, since the face carries
+    // no controls.
+    val sessionActiveForLock = clockSession?.isActive == true
+    LaunchedEffect(sessionActiveForLock) {
+        if (android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.O_MR1
+        ) {
+            hostActivity?.setShowWhenLocked(sessionActiveForLock)
+        }
+    }
+    // The airlock's FIX-5c beat at the host: a fresh door whose
+    // peek stands withheld by cooldown re-derives on show (the
+    // face re-derives again when its countdown runs out).
+    LaunchedEffect(airlockState.interceptInstanceId) {
+        if (airlockState.isVisible) {
+            viewModel.refreshAirlockDoorState()
+        }
+    }
     val sealedFaceActions = SealedFaceActions(
         // The knock's sound/haptic substance rides through this
         // seam (collected by the SOUND seat, 2026-11-03): a rap on
@@ -615,6 +669,11 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // The door holds; Back is not an exit.
     }
 
+    // NAV-ALL: the shell stands in a Box so the two overlay
+    // faces (desk clock, airlock) can stand over every place.
+    androidx.compose.foundation.layout.Box(
+        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+    ) {
     StrongroomShell(
         viewModel = viewModel,
         // THE UNIFIED STANDING (BUILD-SR-38 merge composition):
@@ -895,6 +954,42 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             }
         }
     )
+
+    // THE DESK CLOCK stands over the places while its machine
+    // holds it raised: in-session it prints the session's
+    // whole-span elapsed + remaining (his #37 ruling — the
+    // numbers stay); hand-raised with no session it prints the
+    // wall time. Read-only: the face carries no controls.
+    if (deskClockVisible) {
+        val session = clockSession?.takeIf { it.isActive }
+        com.example.ui.deskclock.DeskClock(
+            elapsedSeconds = session?.spanElapsedSeconds,
+            remainingSeconds = session?.let {
+                if (it.isStopwatchMode) null
+                else (it.spanTargetSeconds - it.spanElapsedSeconds)
+                    .coerceAtLeast(0)
+            },
+            wallTimeText = com.example.data.ClockText.timeOfDay(
+                androidx.compose.ui.platform.LocalContext.current,
+                System.currentTimeMillis()
+            )
+        )
+    }
+    // THE AIRLOCK stands over everything when an intercept has
+    // minted it — its door is the only face a legacy session's
+    // reach may land on, and its acts are the VM's own verbs.
+    if (airlockState.isVisible) {
+        com.example.ui.airlock.Airlock(
+            state = airlockState,
+            onReturn = { viewModel.transmuteImpulseAndReturn() },
+            onPeek = { viewModel.start2MinutePeek() },
+            onReason = { viewModel.selectDistractionReason(it) },
+            onGraceAbort = { viewModel.confirmGraceAbortFromAirlock() },
+            onOfferArmed = { viewModel.onAirlockOfferArmed() },
+            onCooldownExpired = { viewModel.refreshAirlockDoorState() }
+        )
+    }
+    }
 }
 
 /**

@@ -1604,6 +1604,53 @@ class ScreenshotHarnessTest {
         writeShot("lifting-device.png", bitmap)
     }
 
+    /**
+     * NAV-ALL (VERIFY-SCREENS additions): the two faces this leg
+     * seats, standing at device spec. The desk clock in-session
+     * (elapsed + remaining, his #37 ruling) and the airlock door
+     * on a legacy-session intercept (offer standing). Both are
+     * plain faces by this job's law, so the sparse gate is the
+     * honest one — existence, colour life, off-field share.
+     */
+    @Test
+    fun deskClock_deviceSpec_session() {
+        val bitmap = drawShotDevice {
+            com.example.ui.deskclock.DeskClock(
+                elapsedSeconds = 3723,
+                remainingSeconds = 1877,
+                wallTimeText = "03:30"
+            )
+        }
+        writeShotSparse("desk-clock-device.png", bitmap)
+    }
+
+    @Test
+    fun airlock_deviceSpec_standing() {
+        val bitmap = drawShotDevice {
+            com.example.ui.airlock.Airlock(
+                state = com.example.session.AirlockInterceptState(
+                    isVisible = true,
+                    interceptedPackageName = "com.instagram.android",
+                    interceptedAppName = "Instagram",
+                    interceptReasonBadge = "Locked",
+                    sessionIntention = "Physics — Rotational Mechanics",
+                    canUse2MinutePeek = true,
+                    isLockedTier = true,
+                    selectedReason =
+                        com.example.data.DistractionTriggerReason
+                            .MUSCLE_MEMORY
+                ),
+                onReturn = {},
+                onPeek = {},
+                onReason = {},
+                onGraceAbort = {},
+                onOfferArmed = {},
+                onCooldownExpired = {}
+            )
+        }
+        writeShotSparse("airlock-device.png", bitmap)
+    }
+
     @Test
     fun navWalk_home_signing_back_drawer_deviceSpec() {
         val activity = composeRule.activity
