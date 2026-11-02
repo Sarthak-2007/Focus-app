@@ -137,6 +137,10 @@ class StrongroomExitsAntechamberTestSr3Test {
         // never partially granted, never converted into an opening.
         val live = StrongroomDay.AllowancePurse(totalMinutes = 30, spentMinutes = 25)
         assertNull(live.spend(6))
-        assertEquals(5, live.spend(5)!!.remainingMinutes)
+        // An exact-fit spend is lawful and lands ON the hard stop.
+        val drained = live.spend(5)!!
+        assertEquals(0, drained.remainingMinutes)
+        assertTrue(drained.isHardStopped)
+        assertNull(drained.spend(1))
     }
 }
