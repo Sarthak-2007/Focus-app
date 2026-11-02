@@ -15,6 +15,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
@@ -58,13 +60,13 @@ import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
 import com.example.domain.LiftingPlate
-import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
+import com.example.ui.doorway.HomeDoor
+import com.example.ui.doorway.HomeDoorActions
 import com.example.ui.doorway.plateTruthForDoorway
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
-import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
 import com.example.ui.lifting.Lifting
 import com.example.ui.lifting.LiftingState
@@ -659,70 +661,101 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                         )
                     )
                 } else {
-                androidx.compose.foundation.layout.Box(
-                    modifier = androidx.compose.ui.Modifier.fillMaxSize()
-                ) {
-                // THE FACE (LEAD-DOORFIX, 2026-11-03): the
-                // seven-ink print stands behind the whole doorway
-                // place — the door IS this surface, edge to edge;
-                // the Doorway's furniture, the swing act, the
-                // signing table and the drawer's front all stand
-                // on it. (Before this, the place stood on the bare
-                // field and the Doorway's drawn leaf — 26% of the
-                // room's width — read on Sarthak's phone as a tiny
-                // door floating in a void.)
-                com.example.ui.doorway.DoorFace()
+                // HOME-FIRST (2026-11-03, Sarthak's redirect):
+                // the doorway place is the HOME DOOR — the vault
+                // door modelled in code (HomeDoor): the top plate
+                // (his sentence + the lifting hour), the great
+                // wheel and the combination dial worked by hand,
+                // SIGN TOMORROW, and the drawer pull at the foot.
+                // The pasted print face is retired from this
+                // place (the print survives as the app's icon
+                // only). SIGN TOMORROW stands the signing table
+                // in this same place — the evening's act — with
+                // a plain way back to the door (and Back returns
+                // here first); the swing act stands under the
+                // door on the mornings it is invocable, as before.
+                var signOpen by remember { mutableStateOf(false) }
+                BackHandler(enabled = signOpen) { signOpen = false }
                 androidx.compose.foundation.layout.Column(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier.weight(1f)
-                    ) {
-                        Doorway(state = doorwayState)
-                    }
-                    if (swingStanding) {
-                        SwingAct(
-                            state = swingActState,
-                            actions = SwingActActions(
-                                onContact = {
-                                    shellScope.launch {
-                                        val todayIso = StrongroomDay
-                                            .filingDateIso(System.currentTimeMillis())
-                                        val span = withContext(Dispatchers.IO) {
-                                            StrongroomEngineBridge.activateSeal(
-                                                appContext, todayIso
-                                            )
-                                        }
-                                        swingActState = if (span != null) {
-                                            SwingActState(sealStruck = true)
-                                        } else {
-                                            SwingActState(sealFailed = true)
-                                        }
-                                    }
-                                },
-                                onCeremonyComplete = {
-                                    swingActState = SwingActState()
-                                    doorwayRefreshTick.value++
+                    if (signOpen) {
+                        // The way back to the door, in plain words.
+                        androidx.compose.foundation.layout.Row(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    signOpen = false
                                 }
+                                .padding(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            androidx.compose.material3.Text(
+                                text = "‹ THE DOOR",
+                                style = com.example.ui.foundation
+                                    .StrongroomType.Anon2,
+                                color = com.example.ui.foundation
+                                    .StrongroomInks.Gold
                             )
-                        )
+                        }
+                        androidx.compose.foundation.layout.Box(
+                            modifier = androidx.compose.ui.Modifier.weight(1f)
+                        ) {
+                            SigningHost(viewModel = viewModel)
+                        }
+                    } else {
+                        androidx.compose.foundation.layout.Box(
+                            modifier = androidx.compose.ui.Modifier.weight(1f)
+                        ) {
+                            HomeDoor(
+                                state = doorwayState,
+                                actions = HomeDoorActions(
+                                    onSignTomorrow = { signOpen = true },
+                                    onOpenDrawer = {
+                                        // The opening act is the
+                                        // drawer's slide
+                                        // (DRAWER_OPEN, wired by
+                                        // the SOUND seat).
+                                        StrongroomEngineBridge.fireSurfaceEvent(
+                                            appContext, HapticEvent.DRAWER_OPEN
+                                        )
+                                        drawerOpen = true
+                                    },
+                                    onFeelEvent = { event ->
+                                        StrongroomEngineBridge.fireSurfaceEvent(
+                                            appContext, event
+                                        )
+                                    }
+                                )
+                            )
+                        }
+                        if (swingStanding) {
+                            SwingAct(
+                                state = swingActState,
+                                actions = SwingActActions(
+                                    onContact = {
+                                        shellScope.launch {
+                                            val todayIso = StrongroomDay
+                                                .filingDateIso(System.currentTimeMillis())
+                                            val span = withContext(Dispatchers.IO) {
+                                                StrongroomEngineBridge.activateSeal(
+                                                    appContext, todayIso
+                                                )
+                                            }
+                                            swingActState = if (span != null) {
+                                                SwingActState(sealStruck = true)
+                                            } else {
+                                                SwingActState(sealFailed = true)
+                                            }
+                                        }
+                                    },
+                                    onCeremonyComplete = {
+                                        swingActState = SwingActState()
+                                        doorwayRefreshTick.value++
+                                    }
+                                )
+                            )
+                        }
                     }
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier.weight(1.35f)
-                    ) {
-                        SigningHost(viewModel = viewModel)
-                    }
-                    // The drawer's shut front — the room's
-                    // furniture at the foot of the signing place.
-                    // The opening act is the drawer's slide
-                    // (DRAWER_OPEN, wired by the SOUND seat).
-                    DrawerFront(onOpen = {
-                        StrongroomEngineBridge.fireSurfaceEvent(
-                            appContext, HapticEvent.DRAWER_OPEN
-                        )
-                        drawerOpen = true
-                    })
-                }
                 }
                 }
             }
@@ -1414,21 +1447,30 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
         val yesterdayIso = java.time.LocalDate.parse(todayIso).minusDays(1).toString()
 
         val todayRow = store.day(todayIso)
-        val composedDay = todayRow
+        fun standingDay(
+            row: com.example.data.StrongroomDayEntity?
+        ): StrongroomComposition.ComposedDay? = row
             ?.takeIf {
                 it.state == StrongroomDayEntity.STATE_COMPOSED ||
                     it.state == StrongroomDayEntity.STATE_SIGNED
             }
-            ?.let { row ->
+            ?.let { r ->
                 StrongroomComposition.ComposedDay(
-                    filingDateIso = row.filingDateIso,
+                    filingDateIso = r.filingDateIso,
                     shape = runCatching {
-                        StrongroomComposition.DayShape.valueOf(row.dayShape)
+                        StrongroomComposition.DayShape.valueOf(r.dayShape)
                     }.getOrDefault(StrongroomComposition.DayShape.ORDINARY),
-                    record = row.toSigningRecord(),
-                    amendedBySigning = row.amendedBySigning
+                    record = r.toSigningRecord(),
+                    amendedBySigning = r.amendedBySigning
                 )
             }
+        val composedDay = standingDay(todayRow)
+        // HOME-FIRST: the home door's top plate carries the
+        // SIGNING day's facts — tomorrow's standing row (the
+        // signing table's own day, in the SigningHost's order),
+        // with today's row as its fallback.
+        val tomorrowIso = java.time.LocalDate.parse(todayIso).plusDays(1).toString()
+        val signingDay = standingDay(store.day(tomorrowIso)) ?: composedDay
 
         val waiting = store.heldArrivals(todayIso).any {
             it.state == StrongroomHeldArrivalEntity.STATE_WAITING
@@ -1456,7 +1498,8 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
         DoorwayState.fromFacts(
             composedDay = composedDay,
             waitingSlipPresent = waiting,
-            plate = plate
+            plate = plate,
+            signingDay = signingDay
         )
     }
 /**

@@ -1,117 +1,116 @@
 package com.example.ui.doorway
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.R
 import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
+import com.example.service.haptics.HapticEvent
 import com.example.ui.foundation.DrivenDoor
 import com.example.ui.foundation.LocalStrongroomLightState
 import com.example.ui.foundation.StrongroomInks
 import com.example.ui.foundation.StrongroomLight
 import com.example.ui.foundation.StrongroomLightState
+import com.example.ui.foundation.StrongroomLitSurface
+import com.example.ui.foundation.StrongroomRoles
 import com.example.ui.foundation.StrongroomType
+import com.example.ui.signing.CombinationSpin
+import com.example.ui.signing.SigningFeel
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 
 /**
- * C-21 · THE DOORWAY / THE GLANCE — the app's first screen, and
- * C-01's open state: the Door standing open in its world, the
- * signing place composed before it.
+ * THE HOME SCREEN (HOME-FIRST, 2026-11-03 — Sarthak's redirect:
+ * "Make the wireframe of the app first. One thing end to end
+ * then next. Make home screen first. I don't want a static
+ * page. Don't use this image, just model the home page vault
+ * door after this.").
  *
- * Built by BUILD-SR-35 (T24) from the rebuild element census
- * (INVENTORY-SR-1), firsthand. The Doorway's count is FOUR and no
- * more (ledger B-17, census C-21):
+ * The home is the vault door, MODELLED in code after the
+ * seven-ink print — the print is the model, never the face (the
+ * pasted-photo face is retired from this surface; the print
+ * survives only as the app's icon, his separate order). The
+ * whole place is drawn in code — no full-bleed bitmap, no
+ * weight-stacked regions standing over an image — so what the
+ * harness renders at a device's spec is what the device draws.
  *
- *  1. **The sheet on the press** — the Composition standing at the
- *     open door (C-13): tomorrow already composed from the week's
- *     standing order, standing to be amended at the signing. Its
- *     words are only its own row's: the day-shape's name as signed
- *     (TX-DO-02…05), the task in his own words (TX-SAY-07), the
- *     lifting hour he set, a pencil-grey loosening where one
- *     stands (TX-SHOW-16). The locked things stand as enamel chips
- *     — objects, not a list; the shaped gaps stand as shaped
- *     empty slots — deliberate empty spaces, never openings.
- *  2. **One plain line** — the desk clock's in-room telling
- *     carried at the doorway (C-05's numberless record in its
- *     Glance form): one line, its formed part gold, carrying zero
- *     numerals, zero words. The fallen day's hour-form for this
- *     line stands GAP-COORD-07 and is NOT authored here.
- *  3. **The waiting slip** — the held waiting (C-14), present as a
- *     slip when anyone or anything waits, absent when nothing
- *     does. It carries no count, no name, no dot and no word: the
- *     held pile's own words live on the held surface, not here.
- *  4. **The press** — the striking (C-06): yesterday's struck
- *     brass plate resting at the doorway through the unsealed
- *     morning (IL U-03), its punched holes graded as struck and
- *     its seal line in exactly its two lawful states
- *     (TX-SHOW-13). No plate stands when no seal stood (B-14) —
- *     the tray side is simply empty.
+ * The wireframe's five, in its order:
  *
- * THE DOOR (C-01, its Doorway share): the seven-ink print — the
- * real vault-door photograph recoloured into the room's inks,
- * Sarthak's own pick, cleared by his eye — standing as the whole
- * surface through [DoorFace], which the host lays behind this
- * place edge to edge. The open Door carries NO printings: the
- * four printings (C-12) are cut at the closing onto the SEALED
- * face; an open door has nothing engraved to show, and the
- * door-word's slot (GAP-COORD-01) is not this surface's to fill
- * or to fake. (The flat drawn door that stood here before — 7dp
- * enamel grain cells, a leaf drawn at 26% of the room's width —
- * was killed by Sarthak's eye on his phone, 2026-11-03: "Even
- * that tiny thing is ugly." The print is the face; no drawn
- * stand-in stands in for the door again.)
+ *  5. **The top plate** — his sentence (or its kept place, the
+ *     purpose sentence standing in it) and the lifting hour,
+ *     engraved on the door: the signing day's own record, read
+ *     by the host ([DoorwayState.plateSentence] /
+ *     [DoorwayState.plateLiftingText]).
+ *  1. **The great wheel** — violet enamel, gold, graphite
+ *     steel, grain as material ([DoorwayTexture] ENAMEL cells,
+ *     per-cell, position-locked). It TURNS under drag with the
+ *     signing spin's own law: governed ceiling 240°/s, stations
+ *     at 36°, seats attempted at drag end, felt through
+ *     [SigningFeel] into the one sensory bus (the host fires).
+ *  2. **The combination dial** — at the door's lower-left rim:
+ *     a graphite dial whose needle reads the station under the
+ *     hand. Turning the wheel works the combination by hand —
+ *     the [CombinationSpin] itself, the same mechanism the
+ *     signing table works. A combination is a value nowhere:
+ *     never stored, never shown whole (A-2); it is worked where
+ *     he stands, and the signing's own spin at the table is
+ *     worked there, by the same law.
+ *  3. **SIGN TOMORROW** — the one big button: opens the signing
+ *     table (the host's act). This is how the app is used:
+ *     open app → home door → SIGN TOMORROW → set apps + lifting
+ *     hour + combination → sign.
+ *  4. **The drawer pull** — at the foot, under the gold
+ *     threshold line: opens the past-days drawer (the host's
+ *     act, with its DRAWER_OPEN voice as before).
  *
- * Texture: the print IS the texture — a real door's enamel,
- * steel and brass at photographic grain. The one drawn grain
- * left on this surface is the struck plate's brass
- * ([DoorwayTexture] BRASS), a kept record's own material.
+ * Yesterday's struck plate (C-06) still rests at the doorway
+ * when a plate stands — the morning's record, between the door
+ * and the button, exactly as the doorway has always carried it.
  *
- * Motion, in physics vocabulary (foundation primitives only):
- * on entry [DoorFace] completes the last of the door's
- * weight-driven travel — [DrivenDoor]'s angle read through
- * [DoorwaySwing], spent as the whole face's settle. Nothing
- * else on this surface moves: the Doorway is a place at rest,
- * and dopamine lives at passive moments only (ledger E-5).
- * All motion figures UNPROVEN-ON-DEVICE (foundation head, G-7).
- *
- * This surface authors no navigation, no settings, no greeting,
- * no summary and no prompt (census GAP-R01/R02/R14): the doorway
- * adds no word of its own beyond its four furniture pieces' words.
+ * Motion figures are the foundation's filed ones; all feel is
+ * UNPROVEN-ON-DEVICE (G-7) until Sarthak's hand.
  */
 data class DoorwayState(
     /** (1) The Composition standing at the open door, or null when
@@ -126,14 +125,23 @@ data class DoorwayState(
     val waitingSlipPresent: Boolean = false,
     /** (4) Yesterday's struck plate resting at the doorway, or
      *  null when no plate was struck (no seal stood — B-14). */
-    val plate: LiftingPlate.PlateTruth? = null
+    val plate: LiftingPlate.PlateTruth? = null,
+    /** (5) The top plate's sentence: the signing day's sentence
+     *  as signed, or its kept place (the purpose sentence) when
+     *  the record carries it — null only when no day stands at
+     *  all, when the plate itself shows the purpose sentence. */
+    val plateSentence: String? = null,
+    /** (5) The top plate's lifting hour, as his figure (HH:MM),
+     *  from the signing day's record — null when no day stands. */
+    val plateLiftingText: String? = null
 ) {
     companion object {
-        /** The doorway with nothing standing in it: the door open,
-         *  the place empty. Since the composition onto BUILD-SR-34's
-         *  shell, this is a DERIVED result, never a hardcoded host
-         *  state: it stands exactly when no composed day stands,
-         *  nothing waits, and no plate rests at the doorway. */
+        /** The doorway with nothing standing in it: the door
+         *  modelled and at rest, the place empty. Since the
+         *  composition onto BUILD-SR-34's shell, this is a
+         *  DERIVED result, never a hardcoded host state: it
+         *  stands exactly when no composed day stands, nothing
+         *  waits, and no plate rests at the doorway. */
         val AtRest = DoorwayState()
 
         /**
@@ -145,17 +153,31 @@ data class DoorwayState(
          * behind it yet (its record is the desk clock's, in-session),
          * so it stands unformed rather than invented; the pencil-grey
          * loosening likewise has no standing source and stays absent.
+         *
+         * HOME-FIRST: the top plate's facts derive from the
+         * SIGNING day ([signingDay] — tomorrow's standing row, the
+         * table's own day; falls back to [composedDay]): its
+         * sentence or kept place, and its lifting hour.
          */
         fun fromFacts(
             composedDay: StrongroomComposition.ComposedDay?,
             waitingSlipPresent: Boolean,
-            plate: LiftingPlate.PlateTruth?
-        ): DoorwayState = DoorwayState(
-            composition = composedDay?.let { DoorwayComposition.fromComposedDay(it) },
-            plainLineFormedFraction = 0f,
-            waitingSlipPresent = waitingSlipPresent,
-            plate = plate
-        )
+            plate: LiftingPlate.PlateTruth?,
+            signingDay: StrongroomComposition.ComposedDay? = null
+        ): DoorwayState {
+            val plateDay = signingDay ?: composedDay
+            return DoorwayState(
+                composition = composedDay?.let { DoorwayComposition.fromComposedDay(it) },
+                plainLineFormedFraction = 0f,
+                waitingSlipPresent = waitingSlipPresent,
+                plate = plate,
+                plateSentence = plateDay?.record?.sentenceOrKeptPlace
+                    ?: plateDay?.record?.purposeSentence,
+                plateLiftingText = plateDay?.record?.liftingTime?.let {
+                    "%02d:%02d".format(it.hour, it.minute)
+                }
+            )
+        }
     }
 }
 
@@ -262,10 +284,9 @@ data class DoorwayComposition(
  * The Door's entry settle, read off the foundation's driven body:
  * the swing-relative millisecond at which the body first passes
  * the end-stop's engagement (74°), and the millisecond at which
- * it settles against the stop. The Doorway plays only this last
- * travel — the door was already open; what entry shows is its
- * weight finishing, never a replayed lifting (C-17 is another
- * surface's event).
+ * it settles against the stop. Kept as the foundation's filed
+ * testimony of the door's weight (its tests stand on it); the
+ * modelled home door itself is at rest until his hand works it.
  */
 object DoorwaySwing {
     private val door = DrivenDoor()
@@ -284,251 +305,480 @@ object DoorwaySwing {
         door.angleAt(StartMs + entryMs.coerceIn(0, DurationMs))
 }
 
+/** The home door's acts — every one of them the host's to carry
+ *  out (the surface authors no navigation of its own). */
+data class HomeDoorActions(
+    /** (3) SIGN TOMORROW pressed: the host stands the signing
+     *  table in this place. */
+    val onSignTomorrow: () -> Unit,
+    /** (4) The drawer pull drawn: the host opens the past-days
+     *  drawer (and fires its DRAWER_OPEN voice, as before). */
+    val onOpenDrawer: () -> Unit,
+    /** The wheel's earned felt events (stations · gates · the
+     *  final seat · the seated dial's wall), fired by the host
+     *  through the bridge's one bus — the FEEL seam. */
+    val onFeelEvent: (HapticEvent) -> Unit
+)
+
+/**
+ * THE HOME DOOR — the wireframe's five, composed as one place.
+ *
+ * [initialRotationDeg] seeds the wheel's standing rotation (the
+ * harness's mid-turn seam, the same pattern as the Break's
+ * standing clock): production always enters at 0.
+ */
 @Composable
-fun Doorway(state: DoorwayState, modifier: Modifier = Modifier) {
+fun HomeDoor(
+    state: DoorwayState,
+    actions: HomeDoorActions,
+    modifier: Modifier = Modifier,
+    initialRotationDeg: Double = 0.0
+) {
     val lightState = LocalStrongroomLightState.current
     Column(
         modifier = modifier
             .fillMaxSize()
-            .semantics { contentDescription = "ULYSSES" },
-        verticalArrangement = Arrangement.Bottom
+            .background(StrongroomInks.Graphite)
+            .semantics { contentDescription = "ULYSSES" }
     ) {
-        // The signing place, in the Doorway's count order (C-21),
-        // standing at the foot of the door face — the host lays
-        // [DoorFace] behind this surface whole, and these four
-        // pieces stand on the print.
-        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-            state.composition?.let { CompositionSheet(it, lightState) }
+        Spacer(Modifier.height(20.dp))
+        TopPlate(state, lightState)
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            val doorSize = min(
+                min(maxWidth.value * 0.94f, maxHeight.value),
+                400f
+            ).dp
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                DoorAssembly(
+                    size = doorSize,
+                    lightState = lightState,
+                    initialRotationDeg = initialRotationDeg,
+                    onFeelEvent = actions.onFeelEvent
+                )
+            }
+        }
+        state.plate?.let {
+            StruckPlateStrip(
+                it,
+                modifier = Modifier.padding(horizontal = 20.dp)
+            )
             Spacer(Modifier.height(14.dp))
-            PlainLine(state.plainLineFormedFraction)
-            if (state.waitingSlipPresent) {
-                Spacer(Modifier.height(10.dp))
-                WaitingSlip(modifier = Modifier.align(Alignment.End))
-            }
-            state.plate?.let {
-                Spacer(Modifier.height(14.dp))
-                StruckPlateStrip(it)
-            }
-            Spacer(Modifier.height(18.dp))
         }
-    }
-}
-
-// ------------------------------------------------------------------
-// The Door face (C-01, Doorway share) — THE SEVEN-INK PRINT
-// ------------------------------------------------------------------
-
-/**
- * THE FACE: the seven-ink print — the real vault-door photograph
- * recoloured into the room's seven inks, picked and cleared by
- * Sarthak's own eye (2026-11-01) — standing as the opening
- * surface's whole ground: full-bleed, cropped to the screen's
- * reach, the door IS the surface. The host lays this behind the
- * doorway place whole; every decided element of the place (the
- * sheet, the line, the slip, the plate, the swing act, the
- * signing table, the drawer front) stands on it. No drawn
- * stand-in: the flat vector door this replaced read as a toy,
- * and shrunk into the room's top corner it read as a bug
- * (Sarthak's phone, 2026-11-03 03:35 IST).
- *
- * Motion: on entry the face completes the last of the door's
- * weight-driven travel — the foundation's driven body
- * ([DrivenDoor], its angle read through [DoorwaySwing]) spent
- * as a settle of the whole face: a breath of scale off the
- * print and a few dp of downward ease as it comes onto its
- * stop. The print itself never redraws; the body only
- * projects its angle onto the face's carriage.
- */
-@Composable
-fun DoorFace(modifier: Modifier = Modifier) {
-    val door = remember { DrivenDoor() }
-    var entryMs by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        val start = withFrameMillis { it }
-        while (entryMs < DoorwaySwing.DurationMs) {
-            val now = withFrameMillis { it }
-            entryMs = (now - start).toInt().coerceAtMost(DoorwaySwing.DurationMs)
-        }
-    }
-    val angle = door.angleAt(DoorwaySwing.StartMs + entryMs)
-    val startAngle = door.angleAt(DoorwaySwing.StartMs)
-    val travelFraction = if (door.finalDeg > startAngle) {
-        ((door.finalDeg - angle) / (door.finalDeg - startAngle))
-            .toFloat().coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    Image(
-        painter = painterResource(R.drawable.strongroom_door_print),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                scaleX = 1f + 0.03f * travelFraction
-                scaleY = 1f + 0.03f * travelFraction
-                translationY = -8.dp.toPx() * travelFraction
+        SignTomorrowButton(onClick = actions.onSignTomorrow)
+        Spacer(Modifier.height(18.dp))
+        // (4) The threshold: a gold line across the room, the
+        // drawer's pull under it, its name in the telemetry hand.
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 20.dp)
+                .fillMaxWidth()
+                .height(2.dp)
+                .background(
+                    StrongroomLight.blendEighth(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 2
+                    )
+                )
+        )
+        Spacer(Modifier.height(14.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 132.dp, height = 30.dp)
+                    .border(2.dp, StrongroomInks.Gold, RoundedCornerShape(15.dp))
+                    .clickable { actions.onOpenDrawer() }
+                    .semantics { contentDescription = "PAST DAYS" },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(84.dp)
+                        .height(2.dp)
+                        .background(StrongroomInks.Gold)
+                )
             }
-    )
-}
-
-// ------------------------------------------------------------------
-// (1) The sheet on the press — the Composition standing (C-13)
-// ------------------------------------------------------------------
-
-@Composable
-private fun CompositionSheet(
-    composition: DoorwayComposition,
-    lightState: StrongroomLightState
-) {
-    val sheetGround = StrongroomLight.stateSurface(
-        StrongroomInks.Violet, lightState, com.example.ui.foundation.StrongroomLitSurface.FACE
-    )
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(sheetGround, RoundedCornerShape(4.dp))
-            .border(1.dp, StrongroomInks.Gold, RoundedCornerShape(4.dp))
-            .padding(horizontal = 16.dp, vertical = 14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = composition.dayShapeWord,
-                style = StrongroomType.Scr3,
-                color = StrongroomInks.Gold,
-                modifier = Modifier.weight(1f)
-            )
-            // The lifting hour he set — his figure, on the sheet
-            // that will be shut into the vault (not a printing:
-            // printings belong to the sealed face, C-12).
-            Text(
-                text = composition.liftingHourText,
-                style = StrongroomType.Anon2,
-                color = StrongroomInks.Gold
-            )
-        }
-        composition.taskLine?.let {
             Spacer(Modifier.height(8.dp))
-            Text(text = it, style = StrongroomType.Scr1, color = StrongroomInks.Gold)
-        }
-        composition.pencilGreyProposal?.let {
-            Spacer(Modifier.height(6.dp))
-            // Pencil-grey: the gold of the sheet descended halfway
-            // to graphite — grey, erasable, binding nothing.
             Text(
-                text = it,
-                style = StrongroomType.Scr1,
+                text = "PAST DAYS",
+                style = StrongroomType.Anon1,
                 color = StrongroomLight.blendEighth(
                     StrongroomInks.Gold, StrongroomInks.Graphite, 4
                 )
             )
         }
-        if (composition.lockedThings > 0 || composition.inSpanGaps > 0) {
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // What goes into the vault: enamel chips, one per
-                // thing — objects standing in a row, never a list
-                // of names and never a printed count.
-                Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    repeat(composition.lockedThings) {
-                        Box(
-                            modifier = Modifier
-                                .size(width = 18.dp, height = 12.dp)
-                                .background(
-                                    StrongroomLight.blendEighth(
-                                        StrongroomInks.Violet, StrongroomInks.Graphite, 3
-                                    ),
-                                    RoundedCornerShape(2.dp)
-                                )
-                                .border(1.dp, StrongroomInks.Gold, RoundedCornerShape(2.dp))
-                        )
-                        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+// ------------------------------------------------------------------
+// (5) The top plate — his sentence + the lifting hour, engraved
+// ------------------------------------------------------------------
+
+@Composable
+private fun TopPlate(state: DoorwayState, lightState: StrongroomLightState) {
+    val plateGround = StrongroomLight.stateSurface(
+        StrongroomInks.Violet, lightState, StrongroomLitSurface.FACE
+    )
+    Column(
+        modifier = Modifier
+            .padding(horizontal = 20.dp)
+            .fillMaxWidth()
+            .background(plateGround, RoundedCornerShape(6.dp))
+            .border(1.dp, StrongroomInks.Gold, RoundedCornerShape(6.dp))
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        // His sentence as signed — or, standing in its kept
+        // place, the purpose sentence the record itself carries.
+        Text(
+            text = state.plateSentence ?: StrongroomDay.PURPOSE_SENTENCE,
+            style = StrongroomType.Scr2,
+            color = StrongroomInks.Gold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        state.plateLiftingText?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "LIFTS $it",
+                style = StrongroomType.Anon2,
+                color = StrongroomInks.Gold
+            )
+        }
+    }
+}
+
+// ------------------------------------------------------------------
+// (1) + (2) The door — the great wheel and the combination dial
+// ------------------------------------------------------------------
+
+@Composable
+private fun DoorAssembly(
+    size: androidx.compose.ui.unit.Dp,
+    lightState: StrongroomLightState,
+    initialRotationDeg: Double,
+    onFeelEvent: (HapticEvent) -> Unit
+) {
+    val spin = remember { CombinationSpin() }
+    val feel = remember { SigningFeel() }
+    var rotation by remember { mutableStateOf(initialRotationDeg) }
+    var lastVelocity by remember { mutableStateOf(0.0) }
+    var seats by remember { mutableStateOf(0) }
+
+    Box(modifier = Modifier.size(size)) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    var lastAngle: Double? = null
+                    var lastMs: Long = 0L
+                    detectDragGestures(
+                        onDragStart = { lastAngle = null },
+                        onDragEnd = {
+                            if (spin.isComplete) {
+                                // A seat attempt against the
+                                // seated dial: its flat wall.
+                                feel.onAttemptAgainstSeatedDial()
+                                    .forEach(onFeelEvent)
+                            } else {
+                                val clockwise = lastVelocity > 0.0
+                                if (spin.attemptSeat(rotation, lastVelocity, clockwise)) {
+                                    seats = spin.seatsTaken
+                                    feel.onSeatTaken(finalSeat = spin.isComplete)
+                                        .forEach(onFeelEvent)
+                                }
+                            }
+                        },
+                        onDrag = { change, _ ->
+                            val cx = this.size.width / 2.0
+                            val cy = this.size.height / 2.0
+                            val angle = Math.toDegrees(
+                                atan2(change.position.y - cy, change.position.x - cx)
+                            )
+                            val prev = lastAngle
+                            if (prev != null) {
+                                var delta = angle - prev
+                                if (delta > 180.0) delta -= 360.0
+                                if (delta < -180.0) delta += 360.0
+                                // The governed ceiling: a dial that
+                                // cannot be flicked (240°/s, filed).
+                                val dt = ((change.uptimeMillis - lastMs)
+                                    .coerceAtLeast(1)) / 1000.0
+                                var velocity = delta / dt
+                                if (velocity > 240.0) velocity = 240.0
+                                if (velocity < -240.0) velocity = -240.0
+                                lastVelocity = velocity
+                                rotation += velocity * dt
+                                // The travel the mechanism accepted
+                                // is the travel the hand feels.
+                                feel.onTravel(rotation).forEach(onFeelEvent)
+                            }
+                            lastAngle = angle
+                            lastMs = change.uptimeMillis
+                            change.consume()
+                        }
+                    )
+                }
+        ) {
+            // The wheel turns over with the seats: its drawn
+            // rotation is the spin's own turnover (120° per seat)
+            // plus the hand's live travel within the pass — the
+            // signing's law, carried whole (A-16).
+            val drawn = (spin.wheelTurnoverDeg + rotation % 360.0).toFloat()
+            Canvas(Modifier.fillMaxSize()) {
+                val cx = this.size.width / 2f
+                val cy = this.size.height / 2f
+                val r = this.size.minDimension / 2f
+
+                // The enamelled leaf: violet enamel with its own
+                // grain — fine cells, position-locked, clipped to
+                // the leaf (the plate brass's proven pattern).
+                val discPath = Path().apply {
+                    addOval(Rect(Offset(cx - r, cy - r), Size(2f * r, 2f * r)))
+                }
+                clipPath(discPath) {
+                    drawRect(color = StrongroomInks.Violet)
+                    val cell = DoorwayTexture.Species.ENAMEL.cellPx.dp.toPx()
+                    var rowI = 0
+                    var yy = cy - r
+                    while (yy < cy + r) {
+                        var colI = 0
+                        var xx = cx - r
+                        while (xx < cx + r) {
+                            val tone = DoorwayTexture.cellTone(
+                                StrongroomInks.Violet, StrongroomInks.Graphite,
+                                DoorwayTexture.Species.ENAMEL, colI, rowI,
+                                seed = 41, state = lightState
+                            )
+                            drawRect(
+                                color = tone,
+                                topLeft = Offset(xx, yy),
+                                size = Size(cell + 1f, cell + 1f)
+                            )
+                            xx += cell; colI++
+                        }
+                        yy += cell; rowI++
                     }
                 }
-                // The shaped gaps: deliberate empty spaces in the
-                // sheet — outlined, unfilled, unlabelled.
-                repeat(composition.inSpanGaps) {
-                    Box(
-                        modifier = Modifier
-                            .size(width = 22.dp, height = 12.dp)
-                            .border(1.dp, StrongroomInks.Gold, RoundedCornerShape(2.dp))
+                // The gold furniture of the leaf: the outer ring
+                // and the hand-laid pinstripe inside it.
+                drawCircle(
+                    color = StrongroomInks.Gold,
+                    radius = r - 2.dp.toPx(),
+                    style = Stroke(width = 3.dp.toPx())
+                )
+                drawCircle(
+                    color = StrongroomLight.blendEighth(
+                        StrongroomInks.Gold, StrongroomInks.Graphite, 2
+                    ),
+                    radius = r - 13.dp.toPx(),
+                    style = Stroke(width = 1.5.dp.toPx())
+                )
+                // The bolt studs around the rim — twelve heads of
+                // graphite steel on the ring, gold-rimmed.
+                for (i in 0 until 12) {
+                    val a = Math.toRadians(i * 30.0 - 90.0)
+                    val sx = cx + (r - 8.dp.toPx()) * cos(a).toFloat()
+                    val sy = cy + (r - 8.dp.toPx()) * sin(a).toFloat()
+                    drawCircle(
+                        color = StrongroomInks.Gold,
+                        radius = 6.5.dp.toPx(),
+                        center = Offset(sx, sy)
                     )
-                    Spacer(Modifier.width(6.dp))
+                    drawCircle(
+                        color = StrongroomRoles.Metal,
+                        radius = 5.dp.toPx(),
+                        center = Offset(sx, sy)
+                    )
+                    drawCircle(
+                        color = StrongroomLight.blendEighth(
+                            StrongroomInks.Graphite, StrongroomInks.Violet, 4
+                        ),
+                        radius = 1.6.dp.toPx(),
+                        center = Offset(sx - 1.5.dp.toPx(), sy - 1.5.dp.toPx())
+                    )
                 }
+
+                // THE GREAT WHEEL — turning with the spin.
+                val wheelR = r * 0.52f
+                withTransform({ rotate(drawn, Offset(cx, cy)) }) {
+                    // The steel race the wheel runs in.
+                    drawCircle(
+                        color = StrongroomRoles.Metal,
+                        radius = wheelR + 9.dp.toPx(),
+                        style = Stroke(width = 5.dp.toPx())
+                    )
+                    // The wheel's gold rim.
+                    drawCircle(
+                        color = StrongroomInks.Gold,
+                        radius = wheelR,
+                        style = Stroke(width = 6.dp.toPx())
+                    )
+                    // Its three spokes.
+                    for (spoke in 0 until 3) {
+                        val a = Math.toRadians(spoke * 120.0 - 90.0).toFloat()
+                        drawLine(
+                            color = StrongroomInks.Gold,
+                            start = Offset(cx, cy),
+                            end = Offset(
+                                cx + wheelR * cos(a),
+                                cy + wheelR * sin(a)
+                            ),
+                            strokeWidth = 11.dp.toPx()
+                        )
+                    }
+                    // A gold index head on the rim, so the turn
+                    // itself is visible at a glance.
+                    drawCircle(
+                        color = StrongroomInks.Gold,
+                        radius = 7.dp.toPx(),
+                        center = Offset(cx, cy - wheelR)
+                    )
+                    // The hub: graphite steel, gold-ringed.
+                    drawCircle(
+                        color = StrongroomRoles.Metal,
+                        radius = 25.dp.toPx()
+                    )
+                    drawCircle(
+                        color = StrongroomInks.Gold,
+                        radius = 25.dp.toPx(),
+                        style = Stroke(width = 2.5.dp.toPx())
+                    )
+                }
+                drawCircle(
+                    color = StrongroomInks.Gold,
+                    radius = 3.dp.toPx()
+                )
+            }
+            // The station under the hand — one digit, read at the
+            // hub; the combination itself is never shown whole,
+            // never stored, never written (A-2).
+            Box(
+                modifier = Modifier.align(Alignment.Center),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "${spin.stationAt(rotation)}",
+                    style = StrongroomType.Anon4,
+                    color = StrongroomRoles.OnGround
+                )
             }
         }
-    }
-}
 
-// ------------------------------------------------------------------
-// (2) One plain line — the Glance (C-05's record, doorway form)
-// ------------------------------------------------------------------
-
-@Composable
-private fun PlainLine(formedFraction: Float) {
-    Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(10.dp)
-    ) {
-        val cy = size.height / 2f
-        val track = StrongroomLight.blendEighth(
-            StrongroomInks.Graphite, StrongroomInks.Violet, 3
-        )
-        drawLine(
-            color = track, start = Offset(0f, cy), end = Offset(size.width, cy),
-            strokeWidth = 3.dp.toPx()
-        )
-        val formed = formedFraction.coerceIn(0f, 1f)
-        if (formed > 0f) {
-            val endX = size.width * formed
-            drawLine(
-                color = StrongroomInks.Gold, start = Offset(0f, cy),
-                end = Offset(endX, cy), strokeWidth = 3.dp.toPx()
-            )
+        // (2) THE COMBINATION DIAL — overlapping the leaf's
+        // lower-left rim, as the wireframe stands it: a graphite
+        // dial, twelve teeth, its needle reading the station the
+        // wheel stands at.
+        Canvas(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .offset(x = size * 0.03f, y = size * 0.02f)
+                .size(size * 0.21f)
+        ) {
+            val cx = this.size.width / 2f
+            val cy = this.size.height / 2f
+            val r = this.size.minDimension / 2f
+            drawCircle(color = StrongroomRoles.Metal, radius = r)
             drawCircle(
-                color = StrongroomInks.Gold, radius = 4.dp.toPx(),
-                center = Offset(endX, cy)
+                color = StrongroomInks.Gold,
+                radius = r - 1.dp.toPx(),
+                style = Stroke(width = 2.dp.toPx())
+            )
+            // The teeth: twelve, the stations' own count at
+            // reading scale.
+            for (i in 0 until 12) {
+                val a = Math.toRadians(i * 30.0 - 90.0).toFloat()
+                val inner = r - 9.dp.toPx()
+                drawLine(
+                    color = StrongroomInks.Gold,
+                    start = Offset(cx + inner * cos(a), cy + inner * sin(a)),
+                    end = Offset(
+                        cx + (r - 3.dp.toPx()) * cos(a),
+                        cy + (r - 3.dp.toPx()) * sin(a)
+                    ),
+                    strokeWidth = 1.6.dp.toPx()
+                )
+            }
+            // The needle, standing at the station under the hand.
+            val station = spin.stationAt(rotation)
+            val na = Math.toRadians(station * 36.0 - 90.0).toFloat()
+            drawLine(
+                color = StrongroomInks.Gold,
+                start = Offset(cx, cy),
+                end = Offset(
+                    cx + (r - 12.dp.toPx()) * cos(na),
+                    cy + (r - 12.dp.toPx()) * sin(na)
+                ),
+                strokeWidth = 3.dp.toPx()
+            )
+            drawCircle(color = StrongroomInks.Gold, radius = 3.5.dp.toPx())
+        }
+    }
+
+    // The seats taken, as three bolt heads filling under the
+    // door — the combination's progress is furniture, not a
+    // counter (the signing's own telling, carried).
+    Row(
+        modifier = Modifier.padding(top = 12.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        for (i in 0 until 3) {
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 5.dp)
+                    .size(12.dp)
+                    .background(
+                        if (i < seats) StrongroomInks.Gold
+                        else StrongroomLight.descend(StrongroomInks.Graphite, 1),
+                        CircleShape
+                    )
             )
         }
     }
 }
 
 // ------------------------------------------------------------------
-// (3) The waiting slip — the held waiting, as a slip (C-14)
+// (3) SIGN TOMORROW — the one big button
 // ------------------------------------------------------------------
 
 @Composable
-private fun WaitingSlip(modifier: Modifier = Modifier) {
-    // A slip of the room's brass, dimmed — present, mute, carrying
-    // nothing: no count, no name, no dot, no word.
+private fun SignTomorrowButton(onClick: () -> Unit) {
     Box(
-        modifier = modifier
-            .rotate(-3f)
-            .size(width = 64.dp, height = 22.dp)
-            .background(
-                StrongroomLight.blendEighth(
-                    StrongroomInks.Gold, StrongroomInks.Graphite, 5
-                ),
-                RoundedCornerShape(2.dp)
-            )
-            .border(1.dp, StrongroomInks.Gold, RoundedCornerShape(2.dp))
-    )
+        modifier = Modifier
+            .padding(horizontal = 20.dp)
+            .fillMaxWidth()
+            .height(58.dp)
+            .background(StrongroomInks.Gold, RoundedCornerShape(12.dp))
+            .clickable { onClick() }
+            .semantics { contentDescription = "SIGN TOMORROW" },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "SIGN TOMORROW",
+            style = StrongroomType.Scr3.copy(fontWeight = FontWeight.Bold),
+            color = StrongroomInks.Graphite
+        )
+    }
 }
 
 // ------------------------------------------------------------------
-// (4) The press — yesterday's struck plate at the doorway (C-06)
+// The press — yesterday's struck plate at the doorway (C-06)
 // ------------------------------------------------------------------
 
 @Composable
-private fun StruckPlateStrip(plate: LiftingPlate.PlateTruth) {
+private fun StruckPlateStrip(
+    plate: LiftingPlate.PlateTruth,
+    modifier: Modifier = Modifier
+) {
     val lightState = LocalStrongroomLightState.current
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(54.dp)
             .background(StrongroomInks.Gold, RoundedCornerShape(3.dp))
