@@ -46,6 +46,21 @@ import com.example.domain.StrongroomRouting
  *  - HELD CALLS: the notification listener's call handling reads
  *    [StrongroomRouting.routeCall] through [callDecision] — a
  *    CONTACT rings through, an UNKNOWN is held quietly.
+ *  - THE ONE NOTIFICATION (E-4; wiring landed by BUILD-SR-14,
+ *    the residue BUILD-SR-13's composition record §Cures.6 left
+ *    standing): P8's [SessionNotification] is the sealed
+ *    session's ONLY lock-screen presence, and this bridge is its
+ *    production caller. [SessionNotification.beginSession] fires
+ *    at the swing in [activateSeal] — only on a struck span, so
+ *    a failed swing posts nothing. [SessionNotification.cancel]
+ *    fires at the lifting in [onFiringWake] and at seal death in
+ *    [onBoot] (AJAR and BROKEN_TAMPER alike: a dead seal stands
+ *    no presence). An INTACT boot calls [SessionNotification.show]
+ *    — never beginSession: the session never ended, so its
+ *    dismissal bit must survive the reboot exactly as he left it.
+ *    The shield service's standing card stays retired as a
+ *    lock-screen presence (composition cure 6); nothing here
+ *    resurrects a second one.
  *
  * Device behaviour (containment, persistence, exactly-two-openings
  * on his OnePlus) stands UNPROVEN-ON-DEVICE (Audit A G-7). This
@@ -91,6 +106,9 @@ object StrongroomEngineBridge {
         ) ?: return null
         MonolithShieldService.startShield(appContext)
         armFirings(appContext, dateIso)
+        // The swing has taken: the session's one lock-screen
+        // presence begins with the seal (E-4).
+        SessionNotification.beginSession(appContext)
         return span
     }
 
@@ -214,6 +232,8 @@ object StrongroomEngineBridge {
         }
         store.strikePlate(dateIso, nowElapsed, boot, sealFailed = false)
         MonolithShieldService.stopShield(appContext)
+        // The lifting takes the session's one card down with it.
+        SessionNotification.cancel(appContext)
         return true
     }
 
@@ -243,14 +263,23 @@ object StrongroomEngineBridge {
             StrongroomRouting.SealIntegrity.AJAR_BOOT_DEATH -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = false)
                 MonolithShieldService.stopShield(appContext)
+                // Seal death: no session stands, no presence stands.
+                SessionNotification.cancel(appContext)
             }
             StrongroomRouting.SealIntegrity.BROKEN_TAMPER -> {
                 store.strikePlate(row.filingDateIso, nowElapsedMillis(), boot, sealFailed = true)
                 MonolithShieldService.stopShield(appContext)
+                // A broken seal is not a session either.
+                SessionNotification.cancel(appContext)
             }
             StrongroomRouting.SealIntegrity.INTACT -> {
                 MonolithShieldService.startShield(appContext)
                 armFirings(appContext, row.filingDateIso)
+                // The session still stands; the reboot took the
+                // card with it, so re-post it — by show, not
+                // beginSession: a dismissal he made before the
+                // reboot is honoured, never resurrected past.
+                SessionNotification.show(appContext)
             }
         }
     }

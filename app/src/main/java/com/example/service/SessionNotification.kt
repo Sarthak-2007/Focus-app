@@ -54,14 +54,21 @@ import com.example.R
  * it. Exactly one seal stands at a time, so the dismissal flag is
  * one bit, keyed to the standing session by that fact alone.
  *
- * SEAM, NAMED: this is a poster, not a wiring. P2's engine wiring
- * (BUILD-SR-3's second wave) calls [SessionNotification.beginSession]
- * when a seal takes, [SessionNotification.show] for an in-place
- * refresh, and [SessionNotification.cancel] when it lifts; the
- * shield service's legacy standing card is composition work, not
- * silently rewritten here. Device behaviour — how his OnePlus
- * renders this card on its lock screen — stands
- * UNPROVEN-ON-DEVICE (Audit A G-7).
+ * WIRING, LANDED (BUILD-SR-14, the follow-on BUILD-SR-13's
+ * composition record §Cures.6 left standing): P2's engine bridge
+ * ([StrongroomEngineBridge]) is this poster's production caller —
+ * [SessionNotification.beginSession] at the swing in
+ * `activateSeal`, [SessionNotification.cancel] at the lifting in
+ * `onFiringWake` and at seal death in `onBoot` (AJAR and
+ * BROKEN_TAMPER), and [SessionNotification.show] on an INTACT
+ * boot (the standing session's card re-posted after a reboot,
+ * its dismissal bit honoured — beginSession is never used there,
+ * as it would clear a dismissal he already made). The shield
+ * service's legacy standing card stands retired as a lock-screen
+ * presence (composition cure 6, VISIBILITY_SECRET, no public
+ * version): this card is the session's only lock-screen presence
+ * (E-4). Device behaviour — how his OnePlus renders this card on
+ * its lock screen — stands UNPROVEN-ON-DEVICE (Audit A G-7).
  */
 object SessionNotificationSpec {
 

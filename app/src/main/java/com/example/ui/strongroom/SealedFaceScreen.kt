@@ -73,6 +73,15 @@ import com.example.ui.strongroom.layout.FaceFieldLayout
  * by design: reaching the door knocks; choosing the grille is a
  * second, deliberate act.
  *
+ * THE SEAL-GONE FORM (B-11 / R7-1, landed by BUILD-SR-14): when
+ * [SealedFaceState.sealGoneBracket] stands, this same renderer
+ * draws the fallen day's testimony — the seal absent, the bracket
+ * pair at the hour's rank in TYPE-SR-2's drawn figures, every
+ * kept place and the sentence exactly as engraved, and nothing
+ * added. It is testimony at the next open, never a gate (R2-3):
+ * P6 presents it at the lifting with its callbacks standing as
+ * no-ops, and the phone was already released at the seal's death.
+ *
  * Wiring seam (named in this lane's return): the face takes its
  * [SealedFaceState] as a sealing-time snapshot and its two events
  * as callbacks — P2's engine wiring (BUILD-SR-3) supplies the
@@ -129,16 +138,37 @@ fun SealedFaceScreen(
         // or kept place · held-mark slot, FACE_BAND apart), not a
         // surface's own column of spacers. The grille plate is not
         // a printing: it stands at the door's foot, over the field.
+        // COMPOSITION (BUILD-SR-23, step 2): rank 1's CONTENT is
+        // BUILD-SR-14's — the ring while the seal stands, the
+        // bracket pair (B-11 / R7-1) in the seal-gone form —
+        // seated inside BUILD-SR-16's slot: #856's content governs
+        // over the pre-restructure form, per the merge order.
         FaceFieldLayout(
             liftingHour = {
-                // RANK 1 — the lifting hour on the fresh ring.
-                RingCanvas(
-                    hour = state.liftingHour,
-                    lightState = lightState,
-                    modifier = Modifier
-                        .size(300.dp)
-                        .testTag("sealed_face_ring")
-                )
+                // RANK 1 — the lifting hour on the fresh ring; or,
+                // in the seal-gone form (B-11 / R7-1), the bracket
+                // pair at the same rank: the seal is absent, the
+                // pair is carried in the same drawn figures, and
+                // NOTHING else on the face changes — no banner, no
+                // badge, no word of explanation, no route onward.
+                val bracket = state.sealGoneBracket
+                if (bracket != null) {
+                    BracketPairCanvas(
+                        bracket = bracket,
+                        lightState = lightState,
+                        modifier = Modifier
+                            .size(width = 300.dp, height = 168.dp)
+                            .testTag("sealed_face_bracket")
+                    )
+                } else {
+                    RingCanvas(
+                        hour = state.liftingHour,
+                        lightState = lightState,
+                        modifier = Modifier
+                            .size(300.dp)
+                            .testTag("sealed_face_ring")
+                    )
+                }
             },
             doorWordSlot = {
                 // RANK 2 — the door-word slot as its KEPT PLACE
@@ -385,6 +415,86 @@ private fun RingCanvas(
                         topLeft = Offset(left, top),
                         size = Size(w, h)
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * THE BRACKET PAIR, drawn (B-11 / A-12) — the seal-gone form's
+ * rank-1 printing. The pair stands as two rows of TYPE-SR-2's
+ * drawn figures in the ring's own slot: the standing hour first
+ * (earliest), the fallen hour below it (latest) — the pair in
+ * its settled order, and nothing between or around them: no
+ * dash, no label, no sentence of explanation (the pair's settled
+ * words — "standing at the last check, fallen by the first check
+ * that found it" — are its READING, not its lettering, exactly
+ * as TYPE-SR-3 ruled for the plate). Each glyph is cut the
+ * ring's way: the catch edge toward the light first, then the
+ * groove — RELIGHT at glyph scale, no font rendering the hours.
+ */
+@Composable
+private fun BracketPairCanvas(
+    bracket: BracketPair,
+    lightState: RelightState,
+    modifier: Modifier = Modifier
+) {
+    val groove = StrongroomLineWork
+    val edgeLight = StrongroomGround.reliefHighlight(lightState)
+
+    Canvas(modifier) {
+        // One scale for both rows: the five fixed cells of an
+        // hour (EL-1) across the slot's width, as on the ring.
+        val s = (size.width * 0.92f) / (HourFigures.ADVANCE_UNITS * RingGeometry.GLYPH_COUNT)
+        val rowHeight = HourFigures.EM_UNITS * s
+        val rowCentres = listOf(
+            size.height / 2f - rowHeight * 0.62f,
+            size.height / 2f + rowHeight * 0.62f
+        )
+        val graverStroke = Stroke(
+            width = HourFigures.STROKE_UNITS * s,
+            cap = StrokeCap.Square,
+            join = StrokeJoin.Round
+        )
+        val catchShift = -16f * s
+        val leftEdge = (size.width - HourFigures.ADVANCE_UNITS * RingGeometry.GLYPH_COUNT * s) / 2f
+        listOf(bracket.standingHour, bracket.fallenHour).forEachIndexed { row, hour ->
+            hour.forEachIndexed { i, char ->
+                val glyph = HourFigures.glyphFor(char)
+                val cellCentreX = leftEdge +
+                    (i * HourFigures.ADVANCE_UNITS + HourFigures.CENTRE_X) * s
+                withTransform({
+                    translate(cellCentreX, rowCentres[row])
+                }) {
+                    glyph.strokes.forEach { cmds ->
+                        drawPath(
+                            glyphPath(cmds, s, catchShift, catchShift),
+                            color = edgeLight,
+                            style = graverStroke
+                        )
+                        drawPath(
+                            glyphPath(cmds, s, 0f, 0f),
+                            color = groove,
+                            style = graverStroke
+                        )
+                    }
+                    glyph.punches.forEach { punch ->
+                        val w = punch.w * s
+                        val h = punch.h * s
+                        val left = (punch.x - HourFigures.CENTRE_X) * s
+                        val top = -(punch.y + punch.h - HourFigures.CENTRE_Y) * s
+                        drawRect(
+                            color = edgeLight,
+                            topLeft = Offset(left + catchShift, top + catchShift),
+                            size = Size(w, h)
+                        )
+                        drawRect(
+                            color = groove,
+                            topLeft = Offset(left, top),
+                            size = Size(w, h)
+                        )
+                    }
                 }
             }
         }
