@@ -194,12 +194,17 @@ class ScreenshotHarnessTest {
             activity.setContentView(view)
         }
         composeRule.waitForIdle()
-        interact()
-        composeRule.waitForIdle()
         val density = activity.resources.displayMetrics.density
         val w = (412 * density).toInt()
         val h = (915 * density).toInt()
-        val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+        // LAY OUT AT THE SHOT'S OWN SIZE BEFORE ANY INTERACTION
+        // (cure 2c, found on this slice's pile shots): under the
+        // Robolectric window's small default layout, a scrollable
+        // room's lower nodes report clamped bounds, and the
+        // "lowest clickable" pick landed on the wrong node — the
+        // pile's second step never opened and its shots repeated
+        // the room. At the true size the geometry is honest, the
+        // corner is the corner, and the click is his hand's.
         composeRule.runOnUiThread {
             view.measure(
                 android.view.View.MeasureSpec.makeMeasureSpec(
@@ -209,6 +214,12 @@ class ScreenshotHarnessTest {
                     h, android.view.View.MeasureSpec.EXACTLY
                 )
             )
+            view.layout(0, 0, w, h)
+        }
+        interact()
+        composeRule.waitForIdle()
+        val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+        composeRule.runOnUiThread {
             view.layout(0, 0, w, h)
             val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             view.draw(android.graphics.Canvas(bmp))
