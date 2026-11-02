@@ -1,6 +1,5 @@
 package com.example.ui.strongroom
 
-import android.graphics.Paint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
-import androidx.core.content.res.ResourcesCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -23,16 +21,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.R
 import com.example.ui.theme.FaceDoorWordStyle
 import com.example.ui.theme.FaceLightState
 import com.example.ui.theme.FaceSentenceStyle
@@ -243,19 +241,6 @@ private fun RingCanvas(
     lightState: FaceLightState,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    // The figures' hand is the bundled Anonymous Pro Bold, from
-    // the app's own font file — and there is no silent substitute
-    // (CRITIC-SR-3, charge 3a, cured in the rethink): if the kept
-    // face cannot load, this composition fails loudly rather than
-    // shipping the face's first fact in a generic monospace.
-    val typeface = remember {
-        ResourcesCompat.getFont(context, R.font.anonymous_pro_bold)
-            ?: error(
-                "The bundled Anonymous Pro Bold failed to load — " +
-                    "the ring does not render in a substitute hand"
-            )
-    }
     val gold = StrongroomGold
     val bandTone = StrongroomGround.reliefShade(lightState)
     val groove = StrongroomLineWork
@@ -303,38 +288,93 @@ private fun RingCanvas(
             style = Stroke(width = 2.5.dp.toPx())
         )
 
-        // The engraved figures.
-        val groovePaint = Paint().apply {
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
-            this.typeface = typeface
-            textSize = (RingGeometry.FONT_SIZE_MM * scale).toFloat()
-            color = groove.toArgb()
-        }
-        val lightPaint = Paint().apply {
-            isAntiAlias = true
-            textAlign = Paint.Align.CENTER
-            this.typeface = typeface
-            textSize = (RingGeometry.FONT_SIZE_MM * scale).toFloat()
-            color = edgeLight.toArgb()
-        }
-        val centreLift = groovePaint.textSize * 0.35f
-        val lightDrop = 1.6.dp.toPx()
-        with(drawContext.canvas.nativeCanvas) {
-            RingGeometry.placements(hour).forEach { p ->
-                val gx = center.x + (p.unitX * baselinePx).toFloat()
-                val gy = center.y + (p.unitY * baselinePx).toFloat()
-                save()
+        // The engraved figures — TYPE-SR-2's DRAWN forms
+        // (HourFigures.kt, consumed under their filed contract
+        // in the P3 rethink): RingGeometry untouched; per
+        // placement, per glyph, the catch edge first — the same
+        // path shifted up-left toward the light, in gold — then
+        // the groove, dark: RELIGHT at glyph scale. Strokes and
+        // the colon's punches only; no font renders the hour
+        // anywhere on this face (Audit A G-3 carried whole: the
+        // figures are a drawing, not a typeface). 6 and 9 are
+        // unlike constructions in the drawing (measured
+        // separation 46.7% of union ink; the font's pair
+        // measured 5–7%) — Slice 4 judges them in the app.
+        val s = (RingGeometry.FONT_SIZE_MM * scale).toFloat() / HourFigures.EM_UNITS
+        val graverStroke = Stroke(
+            width = HourFigures.STROKE_UNITS * s,
+            cap = StrokeCap.Square,
+            join = StrokeJoin.Round
+        )
+        val catchShift = -16f * s
+        RingGeometry.placements(hour).forEach { p ->
+            val glyph = HourFigures.glyphFor(p.char)
+            val gx = center.x + (p.unitX * baselinePx).toFloat()
+            val gy = center.y + (p.unitY * baselinePx).toFloat()
+            withTransform({
                 translate(gx, gy)
-                rotate(p.rotationDeg.toFloat())
-                // The caught edge first, dropped toward the light;
-                // the groove over it. The pair is the engraving.
-                drawText(p.char.toString(), 0f, centreLift + lightDrop, lightPaint)
-                drawText(p.char.toString(), 0f, centreLift, groovePaint)
-                restore()
+                rotate(p.rotationDeg.toFloat(), pivot = Offset.Zero)
+            }) {
+                glyph.strokes.forEach { cmds ->
+                    drawPath(
+                        glyphPath(cmds, s, catchShift, catchShift),
+                        color = edgeLight,
+                        style = graverStroke
+                    )
+                    drawPath(
+                        glyphPath(cmds, s, 0f, 0f),
+                        color = groove,
+                        style = graverStroke
+                    )
+                }
+                glyph.punches.forEach { punch ->
+                    val w = punch.w * s
+                    val h = punch.h * s
+                    val left = (punch.x - HourFigures.CENTRE_X) * s
+                    val top = -(punch.y + punch.h - HourFigures.CENTRE_Y) * s
+                    drawRect(
+                        color = edgeLight,
+                        topLeft = Offset(left + catchShift, top + catchShift),
+                        size = Size(w, h)
+                    )
+                    drawRect(
+                        color = groove,
+                        topLeft = Offset(left, top),
+                        size = Size(w, h)
+                    )
+                }
             }
         }
     }
+}
+
+/**
+ * One glyph stroke as a canvas path, under TYPE-SR-2's
+ * transform: drawing point (x, y) → canvas
+ * ((x − 273)·s + dx, −(y − 350)·s + dy) — y-up drawing space
+ * into y-down canvas space, centred on the cell pivot.
+ */
+private fun glyphPath(
+    cmds: List<HourFigures.Cmd>,
+    s: Float,
+    dx: Float,
+    dy: Float
+): Path {
+    fun px(x: Float) = (x - HourFigures.CENTRE_X) * s + dx
+    fun py(y: Float) = -(y - HourFigures.CENTRE_Y) * s + dy
+    val path = Path()
+    cmds.forEach { c ->
+        when (c.op) {
+            HourFigures.Op.M -> path.moveTo(px(c.a[0]), py(c.a[1]))
+            HourFigures.Op.L -> path.lineTo(px(c.a[0]), py(c.a[1]))
+            HourFigures.Op.C -> path.cubicTo(
+                px(c.a[0]), py(c.a[1]), px(c.a[2]), py(c.a[3]),
+                px(c.a[4]), py(c.a[5])
+            )
+            HourFigures.Op.Z -> path.close()
+        }
+    }
+    return path
 }
 
 /** The held-mark's kept place: a shallow punch — a depressed disc
