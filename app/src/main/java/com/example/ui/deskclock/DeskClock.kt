@@ -13,10 +13,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -41,8 +39,8 @@ import com.example.ui.foundation.StrongroomType
  * session's whole-span derivations (FocusSessionEntity
  * .spanElapsedSeconds / spanTargetSeconds: the one derivation
  * every surface reads, so the clock can never disagree with the
- * enforcement), interpolated between the row's own ticks on the
- * frame clock from the last anchored snapshot. With no session
+ * enforcement), interpolated between the row's own ticks on a short
+ * monotonic beat from the last anchored snapshot. With no session
  * standing (the hand-raised idle clock) the face is a plain
  * nightstand clock: the wall time, nothing else.
  *
@@ -68,24 +66,26 @@ fun DeskClock(
     // seconds move like a clock and not like a poll.
     var shownElapsed by remember { mutableIntStateOf(elapsedSeconds ?: 0) }
     var shownRemaining by remember { mutableIntStateOf(remainingSeconds ?: 0) }
-    var anchorMono by remember { mutableLongStateOf(0L) }
     LaunchedEffect(elapsedSeconds, remainingSeconds) {
         shownElapsed = elapsedSeconds ?: 0
         shownRemaining = remainingSeconds ?: 0
-        anchorMono = 0L
         if (elapsedSeconds != null) {
+            // A short beat on the monotonic clock, not a frame
+            // loop: the figures move at second grain, the face
+            // idles between beats (a frame loop never idles —
+            // in the harness or on the phone's battery).
+            val anchorMono = android.os.SystemClock.elapsedRealtime()
             while (true) {
-                withFrameMillis { frame ->
-                    if (anchorMono == 0L) anchorMono = frame
-                    val deltaSeconds =
-                        ((frame - anchorMono) / 1000L).toInt()
-                    shownElapsed = (elapsedSeconds + deltaSeconds)
-                        .coerceAtLeast(0)
-                    if (remainingSeconds != null) {
-                        shownRemaining =
-                            (remainingSeconds - deltaSeconds)
-                                .coerceAtLeast(0)
-                    }
+                kotlinx.coroutines.delay(250L)
+                val deltaSeconds =
+                    ((android.os.SystemClock.elapsedRealtime() -
+                        anchorMono) / 1000L).toInt()
+                shownElapsed = (elapsedSeconds + deltaSeconds)
+                    .coerceAtLeast(0)
+                if (remainingSeconds != null) {
+                    shownRemaining =
+                        (remainingSeconds - deltaSeconds)
+                            .coerceAtLeast(0)
                 }
             }
         }

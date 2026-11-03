@@ -8,7 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.click
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -693,7 +693,7 @@ class ScreenshotHarnessTest {
             interact = {
                 composeRule
                     .onNodeWithText("SIGN TOMORROW")
-                    .performTouchInput { click(center) }
+                    .performClick()
             }
         ) {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
@@ -1953,6 +1953,9 @@ class ScreenshotHarnessTest {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .semantics(
+                                                mergeDescendants = true
+                                            ) {}
                                             .clickable { signOpen = false }
                                             .padding(
                                                 horizontal = 20.dp, vertical = 14.dp
@@ -2020,18 +2023,15 @@ class ScreenshotHarnessTest {
         snap("nav-walk-1-home.png", sparse = true)
         // (2) SIGN TOMORROW, by the button's own click: the
         // signing table stands in the place.
-        composeRule.onNodeWithText("SIGN TOMORROW")
-            .performTouchInput { click(center) }
+        composeRule.onNodeWithText("SIGN TOMORROW").performClick()
         composeRule.onNodeWithText("‹ HOME").assertExists()
         snap("nav-walk-2-signing.png")
         // (3) Back, by the host's own row: home again.
-        composeRule.onNodeWithText("‹ HOME")
-            .performTouchInput { click(center) }
+        composeRule.onNodeWithText("‹ HOME").performClick()
         composeRule.onNodeWithText("SIGN TOMORROW").assertExists()
         snap("nav-walk-3-home-again.png", sparse = true)
         // (4) PAST DAYS: the plain drawer list stands.
-        composeRule.onNodeWithText("PAST DAYS")
-            .performTouchInput { click(center) }
+        composeRule.onNodeWithText("PAST DAYS").performClick()
         composeRule.onNodeWithText("Past days").assertExists()
         snap("nav-walk-4-drawer.png", sparse = true)
     }
