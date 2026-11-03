@@ -21,6 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.ui.foundation.StrongroomInks
@@ -136,6 +138,12 @@ private fun HomeButton(
                 if (primary) StrongroomInks.Gold
                 else StrongroomInks.Violet
             )
+            // One merged button node — label and click on the
+            // same element, the way a real button reads (and
+            // the way a tap, a switch, or a test finds it).
+            .semantics(mergeDescendants = true) {
+                contentDescription = label
+            }
             .clickable { onClick() }
             .padding(vertical = 18.dp),
         contentAlignment = Alignment.Center
@@ -234,6 +242,9 @@ fun TodayScreen(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(StrongroomInks.Gold)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "SEAL TODAY"
+                    }
                     .clickable { actions.onSealToday() }
                     .padding(vertical = 18.dp),
                 contentAlignment = Alignment.Center
