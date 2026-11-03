@@ -74,6 +74,19 @@ import com.example.ui.foundation.StrongroomTheme
  * inputs are the kept session's standing break PLUS the
  * Strongroom day's own standings (the firing + the crank
  * minute), supplied by the host — the PLACES cure in the head.
+ *
+ * THE LIFTING'S STRONGROOM STANDING (NAV-ALL cure): the LIFTING
+ * place stands on the legacy finish OR on
+ * [strongroomLiftingStanding] — the host's derivation from the
+ * Strongroom store: the newest struck day is today's filing day
+ * (the lift fired, the plate stands struck) and no seal stands.
+ * Before this cure the shell read the legacy finish alone, so a
+ * Strongroom day's lift stood no ceremony: the day lifted in the
+ * engine and the app fell straight back to the doorway (FLOW-SEAT
+ * step 16). A Strongroom standing is dismissible — the host
+ * supplies [onBackFromLifting], and Back (or the host's own way
+ * through) lands at the doorway; the legacy finish's standing is
+ * not dismissible and keeps the old law (Back consumed).
  */
 @Composable
 fun StrongroomShell(
@@ -81,6 +94,8 @@ fun StrongroomShell(
     sealedStanding: Boolean? = null,
     strongroomBreakStanding: Boolean = false,
     crankMinuteStanding: Boolean = false,
+    strongroomLiftingStanding: Boolean = false,
+    onBackFromLifting: (() -> Unit)? = null,
     doorwayContent: @Composable () -> Unit = { DoorwayBirthWord() },
     sealedFaceContent: @Composable () -> Unit = {},
     antechamberContent: @Composable () -> Unit = {},
@@ -96,14 +111,21 @@ fun StrongroomShell(
         sealed = sealedStanding ?: (session?.isActive == true),
         onBreak = session?.isInSafeBreak == true ||
             strongroomBreakStanding || crankMinuteStanding,
-        lifting = finishNow != null && !finishNow.issued,
+        lifting = (finishNow != null && !finishNow.issued) ||
+            strongroomLiftingStanding,
         atAntechamber = standingPlace == StrongroomPlace.ANTECHAMBER
     )
 
     // The day moves by its acts, not by Back: inside the seal
-    // there is nowhere Back could lawfully go.
+    // there is nowhere Back could lawfully go. The one exception
+    // is a Strongroom lifting already lived: its ceremony stands
+    // as the morning's record, and Back walks through it to the
+    // doorway when the host offers the way ([onBackFromLifting]).
     BackHandler(enabled = place != StrongroomPlace.DOORWAY) {
-        // The door holds; Back is not an exit.
+        if (place == StrongroomPlace.LIFTING) {
+            onBackFromLifting?.invoke()
+        }
+        // Elsewhere, the door holds; Back is not an exit.
     }
 
     StrongroomTheme {

@@ -440,87 +440,178 @@ fun Drawer(
     actions: DrawerActions,
     modifier: Modifier = Modifier
 ) {
-    val lightState = LocalStrongroomLightState.current
-
-    // The slide: the drawer body travels shut → drawn on its own
-    // body from the moment it stands. Poses are read off the
-    // body, never eased.
-    var slideMs by remember { mutableIntStateOf(0) }
-    LaunchedEffect(Unit) {
-        val start = withFrameMillis { it }
-        while (slideMs < SLIDE_CAP_MS) {
-            val now = withFrameMillis { it }
-            slideMs = (now - start).toInt().coerceAtMost(SLIDE_CAP_MS)
-        }
-    }
-    val travel = DrawerSlide.travelAt(0.0, 1.0, slideMs).toFloat()
-    val slideSettled = slideMs >= SLIDE_CAP_MS || travel >= 0.999f
-
-    val revealed = HandingBackGate.platesRevealed(state.handingBack, state.handingBackDelivered)
-
-    // The threshold act fires once the drawer stands open: the
-    // room's hand delivers the waiting people, the host confirms.
-    var handingFired by remember { mutableStateOf(false) }
-    LaunchedEffect(slideSettled, revealed) {
-        if (slideSettled && !revealed && !handingFired) {
-            handingFired = true
+    // NAV-ALL (the NORMAL-APP redirect, Sarthak's word 2026-11-03):
+    // the drawer is a plain list of past days on a plain
+    // background. The grained wooden body as a full-screen surface
+    // is DEAD by his order — an empty drawer reads as bars/static
+    // on a real phone; here an empty drawer is one plain line.
+    // Everything functional survives: the threshold still delivers
+    // THE HANDING BACK on open (the host's act, fired once when
+    // the drawer stands with waiting people undelivered), the
+    // plates still read date + what happened, the finished tasks
+    // still store below, and CLOSE returns to the doorway.
+    val contents = state.contents
+    androidx.compose.runtime.LaunchedEffect(state.handingBackDelivered) {
+        if (!state.handingBackDelivered &&
+            state.handingBack.waiting.isNotEmpty()
+        ) {
             actions.onHandingBack()
         }
     }
-
-    var liftedIso by remember { mutableStateOf<String?>(null) }
-
-    Column(
+    var selectedIso by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<String?>(null)
+    }
+    androidx.compose.foundation.layout.Column(
         modifier = modifier
             .fillMaxSize()
-            .background(StrongroomRoles.Field)
-            .offset { IntOffset(0, ((1f - travel) * 36.dp.toPx()).roundToInt()) }
-            .semantics { contentDescription = "the drawer" }
+            .background(com.example.ui.foundation.StrongroomRoles.Field)
+            .padding(horizontal = 20.dp, vertical = 16.dp)
     ) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+        androidx.compose.foundation.layout.Row(
+            modifier = androidx.compose.ui.Modifier.fillMaxWidth(),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
         ) {
-            // The drawer's wooden body: side walls + back, grained.
-            DrawerBody(lightState)
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp, vertical = 16.dp)
+            androidx.compose.material3.Text(
+                text = "Past days",
+                style = com.example.ui.foundation.StrongroomType.Scr3,
+                color = com.example.ui.foundation.StrongroomRoles.OnGround,
+                modifier = androidx.compose.ui.Modifier.weight(1f)
+            )
+            androidx.compose.material3.Text(
+                text = "CLOSE",
+                style = com.example.ui.foundation.StrongroomType.Scr2,
+                color = com.example.ui.foundation.StrongroomInks.Gold,
+                modifier = androidx.compose.ui.Modifier
+                    .clickable { actions.onClose() }
+                    .padding(horizontal = 8.dp, vertical = 8.dp)
+            )
+        }
+        androidx.compose.foundation.layout.Spacer(
+            androidx.compose.ui.Modifier.height(12.dp)
+        )
+        if (state.handingBackDelivered &&
+            state.handingBack.waiting.isNotEmpty()
+        ) {
+            androidx.compose.material3.Text(
+                text = "${state.handingBack.waiting.size} " +
+                    "people who waited are back on your list.",
+                style = com.example.ui.foundation.StrongroomType.Anon1,
+                color = com.example.ui.foundation.StrongroomRoles.OnGround
+                    .copy(alpha = 0.75f)
+            )
+            androidx.compose.foundation.layout.Spacer(
+                androidx.compose.ui.Modifier.height(8.dp)
+            )
+        }
+        if (contents.isEmpty) {
+            androidx.compose.material3.Text(
+                text = "No days yet.",
+                style = com.example.ui.foundation.StrongroomType.Scr2,
+                color = com.example.ui.foundation.StrongroomRoles.OnGround
+            )
+        } else {
+            androidx.compose.foundation.lazy.LazyColumn(
+                modifier = androidx.compose.ui.Modifier.weight(1f),
+                verticalArrangement = androidx.compose.foundation.layout
+                    .Arrangement.spacedBy(8.dp)
             ) {
-                if (!revealed) {
-                    HandingBackThreshold(state.handingBack, lightState)
-                } else {
-                    val contents = state.contents
-                    if (contents.platesNewestFirst.isNotEmpty()) {
-                        PlatePile(
-                            contents = contents,
-                            liftedIso = liftedIso,
-                            onLift = { liftedIso = it },
-                            onSettle = { liftedIso = null },
-                            lightState = lightState
+                items(contents.platesNewestFirst.size) { index ->
+                    val plate = contents.platesNewestFirst[index]
+                    val heldHours = plate.hoursHeldMillis / 3_600_000L
+                    val heldMinutes =
+                        (plate.hoursHeldMillis % 3_600_000L) / 60_000L
+                    androidx.compose.foundation.layout.Column(
+                        modifier = androidx.compose.ui.Modifier
+                            .fillMaxWidth()
+                            .border(
+                                1.dp,
+                                com.example.ui.foundation.StrongroomInks.Gold
+                                    .copy(alpha = 0.5f)
+                            )
+                            .clickable {
+                                selectedIso =
+                                    if (selectedIso == plate.filingDateIso) {
+                                        null
+                                    } else {
+                                        plate.filingDateIso
+                                    }
+                            }
+                            .padding(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        androidx.compose.material3.Text(
+                            text = plate.filingDateIso,
+                            style = com.example.ui.foundation
+                                .StrongroomType.Scr2,
+                            color = com.example.ui.foundation
+                                .StrongroomRoles.OnGround
+                        )
+                        androidx.compose.material3.Text(
+                            text = if (plate.isFailure) {
+                                "Broken — held ${heldHours} h ${heldMinutes} min"
+                            } else {
+                                "Held — ${heldHours} h ${heldMinutes} min"
+                            },
+                            style = com.example.ui.foundation
+                                .StrongroomType.Anon1,
+                            color = if (plate.isFailure) {
+                                com.example.ui.foundation.StrongroomInks.Rose
+                            } else {
+                                com.example.ui.foundation.StrongroomInks.Gold
+                            }
+                        )
+                        if (selectedIso == plate.filingDateIso) {
+                            plate.taskLine?.takeIf { it.isNotBlank() }
+                                ?.let { task ->
+                                    androidx.compose.material3.Text(
+                                        text = task,
+                                        style = com.example.ui.foundation
+                                            .StrongroomType.Anon1,
+                                        color = com.example.ui.foundation
+                                            .StrongroomRoles.OnGround
+                                            .copy(alpha = 0.8f)
+                                    )
+                                }
+                            if (plate.crankSealKept) {
+                                androidx.compose.material3.Text(
+                                    text = "The week's emergency minute was used.",
+                                    style = com.example.ui.foundation
+                                        .StrongroomType.Anon1,
+                                    color = com.example.ui.foundation
+                                        .StrongroomRoles.OnGround
+                                        .copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                    }
+                }
+                if (contents.tasksNewestFirst.isNotEmpty()) {
+                    item {
+                        androidx.compose.material3.Text(
+                            text = "Finished tasks",
+                            style = com.example.ui.foundation
+                                .StrongroomType.Scr2,
+                            color = com.example.ui.foundation
+                                .StrongroomRoles.OnGround,
+                            modifier = androidx.compose.ui.Modifier
+                                .padding(top = 12.dp, bottom = 4.dp)
                         )
                     }
-                    // The tray's kept seals (C-19) — drawn whenever
-                    // a crank day stands in the pile.
-                    val sealDays = contents.snappedSealDays()
-                    if (sealDays.isNotEmpty()) {
-                        Spacer(Modifier.height(16.dp))
-                        KeptSeals(sealDays.size, lightState)
+                    items(contents.tasksNewestFirst.size) { index ->
+                        val slip = contents.tasksNewestFirst[index]
+                        androidx.compose.material3.Text(
+                            text = "✓ ${slip.title}",
+                            style = com.example.ui.foundation
+                                .StrongroomType.Anon1,
+                            color = com.example.ui.foundation
+                                .StrongroomRoles.OnGround
+                                .copy(alpha = 0.85f),
+                            modifier = androidx.compose.ui.Modifier
+                                .padding(vertical = 3.dp)
+                        )
                     }
-                    if (contents.tasksNewestFirst.isNotEmpty()) {
-                        Spacer(Modifier.height(18.dp))
-                        TaskSlips(contents.tasksNewestFirst, lightState)
-                    }
-                    // An empty drawer renders none of the above:
-                    // the wooden body, empty — stillness (GAP-R03).
                 }
-                Spacer(Modifier.height(12.dp))
             }
         }
-        DrawerLip(onClose = actions.onClose, lightState = lightState)
     }
 }
 

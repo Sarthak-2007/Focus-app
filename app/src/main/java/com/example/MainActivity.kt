@@ -15,6 +15,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -63,13 +65,11 @@ import com.example.service.WatchItemId
 import com.example.service.WatchStore
 import com.example.session.MonolithViewModel
 import com.example.domain.LiftingPlate
-import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
 import com.example.ui.doorway.plateTruthForDoorway
 import com.example.ui.drawer.Drawer
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
-import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
 import com.example.ui.lifting.Lifting
 import com.example.ui.lifting.LiftingState
@@ -79,9 +79,6 @@ import com.example.ui.sealed.DoorWordSetter
 import com.example.ui.sealed.SealedFace
 import com.example.ui.sealed.SealedFaceActions
 import com.example.ui.sealed.SealedFaceState
-import com.example.ui.sealed.SwingAct
-import com.example.ui.sealed.SwingActActions
-import com.example.ui.sealed.SwingActState
 import com.example.ui.shell.StrongroomShell
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -435,12 +432,36 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     // and the shell rests at the doorway.
     var sealedFaceState by remember { mutableStateOf<SealedFaceState?>(null) }
     var swingStanding by remember { mutableStateOf(false) }
-    var swingActState by remember { mutableStateOf(SwingActState()) }
+    // NAV-ALL (normal app): the sealed day's allowed apps for
+    // the sealed screen's grid — the record's own allowed set,
+    // labelled by the phone. Read on the same tick as the face.
+    var sealedApps by remember {
+        mutableStateOf<List<com.example.ui.sealed.SealedAppEntry>>(emptyList())
+    }
     val shellScope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(doorwayRefreshTick.value) {
         val facts = loadSealFacts(appContext)
         sealedFaceState = facts.first
         swingStanding = facts.second
+        sealedApps = if (facts.first != null) {
+            withContext(Dispatchers.IO) {
+                val store = StrongroomStore(AppContainer.dao(appContext))
+                val record = store.sealedDay()?.toSigningRecord()
+                record?.allowedPackages?.map { pkg ->
+                    val label = try {
+                        val pm = appContext.packageManager
+                        pm.getApplicationLabel(
+                            pm.getApplicationInfo(pkg, 0)
+                        ).toString()
+                    } catch (t: Throwable) {
+                        pkg.substringAfterLast('.')
+                    }
+                    com.example.ui.sealed.SealedAppEntry(pkg, label)
+                } ?: emptyList()
+            }
+        } else {
+            emptyList()
+        }
         // The movement law reads the same one derivation
         // (BUILD-SR-38 merge composition): the second touch is
         // lawful exactly when the snapshot stands.
@@ -495,6 +516,87 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     LaunchedEffect(doorwayRefreshTick.value) {
         liftingState = loadLiftingState(appContext, finishForLifting?.e0Mono)
     }
+    // NAV-ALL (the lifting's Strongroom standing): the shell
+    // stands LIFTING for a Strongroom day whose lift has fired —
+    // the newest struck day is today's filing day and no seal
+    // stands (the derivation the FLOW-SEAT walk found missing:
+    // the place read the legacy finish alone). The standing is
+    // per-process dismissible: once he has walked through the
+    // ceremony (the host's way through, or Back), the doorway
+    // owns the place again until another day strikes. A newly
+    // struck day re-arms it.
+    var strongroomLiftDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(liftingState?.plate?.filingDateIso) {
+        strongroomLiftDismissed = false
+    }
+    // The facts poll: a firing that lands while the app stands
+    // open (the morning lift, struck service-side through the
+    // bridge) re-reads the standing facts on a slow beat, so the
+    // places turn over without waiting for a resume.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5_000L)
+            doorwayRefreshTick.value++
+        }
+    }
+    val strongroomLiftingStanding = !strongroomLiftDismissed &&
+        sealedFaceState == null &&
+        liftingState?.plate?.filingDateIso ==
+            StrongroomDay.filingDateIso(System.currentTimeMillis())
+
+    // NAV-ALL (VERIFY-SCREENS additions — the two engine-without-
+    // a-surface states, now faced): the DESK CLOCK and the
+    // AIRLOCK both stand as overlays over the shell. The VM's
+    // machines were always the law (the desk clock's settle
+    // machine raises isAlwaysOnDeskClockVisible after 20 s
+    // untouched in-session; the airlock mints on a legacy
+    // session's intercept); the surfaces render them.
+    val deskClockVisible by
+        viewModel.isAlwaysOnDeskClockVisible
+            .collectAsStateWithLifecycle()
+    val deskClockKeepAwake by
+        viewModel.deskClockKeepAwake.collectAsStateWithLifecycle()
+    val clockSession by viewModel.activeSession
+        .collectAsStateWithLifecycle()
+    val hostActivity = androidx.compose.ui.platform.LocalContext
+        .current as? android.app.Activity
+    // The keep-awake half of the clock's standing: the VM's flag
+    // holds the window awake while the face stands (its battery
+    // surrender clears the flag, and the screen with it).
+    LaunchedEffect(deskClockKeepAwake) {
+        val window = hostActivity?.window ?: return@LaunchedEffect
+        if (deskClockKeepAwake) {
+            window.addFlags(
+                android.view.WindowManager.LayoutParams
+                    .FLAG_KEEP_SCREEN_ON
+            )
+        } else {
+            window.clearFlags(
+                android.view.WindowManager.LayoutParams
+                    .FLAG_KEEP_SCREEN_ON
+            )
+        }
+    }
+    // The lock-screen half: while a session stands, a power
+    // press shows the app (and with it the raised desk clock)
+    // over the lock screen — read-only, since the face carries
+    // no controls.
+    val sessionActiveForLock = clockSession?.isActive == true
+    LaunchedEffect(sessionActiveForLock) {
+        if (android.os.Build.VERSION.SDK_INT >=
+            android.os.Build.VERSION_CODES.O_MR1
+        ) {
+            hostActivity?.setShowWhenLocked(sessionActiveForLock)
+        }
+    }
+    // The airlock's FIX-5c beat at the host: a fresh door whose
+    // peek stands withheld by cooldown re-derives on show (the
+    // face re-derives again when its countdown runs out).
+    LaunchedEffect(airlockState.interceptInstanceId) {
+        if (airlockState.isVisible) {
+            viewModel.refreshAirlockDoorState()
+        }
+    }
     val sealedFaceActions = SealedFaceActions(
         // The knock's sound/haptic substance rides through this
         // seam (collected by the SOUND seat, 2026-11-03): a rap on
@@ -533,9 +635,22 @@ private fun ShellHost(viewModel: MonolithViewModel) {
     // the face owns the place whole and there is no route into the
     // normal app (D-7), setup included.
     var setupOpen by remember { mutableStateOf(false) }
+    // NAV-ALL: the setup side's landing section — HOME's APPS
+    // button deep-links the picker, SETTINGS lands the setup
+    // home. SetupHost is composed only while setupOpen stands,
+    // so the remembered section inside it re-seeds per opening.
+    var setupSection by remember {
+        mutableStateOf(com.example.ui.setup.SetupSection.HOME)
+    }
     LaunchedEffect(drawerOpen) {
         if (drawerOpen) drawerState = loadDrawerState(appContext)
     }
+    // NAV-ALL: Back at the open drawer closes the drawer. The
+    // drawer stands inside the doorway place, where the shell's
+    // own Back law is disabled — without this handler the system
+    // Back would leave the app from inside the open drawer, a
+    // dead end with the furniture standing open.
+    BackHandler(enabled = drawerOpen) { drawerOpen = false }
 
     // Watch Store residency (census §2c, re-carried): the old
     // composition stamped residency on DECK entry; the host has
@@ -590,6 +705,11 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // The door holds; Back is not an exit.
     }
 
+    // NAV-ALL: the shell stands in a Box so the two overlay
+    // faces (desk clock, airlock) can stand over every place.
+    androidx.compose.foundation.layout.Box(
+        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+    ) {
     StrongroomShell(
         viewModel = viewModel,
         // THE UNIFIED STANDING (BUILD-SR-38 merge composition):
@@ -606,6 +726,12 @@ private fun ShellHost(viewModel: MonolithViewModel) {
         // the BREAK place for a Strongroom day.
         strongroomBreakStanding = strongroomBreakStanding,
         crankMinuteStanding = crankMinuteStanding,
+        // THE LIFTING'S STRONGROOM STANDING (NAV-ALL cure): the
+        // struck-today derivation above — the shell stands the
+        // ceremony for a Strongroom day's own lift, and Back at
+        // it walks through to the doorway (the dismissal).
+        strongroomLiftingStanding = strongroomLiftingStanding,
+        onBackFromLifting = { strongroomLiftDismissed = true },
         doorwayContent = {
             // While a Strongroom seal stands, the doorway place
             // itself stands as the sealed face (BUILD-SR-37;
@@ -691,97 +817,162 @@ private fun ShellHost(viewModel: MonolithViewModel) {
                 } else if (setupOpen) {
                     SetupHost(
                         viewModel = viewModel,
-                        onClose = { setupOpen = false }
+                        onClose = { setupOpen = false },
+                        initialSection = setupSection
                     )
                 } else {
-                androidx.compose.foundation.layout.Box(
-                    modifier = androidx.compose.ui.Modifier.fillMaxSize()
-                ) {
-                // THE FACE (LEAD-DOORFIX, 2026-11-03): the
-                // seven-ink print stands behind the whole doorway
-                // place — the door IS this surface, edge to edge;
-                // the Doorway's furniture, the swing act, the
-                // signing table and the drawer's front all stand
-                // on it. (Before this, the place stood on the bare
-                // field and the Doorway's drawn leaf — 26% of the
-                // room's width — read on Sarthak's phone as a tiny
-                // door floating in a void.)
-                com.example.ui.doorway.DoorFace()
+                // NAV-ALL (the NORMAL-APP redirect, Sarthak's word
+                // 2026-11-03: "Cant u build a normal fucking app"):
+                // the doorway place is a NORMAL HOME screen —
+                // small door picture, plain status lines, five big
+                // labelled buttons (ui/home/Home.kt). SIGN TOMORROW
+                // stands the signing table in this place (back row
+                // + Back return here); TODAY shows the standing
+                // day and carries the seal act on a labelled
+                // button (the swing's own activation — the swing
+                // surface stands retired in its file for the later
+                // art pass, its act lives here); APPS deep-links
+                // the setup side's picker, SETTINGS its home;
+                // PAST DAYS opens the drawer. The buttons stand in
+                // EVERY unsealed state — day born or not — so a
+                // fresh install is an app, not a picture with one
+                // button (the build-5 lesson). The modelled
+                // HomeDoor likewise stands retired in Doorway.kt;
+                // SETUP-FLOW's foot entry is superseded by the
+                // APPS / SETTINGS buttons (same doors, named).
+                var signOpen by remember { mutableStateOf(false) }
+                var todayOpen by remember { mutableStateOf(false) }
+                var sealFailed by remember { mutableStateOf(false) }
+                BackHandler(enabled = signOpen) { signOpen = false }
+                BackHandler(enabled = todayOpen) { todayOpen = false }
                 androidx.compose.foundation.layout.Column(
                     modifier = androidx.compose.ui.Modifier.fillMaxSize()
                 ) {
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier.weight(1f)
-                    ) {
-                        Doorway(state = doorwayState)
-                    }
-                    if (swingStanding) {
-                        SwingAct(
-                            state = swingActState,
-                            actions = SwingActActions(
-                                onContact = {
-                                    shellScope.launch {
-                                        val todayIso = StrongroomDay
-                                            .filingDateIso(System.currentTimeMillis())
-                                        val span = withContext(Dispatchers.IO) {
-                                            StrongroomEngineBridge.activateSeal(
-                                                appContext, todayIso
-                                            )
-                                        }
-                                        swingActState = if (span != null) {
-                                            SwingActState(sealStruck = true)
-                                        } else {
-                                            SwingActState(sealFailed = true)
-                                        }
+                    when {
+                        signOpen -> {
+                            // The way back home, in plain words.
+                            androidx.compose.foundation.layout.Row(
+                                modifier = androidx.compose.ui.Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        signOpen = false
                                     }
-                                },
-                                onCeremonyComplete = {
-                                    swingActState = SwingActState()
-                                    doorwayRefreshTick.value++
-                                }
+                                    .padding(horizontal = 20.dp, vertical = 14.dp)
+                            ) {
+                                androidx.compose.material3.Text(
+                                    text = "‹ HOME",
+                                    style = com.example.ui.foundation
+                                        .StrongroomType.Anon2,
+                                    color = com.example.ui.foundation
+                                        .StrongroomInks.Gold
+                                )
+                            }
+                            androidx.compose.foundation.layout.Box(
+                                modifier = androidx.compose.ui.Modifier.weight(1f)
+                            ) {
+                                SigningHost(viewModel = viewModel)
+                            }
+                        }
+                        todayOpen -> {
+                            val faceNow = sealedFaceState
+                            com.example.ui.home.TodayScreen(
+                                state = com.example.ui.home.TodayState(
+                                    statusLine = when {
+                                        sealFailed ->
+                                            "The seal did not take — try again."
+                                        faceNow != null ->
+                                            "Sealed until " +
+                                                faceNow.printings
+                                                    .liftingHour.text
+                                        swingStanding ->
+                                            "Signed — not sealed yet"
+                                        doorwayState.composition != null ->
+                                            "Signed"
+                                        else -> "Nothing signed for today"
+                                    },
+                                    taskLine = doorwayState.composition?.taskLine,
+                                    liftingHourText =
+                                        doorwayState.composition?.liftingHourText
+                                            ?: faceNow?.printings
+                                                ?.liftingHour?.text,
+                                    lockedCount =
+                                        doorwayState.composition?.lockedThings,
+                                    canSeal = swingStanding
+                                ),
+                                actions = com.example.ui.home.TodayActions(
+                                    onSealToday = {
+                                        shellScope.launch {
+                                            val todayIso = StrongroomDay
+                                                .filingDateIso(
+                                                    System.currentTimeMillis()
+                                                )
+                                            val span = withContext(Dispatchers.IO) {
+                                                StrongroomEngineBridge
+                                                    .activateSeal(appContext, todayIso)
+                                            }
+                                            if (span != null) {
+                                                sealFailed = false
+                                                todayOpen = false
+                                                doorwayRefreshTick.value++
+                                            } else {
+                                                sealFailed = true
+                                            }
+                                        }
+                                    },
+                                    onBack = { todayOpen = false }
+                                ),
+                                modifier = androidx.compose.ui.Modifier.weight(1f)
                             )
-                        )
-                    }
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier.weight(1.35f)
-                    ) {
-                        SigningHost(viewModel = viewModel)
-                    }
-                    // The drawer's shut front — the room's
-                    // furniture at the foot of the signing place.
-                    // The opening act is the drawer's slide
-                    // (DRAWER_OPEN, wired by the SOUND seat).
-                    DrawerFront(onOpen = {
-                        StrongroomEngineBridge.fireSurfaceEvent(
-                            appContext, HapticEvent.DRAWER_OPEN
-                        )
-                        drawerOpen = true
-                    })
-                    // SETUP-FLOW: the plain entry into the setup
-                    // side — permissions, the app list, the guard —
-                    // standing at the foot of the doorway in
-                    // unsealed hours. Plain by order (function
-                    // first, design later).
-                    androidx.compose.foundation.layout.Box(
-                        modifier = androidx.compose.ui.Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 10.dp)
-                            .border(
-                                1.dp,
-                                com.example.ui.foundation.StrongroomInks.Gold,
-                                RoundedCornerShape(6.dp)
+                        }
+                        else -> {
+                            val faceNow = sealedFaceState
+                            com.example.ui.home.HomeScreen(
+                                state = com.example.ui.home.HomeState(
+                                    todayLine = when {
+                                        faceNow != null ->
+                                            "Sealed until " +
+                                                faceNow.printings
+                                                    .liftingHour.text
+                                        swingStanding ->
+                                            "Today is signed — it seals " +
+                                                "at the first sitting"
+                                        doorwayState.composition != null ->
+                                            "Today is signed"
+                                        else -> "No day signed for today"
+                                    },
+                                    tomorrowLine =
+                                        doorwayState.plateLiftingText?.let {
+                                            "Tomorrow is signed — lifts at $it"
+                                        } ?: "Tomorrow is not signed yet"
+                                ),
+                                actions = com.example.ui.home.HomeActions(
+                                    onSignTomorrow = { signOpen = true },
+                                    onToday = { todayOpen = true },
+                                    onApps = {
+                                        setupSection =
+                                            com.example.ui.setup
+                                                .SetupSection.APPS
+                                        setupOpen = true
+                                    },
+                                    onSettings = {
+                                        setupSection =
+                                            com.example.ui.setup
+                                                .SetupSection.HOME
+                                        setupOpen = true
+                                    },
+                                    onPastDays = {
+                                        StrongroomEngineBridge
+                                            .fireSurfaceEvent(
+                                                appContext,
+                                                HapticEvent.DRAWER_OPEN
+                                            )
+                                        drawerOpen = true
+                                    }
+                                ),
+                                modifier = androidx.compose.ui.Modifier.weight(1f)
                             )
-                            .clickable { setupOpen = true }
-                            .padding(vertical = 12.dp),
-                        contentAlignment = androidx.compose.ui.Alignment.Center
-                    ) {
-                        androidx.compose.material3.Text(
-                            "SETUP / GUARD",
-                            style = com.example.ui.foundation.StrongroomType.Scr2,
-                            color = com.example.ui.foundation.StrongroomInks.Gold
-                        )
+                        }
                     }
-                }
                 }
                 }
             }
@@ -814,7 +1005,15 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // render that one snapshot; re-shown exactly as cut,
             // never recomposed, ledger B-10).
             sealedFaceState?.let { face ->
-                SealedFace(state = face, actions = sealedFaceActions)
+                // NAV-ALL (normal app): the sealed place stands
+                // the plain status screen + the allowed-apps
+                // grid (SealedScreen); the doorway birth-frame
+                // above keeps the bare status face.
+                com.example.ui.sealed.SealedScreen(
+                    state = face,
+                    actions = sealedFaceActions,
+                    allowedApps = sealedApps
+                )
             }
         },
         liftingContent = {
@@ -823,9 +1022,81 @@ private fun ShellHost(viewModel: MonolithViewModel) {
             // whole from the store's struck rows. A fallen day
             // stands here as the failure face (C-18). When no
             // struck day stands, nothing stands (B-14).
-            liftingState?.let { state -> Lifting(state = state) }
+            // NAV-ALL: when the place stands on the Strongroom
+            // day's own lift (not the legacy finish), the host
+            // carries the way through over the ceremony — the
+            // same plain row the signing place carries — and
+            // taking it (or Back, through the shell) dismisses
+            // the standing and lands at the doorway.
+            liftingState?.let { state ->
+                if (strongroomLiftingStanding) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = androidx.compose.ui.Modifier.fillMaxSize()
+                    ) {
+                        androidx.compose.foundation.layout.Row(
+                            modifier = androidx.compose.ui.Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    strongroomLiftDismissed = true
+                                }
+                                .padding(horizontal = 20.dp, vertical = 14.dp)
+                        ) {
+                            androidx.compose.material3.Text(
+                                text = "‹ HOME",
+                                style = com.example.ui.foundation
+                                    .StrongroomType.Anon2,
+                                color = com.example.ui.foundation
+                                    .StrongroomInks.Gold
+                            )
+                        }
+                        androidx.compose.foundation.layout.Box(
+                            modifier = androidx.compose.ui.Modifier.weight(1f)
+                        ) {
+                            Lifting(state = state)
+                        }
+                    }
+                } else {
+                    Lifting(state = state)
+                }
+            }
         }
     )
+
+    // THE DESK CLOCK stands over the places while its machine
+    // holds it raised: in-session it prints the session's
+    // whole-span elapsed + remaining (his #37 ruling — the
+    // numbers stay); hand-raised with no session it prints the
+    // wall time. Read-only: the face carries no controls.
+    if (deskClockVisible) {
+        val session = clockSession?.takeIf { it.isActive }
+        com.example.ui.deskclock.DeskClock(
+            elapsedSeconds = session?.spanElapsedSeconds,
+            remainingSeconds = session?.let {
+                if (it.isStopwatchMode) null
+                else (it.spanTargetSeconds - it.spanElapsedSeconds)
+                    .coerceAtLeast(0)
+            },
+            wallTimeText = com.example.data.ClockText.timeOfDay(
+                androidx.compose.ui.platform.LocalContext.current,
+                System.currentTimeMillis()
+            )
+        )
+    }
+    // THE AIRLOCK stands over everything when an intercept has
+    // minted it — its door is the only face a legacy session's
+    // reach may land on, and its acts are the VM's own verbs.
+    if (airlockState.isVisible) {
+        com.example.ui.airlock.Airlock(
+            state = airlockState,
+            onReturn = { viewModel.transmuteImpulseAndReturn() },
+            onPeek = { viewModel.start2MinutePeek() },
+            onReason = { viewModel.selectDistractionReason(it) },
+            onGraceAbort = { viewModel.confirmGraceAbortFromAirlock() },
+            onOfferArmed = { viewModel.onAirlockOfferArmed() },
+            onCooldownExpired = { viewModel.refreshAirlockDoorState() }
+        )
+    }
+    }
 }
 
 /**
@@ -1480,21 +1751,30 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
         val yesterdayIso = java.time.LocalDate.parse(todayIso).minusDays(1).toString()
 
         val todayRow = store.day(todayIso)
-        val composedDay = todayRow
+        fun standingDay(
+            row: com.example.data.StrongroomDayEntity?
+        ): StrongroomComposition.ComposedDay? = row
             ?.takeIf {
                 it.state == StrongroomDayEntity.STATE_COMPOSED ||
                     it.state == StrongroomDayEntity.STATE_SIGNED
             }
-            ?.let { row ->
+            ?.let { r ->
                 StrongroomComposition.ComposedDay(
-                    filingDateIso = row.filingDateIso,
+                    filingDateIso = r.filingDateIso,
                     shape = runCatching {
-                        StrongroomComposition.DayShape.valueOf(row.dayShape)
+                        StrongroomComposition.DayShape.valueOf(r.dayShape)
                     }.getOrDefault(StrongroomComposition.DayShape.ORDINARY),
-                    record = row.toSigningRecord(),
-                    amendedBySigning = row.amendedBySigning
+                    record = r.toSigningRecord(),
+                    amendedBySigning = r.amendedBySigning
                 )
             }
+        val composedDay = standingDay(todayRow)
+        // HOME-FIRST: the home door's top plate carries the
+        // SIGNING day's facts — tomorrow's standing row (the
+        // signing table's own day, in the SigningHost's order),
+        // with today's row as its fallback.
+        val tomorrowIso = java.time.LocalDate.parse(todayIso).plusDays(1).toString()
+        val signingDay = standingDay(store.day(tomorrowIso)) ?: composedDay
 
         val waiting = store.heldArrivals(todayIso).any {
             it.state == StrongroomHeldArrivalEntity.STATE_WAITING
@@ -1522,7 +1802,8 @@ private suspend fun loadDoorwayState(context: Context): DoorwayState =
         DoorwayState.fromFacts(
             composedDay = composedDay,
             waitingSlipPresent = waiting,
-            plate = plate
+            plate = plate,
+            signingDay = signingDay
         )
     }
 /**
@@ -1992,14 +2273,21 @@ private fun reaskPostNotifications(
  *    printed back in plain words.
  */
 @Composable
-private fun SetupHost(viewModel: MonolithViewModel, onClose: () -> Unit) {
+private fun SetupHost(
+    viewModel: MonolithViewModel,
+    onClose: () -> Unit,
+    initialSection: com.example.ui.setup.SetupSection =
+        com.example.ui.setup.SetupSection.HOME
+) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val apps by viewModel.apps.collectAsStateWithLifecycle()
 
     var state by remember {
-        mutableStateOf(com.example.ui.setup.SetupState())
+        mutableStateOf(
+            com.example.ui.setup.SetupState(section = initialSection)
+        )
     }
     var guardNote by remember { mutableStateOf("") }
     var refreshTick by remember { mutableStateOf(0) }

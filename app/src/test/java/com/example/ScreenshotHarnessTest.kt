@@ -8,15 +8,23 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Row
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import com.example.data.MonolithDatabase
 import com.example.data.StrongroomDayBirth
@@ -27,13 +35,13 @@ import com.example.domain.LiftingPlate
 import com.example.domain.StrongroomComposition
 import com.example.domain.StrongroomDay
 import com.example.domain.StrongroomGuard
-import com.example.ui.doorway.DoorFace
-import com.example.ui.doorway.Doorway
 import com.example.ui.doorway.DoorwayState
+import com.example.ui.doorway.HomeDoor
+import com.example.ui.doorway.HomeDoorActions
 import com.example.ui.drawer.Drawer
+import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerActions
 import com.example.ui.drawer.DrawerContents
-import com.example.ui.drawer.DrawerFront
 import com.example.ui.drawer.DrawerState
 import com.example.ui.antechamber.Antechamber
 import com.example.ui.antechamber.AntechamberActions
@@ -387,6 +395,42 @@ class ScreenshotHarnessTest {
         )
     }
 
+    /** NAV-ALL (the NORMAL-APP redirect): the PLAIN-face gate.
+     *  A normal app screen — a title and a line of text on a plain
+     *  background (the desk clock's figures, the empty drawer's
+     *  "No days yet.", the plain sealed status) — populates under
+     *  BOTH the standard and sparse coverage floors while
+     *  rendering truly: its furniture is words, and words cover
+     *  almost nothing. The honest checks for such a face are the
+     *  ones that still bite: the shot exists, it is not a blank
+     *  field (real colour variance from text and rules), and —
+     *  in the tests that compose through semantics — the words
+     *  themselves are asserted on nodes. Measured numbers print
+     *  to the run log like the other gates. */
+    private fun writeShotPlain(name: String, bitmap: Bitmap) {
+        val dir = File(System.getenv("SCREENSHOTS_DIR") ?: "build/outputs/screenshots")
+        dir.mkdirs()
+        val file = File(dir, name)
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        assertTrue("shot must exist: ${file.absolutePath}", file.exists() && file.length() > 0)
+        val colors = HashSet<Int>()
+        var x = 0
+        while (x < bitmap.width) {
+            var y = 0
+            while (y < bitmap.height) {
+                colors.add(bitmap.getPixel(x, y))
+                y += 7
+            }
+            x += 7
+        }
+        println("PLAIN-SHOT $name bytes=${file.length()} colours=${colors.size}")
+        assertTrue(
+            "plain shot must not be a blank field " +
+                "(distinct sampled colours: ${colors.size})",
+            colors.size > 8
+        )
+    }
+
     @Test
     fun antechamber_room_dressed() {
         shoot(
@@ -502,31 +546,29 @@ class ScreenshotHarnessTest {
         shootBreak("break-redriving.png", remainingMs = 1_500L, openPile = false)
     }
 
-    // ── THE DOORWAY (LEAD-DOORFIX) — the opening, as the phone
+    // ── THE HOME DOOR (HOME-FIRST) — the opening, as the phone
     // hosts it ─────────────────────────────────────────────────
     // The opening surface composed the way MainActivity's doorway
-    // place composes it: the Doorway in its weight(1f) reach, the
-    // signing region below at weight(1.35f) — standing EMPTY here,
-    // as the host's SigningHost renders nothing on a day with no
-    // composed day standing (the state Sarthak's phone opened in,
-    // 2026-11-03 03:35 IST) — and the drawer's shut front at the
-    // foot. One place, shot whole: this is the app's first screen.
+    // place now composes it: the HOME DOOR whole — the vault door
+    // modelled in code (top plate · great wheel + combination
+    // dial · SIGN TOMORROW · the drawer pull). The pasted print
+    // face is retired from this place. Shot at rest with nothing
+    // standing: this is the app's first screen on a fresh open.
+
+    private fun homeDoorActions(onSignTomorrow: () -> Unit = {}) = HomeDoorActions(
+        onSignTomorrow = onSignTomorrow,
+        onOpenDrawer = {},
+        onFeelEvent = {}
+    )
 
     private fun shootDoorway(name: String) {
         val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
                 Box(Modifier.size(412.dp, 915.dp)) {
-                    // The face behind the whole place, as the host
-                    // lays it (LEAD-DOORFIX): the seven-ink print,
-                    // edge to edge — the door IS the surface.
-                    DoorFace()
-                    Column(Modifier.fillMaxSize()) {
-                        Box(Modifier.weight(1f)) {
-                            Doorway(state = DoorwayState.AtRest)
-                        }
-                        Box(Modifier.weight(1.35f)) {}
-                        DrawerFront(onOpen = {})
-                    }
+                    HomeDoor(
+                        state = DoorwayState.AtRest,
+                        actions = homeDoorActions()
+                    )
                 }
             }
         }
@@ -536,6 +578,163 @@ class ScreenshotHarnessTest {
     @Test
     fun doorway_opening_atRest() {
         shootDoorway("doorway-opening.png")
+    }
+
+    // ── THE HOME DOOR AT DEVICE SPEC (HOME-FIRST) ──────────────
+    // The harness's standard shots render at 412x915 dp under the
+    // Robolectric window's own density — a spec no phone carries,
+    // and the gap between that render and Sarthak's OnePlus 13 is
+    // how a broken opening screen reached his phone unreviewed
+    // (2026-11-03). These shots render the home at HIS device's
+    // spec exactly: 1440x3168 px, density 3.19 (451x993 dp), the
+    // density provided locally so every dp lands on the device's
+    // own grid. Three standings: the door at rest with its day
+    // standing (top plate carrying the day's lifting hour, the
+    // struck plate at its foot) · the wheel mid-turn (the door's
+    // seeded-rotation seam — the drawn state of a turn in
+    // progress, needle standing at the station under the hand) ·
+    // and after SIGN TOMORROW is pressed, by the button's own
+    // click: the signing table standing in the place.
+
+    private fun drawShotDevice(
+        interact: () -> Unit = {},
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ): Bitmap {
+        val activity = composeRule.activity
+        val view = androidx.compose.ui.platform.ComposeView(activity)
+        composeRule.runOnUiThread {
+            view.setContent(content)
+            activity.setContentView(view)
+        }
+        composeRule.waitForIdle()
+        val w = 1440
+        val h = 3168
+        composeRule.runOnUiThread {
+            view.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    w, android.view.View.MeasureSpec.EXACTLY
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    h, android.view.View.MeasureSpec.EXACTLY
+                )
+            )
+            view.layout(0, 0, w, h)
+        }
+        interact()
+        composeRule.waitForIdle()
+        val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+        composeRule.runOnUiThread {
+            view.layout(0, 0, w, h)
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            view.draw(android.graphics.Canvas(bmp))
+            holder.set(bmp)
+        }
+        return holder.get()
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun DeviceSpecBox(
+        content: @androidx.compose.runtime.Composable () -> Unit
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.ui.platform.LocalDensity provides
+                androidx.compose.ui.unit.Density(3.19f, 1f)
+        ) {
+            Box(Modifier.size(451.dp, 993.dp)) { content() }
+        }
+    }
+
+    private fun homeStandingState(): DoorwayState =
+        DoorwayState.fromFacts(
+            composedDay = composedDay(),
+            waitingSlipPresent = false,
+            plate = plateTruth()
+        )
+
+    @Test
+    fun home_deviceSpec_atRest() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                DeviceSpecBox {
+                    HomeDoor(
+                        state = homeStandingState(),
+                        actions = homeDoorActions()
+                    )
+                }
+            }
+        }
+        writeShot("home-device-rest.png", bitmap)
+    }
+
+    @Test
+    fun home_deviceSpec_wheelMidTurn() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                DeviceSpecBox {
+                    HomeDoor(
+                        state = homeStandingState(),
+                        actions = homeDoorActions(),
+                        initialRotationDeg = 140.0
+                    )
+                }
+            }
+        }
+        writeShot("home-device-midturn.png", bitmap)
+    }
+
+    @Test
+    fun home_deviceSpec_signTomorrow_signingStanding() {
+        // NAV-ALL (normal-app redirect): repointed from the
+        // retired HomeDoor to the living home — the same act
+        // (HOME stands at device spec; SIGN TOMORROW, by its own
+        // button, stands the signing table), driven by a touch on
+        // the button's text, as the walk drives it.
+        val bitmap = drawShotDevice(
+            interact = {
+                composeRule
+                    .onNodeWithText("SIGN TOMORROW")
+                    .performTouchInput { click(center) }
+            }
+        ) {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                DeviceSpecBox {
+                    var open by androidx.compose.runtime.remember {
+                        androidx.compose.runtime.mutableStateOf(false)
+                    }
+                    if (!open) {
+                        com.example.ui.home.HomeScreen(
+                            state = com.example.ui.home.HomeState(
+                                todayLine = "No day signed for today",
+                                tomorrowLine = "Tomorrow is not signed yet"
+                            ),
+                            actions = com.example.ui.home.HomeActions(
+                                onSignTomorrow = { open = true },
+                                onToday = {}, onApps = {},
+                                onSettings = {}, onPastDays = {}
+                            )
+                        )
+                    } else {
+                        Signing(
+                            state = SigningState(
+                                day = composedDay(),
+                                tokens = labels.map { (pkg, label) ->
+                                    SigningToken(pkg, label)
+                                },
+                                guard = StrongroomGuard.GuardState(
+                                    allowanceMinutes = 30
+                                )
+                            ),
+                            actions = SigningActions(
+                                onAmend = {},
+                                onAllowanceMove = {},
+                                onSignature = {}
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        writeShot("home-device-signing.png", bitmap)
     }
 
     // ── THE DRAWER (BUILD-SR-41) — the kept days, rendered ─────
@@ -689,7 +888,7 @@ class ScreenshotHarnessTest {
                 )
             }
         }
-        writeShotSparse("drawer-open-empty-device.png", bitmap)
+        writeShotPlain("drawer-open-empty-device.png", bitmap)
     }
 
     /** The capture at a real device's spec: the bitmap IS the
@@ -1195,7 +1394,11 @@ class ScreenshotHarnessTest {
                     }
                 }
             }
-            writeShot(name, bitmap)
+            // NAV-ALL (normal-app redirect): the face is a plain
+            // status screen now; the plain-face gate is the
+            // honest one for it (richness returns with the art
+            // pass, and the gate with it).
+            writeShotPlain(name, bitmap)
         } finally {
             composeRule.mainClock.autoAdvance = true
         }
@@ -1271,7 +1474,7 @@ class ScreenshotHarnessTest {
                     }
                 }
             }
-            writeShot("sealed-face-knock.png", bitmap)
+            writeShotPlain("sealed-face-knock.png", bitmap)
         } finally {
             composeRule.mainClock.autoAdvance = true
         }
@@ -1345,12 +1548,13 @@ class ScreenshotHarnessTest {
         val bitmap = drawShot {
             StrongroomTheme(lightState = StrongroomLightState.DAY) {
                 Box(Modifier.size(412.dp, 915.dp)) {
-                    Doorway(
+                    HomeDoor(
                         state = DoorwayState.fromFacts(
                             composedDay = composedDay(),
                             waitingSlipPresent = true,
                             plate = plateTruth()
-                        )
+                        ),
+                        actions = homeDoorActions()
                     )
                 }
             }
@@ -1495,5 +1699,340 @@ class ScreenshotHarnessTest {
             }
         }
         writeShot("signing-table-lower.png", bitmap)
+    }
+
+    // ── NAV-ALL: EVERY SCREEN AT DEVICE SPEC + THE WALK ───────
+    // Sarthak's order (2026-11-03): all screens and navigation
+    // working first, design later. The standing shots above render
+    // most surfaces at the harness's own frame; the device-spec
+    // witnesses existed only for the home door, the signing it
+    // opens, and the empty drawer. These four close the set at
+    // HIS phone's spec (1440x3168, density 3.1875 — the
+    // DEVICE-TRUTH drawShotDevice): the sealed face, the
+    // antechamber, the break, and the lifting, each standing in
+    // its production light. Below them, the navigation walk:
+    // Home -> SIGN TOMORROW -> Signing standing -> back (the
+    // host's own row) -> Home -> PAST DAYS -> the Drawer
+    // standing — the doorway place's state machine composed with
+    // the real surfaces and driven by their real controls, shot
+    // at every landing. The walk composes the same states and
+    // callbacks ShellHost composes (signOpen / drawerOpen); it is
+    // a trace of the navigation law, named as such — the
+    // production composition itself is MainActivity's.
+
+    @Test
+    fun sealedFace_deviceSpec_standing() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                SealedFace(
+                    state = state,
+                    actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {})
+                )
+            }
+        }
+        // NAV-ALL (normal-app redirect): the face is plain now;
+        // the sparse gate is the honest gate for it.
+        writeShotSparse("sealed-face-device.png", bitmap)
+    }
+
+    @Test
+    fun antechamber_deviceSpec_room() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Antechamber(
+                    state = state(StrongroomDay.AllowancePurse(30, 12), freshCrank()),
+                    actions = actions()
+                )
+            }
+        }
+        writeShot("antechamber-device.png", bitmap)
+    }
+
+    @Test
+    fun break_deviceSpec_running() {
+        val state = breakState(900_000L)
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.SEALED) {
+                Break(
+                    state = state,
+                    actions = breakActions(),
+                    nowElapsedMillis = state.clock.totalMillis - 900_000L
+                )
+            }
+        }
+        writeShot("break-device.png", bitmap)
+    }
+
+    @Test
+    fun lifting_deviceSpec_scoreEnd() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                Lifting(state = ceremonyState(LiftingCeremony.ScoreEndMs))
+            }
+        }
+        writeShot("lifting-device.png", bitmap)
+    }
+
+    /**
+     * NAV-ALL (VERIFY-SCREENS additions): the two faces this leg
+     * seats, standing at device spec. The desk clock in-session
+     * (elapsed + remaining, his #37 ruling) and the airlock door
+     * on a legacy-session intercept (offer standing). Both are
+     * plain faces by this job's law, so the sparse gate is the
+     * honest one — existence, colour life, off-field share.
+     */
+    @Test
+    fun deskClock_deviceSpec_session() {
+        val bitmap = drawShotDevice {
+            com.example.ui.deskclock.DeskClock(
+                elapsedSeconds = 3723,
+                remainingSeconds = 1877,
+                wallTimeText = "03:30"
+            )
+        }
+        writeShotPlain("desk-clock-device.png", bitmap)
+    }
+
+    @Test
+    fun airlock_deviceSpec_standing() {
+        val bitmap = drawShotDevice {
+            com.example.ui.airlock.Airlock(
+                state = com.example.session.AirlockInterceptState(
+                    isVisible = true,
+                    interceptedPackageName = "com.instagram.android",
+                    interceptedAppName = "Instagram",
+                    interceptReasonBadge = "Locked",
+                    sessionIntention = "Physics — Rotational Mechanics",
+                    canUse2MinutePeek = true,
+                    isLockedTier = true,
+                    selectedReason =
+                        com.example.data.DistractionTriggerReason
+                            .MUSCLE_MEMORY
+                ),
+                onReturn = {},
+                onPeek = {},
+                onReason = {},
+                onGraceAbort = {},
+                onOfferArmed = {},
+                onCooldownExpired = {}
+            )
+        }
+        writeShotSparse("airlock-device.png", bitmap)
+    }
+
+    /**
+     * NAV-ALL (normal-app standings): HOME with NO day born —
+     * the fresh-install state from Sarthak's build-5 photos:
+     * every button stands anyway (SIGN TOMORROW · TODAY · APPS ·
+     * SETTINGS · PAST DAYS), because APPS/SETTINGS are how a
+     * first run sets its lifting hour. TODAY signed + sealable.
+     * The SEALED SCREEN with its allowed-apps grid.
+     */
+    @Test
+    fun home_deviceSpec_noDayBorn() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                com.example.ui.home.HomeScreen(
+                    state = com.example.ui.home.HomeState(
+                        todayLine = "No day signed for today",
+                        tomorrowLine = "Tomorrow is not signed yet"
+                    ),
+                    actions = com.example.ui.home.HomeActions(
+                        onSignTomorrow = {}, onToday = {}, onApps = {},
+                        onSettings = {}, onPastDays = {}
+                    )
+                )
+            }
+        }
+        writeShotSparse("home-device.png", bitmap)
+    }
+
+    @Test
+    fun today_deviceSpec_signed() {
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                com.example.ui.home.TodayScreen(
+                    state = com.example.ui.home.TodayState(
+                        statusLine = "Signed — not sealed yet",
+                        taskLine = "Physics — Rotational Mechanics",
+                        liftingHourText = "05:30",
+                        lockedCount = 14,
+                        canSeal = true
+                    ),
+                    actions = com.example.ui.home.TodayActions(
+                        onSealToday = {}, onBack = {}
+                    )
+                )
+            }
+        }
+        writeShotSparse("today-device.png", bitmap)
+    }
+
+    @Test
+    fun sealedScreen_deviceSpec_grid() {
+        val state = SealedFaceState.standing(
+            sealedSigning("what I settle while I am strong, this holds while I am not"),
+            doorWord = "holdfast"
+        )!!
+        val bitmap = drawShotDevice {
+            StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                com.example.ui.sealed.SealedScreen(
+                    state = state,
+                    actions = SealedFaceActions(onKnock = {}, onGrilleOpen = {}),
+                    allowedApps = listOf(
+                        com.example.ui.sealed.SealedAppEntry(
+                            "com.google.android.dialer", "Phone"
+                        ),
+                        com.example.ui.sealed.SealedAppEntry(
+                            "com.google.android.gm", "Gmail"
+                        ),
+                        com.example.ui.sealed.SealedAppEntry(
+                            "org.telegram.messenger", "Telegram"
+                        ),
+                        com.example.ui.sealed.SealedAppEntry(
+                            "com.google.android.apps.maps", "Maps"
+                        )
+                    )
+                )
+            }
+        }
+        writeShotSparse("sealed-screen-device.png", bitmap)
+    }
+
+    @Test
+    fun navWalk_home_signing_back_drawer_deviceSpec() {
+        val activity = composeRule.activity
+        val view = androidx.compose.ui.platform.ComposeView(activity)
+        val w = 1440
+        val h = 3168
+        fun snap(name: String, sparse: Boolean = false) {
+            composeRule.waitForIdle()
+            val holder = java.util.concurrent.atomic.AtomicReference<Bitmap>()
+            composeRule.runOnUiThread {
+                view.layout(0, 0, w, h)
+                val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                view.draw(android.graphics.Canvas(bmp))
+                holder.set(bmp)
+            }
+            if (sparse) writeShotSparse(name, holder.get())
+            else writeShot(name, holder.get())
+        }
+        composeRule.runOnUiThread {
+            view.setContent {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides
+                        androidx.compose.ui.unit.Density(3.1875f, 1f)
+                ) {
+                    StrongroomTheme(lightState = StrongroomLightState.DAY) {
+                        var signOpen by androidx.compose.runtime.remember {
+                            androidx.compose.runtime.mutableStateOf(false)
+                        }
+                        var drawerOpen by androidx.compose.runtime.remember {
+                            androidx.compose.runtime.mutableStateOf(false)
+                        }
+                        when {
+                            drawerOpen -> Drawer(
+                                state = DrawerState(
+                                    contents = drawerContents(),
+                                    handingBack = LiftingPlate.HandingBack(emptyList()),
+                                    handingBackDelivered = true
+                                ),
+                                actions = DrawerActions(
+                                    onHandingBack = {},
+                                    onClose = { drawerOpen = false }
+                                )
+                            )
+                            signOpen ->
+                                Column(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { signOpen = false }
+                                            .padding(
+                                                horizontal = 20.dp, vertical = 14.dp
+                                            )
+                                    ) {
+                                        androidx.compose.material3.Text(
+                                            text = "‹ HOME",
+                                            style = com.example.ui.foundation
+                                                .StrongroomType.Anon2,
+                                            color = StrongroomInks.Gold
+                                        )
+                                    }
+                                    Signing(
+                                        state = SigningState(
+                                            day = composedDay(),
+                                            tokens = labels.map { (pkg, label) ->
+                                                SigningToken(pkg, label)
+                                            },
+                                            guard = StrongroomGuard.GuardState(
+                                                allowanceMinutes = 30
+                                            )
+                                        ),
+                                        actions = SigningActions(
+                                            onAmend = {},
+                                            onAllowanceMove = {},
+                                            onSignature = {}
+                                        ),
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            else -> com.example.ui.home.HomeScreen(
+                                state = com.example.ui.home.HomeState(
+                                    todayLine = "No day signed for today",
+                                    tomorrowLine = "Tomorrow is not signed yet"
+                                ),
+                                actions = com.example.ui.home.HomeActions(
+                                    onSignTomorrow = { signOpen = true },
+                                    onToday = {},
+                                    onApps = {},
+                                    onSettings = {},
+                                    onPastDays = { drawerOpen = true }
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            activity.setContentView(view)
+            view.measure(
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    w, android.view.View.MeasureSpec.EXACTLY
+                ),
+                android.view.View.MeasureSpec.makeMeasureSpec(
+                    h, android.view.View.MeasureSpec.EXACTLY
+                )
+            )
+            view.layout(0, 0, w, h)
+        }
+        // (1) Home stands — ALL five buttons, no day born.
+        composeRule.onNodeWithText("SIGN TOMORROW").assertExists()
+        composeRule.onNodeWithText("TODAY").assertExists()
+        composeRule.onNodeWithText("APPS").assertExists()
+        composeRule.onNodeWithText("SETTINGS").assertExists()
+        composeRule.onNodeWithText("PAST DAYS").assertExists()
+        snap("nav-walk-1-home.png", sparse = true)
+        // (2) SIGN TOMORROW, by the button's own click: the
+        // signing table stands in the place.
+        composeRule.onNodeWithText("SIGN TOMORROW")
+            .performTouchInput { click(center) }
+        composeRule.onNodeWithText("‹ HOME").assertExists()
+        snap("nav-walk-2-signing.png")
+        // (3) Back, by the host's own row: home again.
+        composeRule.onNodeWithText("‹ HOME")
+            .performTouchInput { click(center) }
+        composeRule.onNodeWithText("SIGN TOMORROW").assertExists()
+        snap("nav-walk-3-home-again.png", sparse = true)
+        // (4) PAST DAYS: the plain drawer list stands.
+        composeRule.onNodeWithText("PAST DAYS")
+            .performTouchInput { click(center) }
+        composeRule.onNodeWithText("Past days").assertExists()
+        snap("nav-walk-4-drawer.png", sparse = true)
     }
 }

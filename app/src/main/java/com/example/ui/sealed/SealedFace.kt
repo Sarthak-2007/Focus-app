@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -212,10 +213,82 @@ fun SealedFace(
     actions: SealedFaceActions,
     modifier: Modifier = Modifier
 ) {
-    // The sealed hours' own light, whatever the room around the
-    // shell is lit by (RELIGHT L-SEALED).
-    CompositionLocalProvider(LocalStrongroomLightState provides StrongroomLightState.SEALED) {
-        SealedFaceInSealedLight(state, actions, modifier)
+    // NAV-ALL (the NORMAL-APP redirect, Sarthak's word 2026-11-03):
+    // the sealed face is a plain status screen — a title, the
+    // lifting hour, his sentence, and two labelled buttons. The
+    // acts are unchanged: KNOCK is the knock (the whole face
+    // answers a tap the same way — a reach is a knock), and
+    // ALLOWED APPS is the grille's second touch into the
+    // antechamber, where the allowed apps are taken. The rich
+    // print face below (SealedFaceInSealedLight) stands retired
+    // in this file for the later art pass; it is no longer the
+    // surface. The shell's sealed screen (SealedScreen) adds the
+    // allowed-apps grid under this status.
+    val printings = state.printings
+    androidx.compose.foundation.layout.Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(com.example.ui.foundation.StrongroomRoles.Field)
+            .clickable { actions.onKnock() }
+            .padding(horizontal = 24.dp, vertical = 20.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+    ) {
+        androidx.compose.material3.Text(
+            text = "Sealed",
+            style = com.example.ui.foundation.StrongroomType.Scr3,
+            color = com.example.ui.foundation.StrongroomRoles.OnGround
+        )
+        androidx.compose.material3.Text(
+            text = "Locked until ${printings.liftingHour.text}",
+            style = com.example.ui.foundation.StrongroomType.Anon2,
+            color = com.example.ui.foundation.StrongroomInks.Gold,
+            modifier = androidx.compose.ui.Modifier.padding(top = 6.dp)
+        )
+        androidx.compose.material3.Text(
+            text = "“${printings.sentence.text ?: com.example.domain.StrongroomDay.PURPOSE_SENTENCE}”",
+            style = com.example.ui.foundation.StrongroomType.Scr1,
+            color = com.example.ui.foundation.StrongroomRoles.OnGround
+                .copy(alpha = 0.85f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = androidx.compose.ui.Modifier.padding(top = 16.dp)
+        )
+        androidx.compose.foundation.layout.Spacer(
+            androidx.compose.ui.Modifier.weight(1f)
+        )
+        androidx.compose.foundation.layout.Box(
+            modifier = androidx.compose.ui.Modifier
+                .fillMaxWidth()
+                .background(com.example.ui.foundation.StrongroomInks.Rose)
+                .clickable { actions.onKnock() }
+                .padding(vertical = 18.dp),
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            androidx.compose.material3.Text(
+                text = "KNOCK",
+                style = com.example.ui.foundation.StrongroomType.Scr2,
+                color = com.example.ui.foundation.StrongroomRoles.Field
+            )
+        }
+        androidx.compose.foundation.layout.Spacer(
+            androidx.compose.ui.Modifier.height(12.dp)
+        )
+        androidx.compose.foundation.layout.Box(
+            modifier = androidx.compose.ui.Modifier
+                .fillMaxWidth()
+                .border(
+                    1.dp,
+                    com.example.ui.foundation.StrongroomInks.Gold
+                )
+                .clickable { actions.onGrilleOpen() }
+                .padding(vertical = 16.dp),
+            contentAlignment = androidx.compose.ui.Alignment.Center
+        ) {
+            androidx.compose.material3.Text(
+                text = "ALLOWED APPS",
+                style = com.example.ui.foundation.StrongroomType.Scr2,
+                color = com.example.ui.foundation.StrongroomInks.Gold
+            )
+        }
     }
 }
 
